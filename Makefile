@@ -2,7 +2,7 @@ HOSTNAME=registry.terraform.io
 NAMESPACE=terraform-providers
 NAME=airtelcloud
 BINARY=terraform-provider-${NAME}
-VERSION=0.2.0
+VERSION=1.0.0
 OS_ARCH=linux_amd64
 
 default: install
@@ -23,6 +23,23 @@ release:
 	GOOS=solaris GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_solaris_amd64
 	GOOS=windows GOARCH=386 go build -o ./bin/${BINARY}_${VERSION}_windows_386.exe
 	GOOS=windows GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_windows_amd64.exe
+
+	zip ./bin/${BINARY}_${VERSION}_darwin_amd64.zip ./bin/${BINARY}_${VERSION}_darwin_amd64
+	zip ./bin/${BINARY}_${VERSION}_freebsd_386.zip ./bin/${BINARY}_${VERSION}_freebsd_386
+	zip ./bin/${BINARY}_${VERSION}_freebsd_amd64.zip ./bin/${BINARY}_${VERSION}_freebsd_amd64
+	zip ./bin/${BINARY}_${VERSION}_freebsd_arm.zip ./bin/${BINARY}_${VERSION}_freebsd_arm
+	zip ./bin/${BINARY}_${VERSION}_linux_386.zip ./bin/${BINARY}_${VERSION}_linux_386
+	zip ./bin/${BINARY}_${VERSION}_linux_amd64.zip ./bin/${BINARY}_${VERSION}_linux_amd64
+	zip ./bin/${BINARY}_${VERSION}_linux_arm.zip ./bin/${BINARY}_${VERSION}_linux_arm
+	zip ./bin/${BINARY}_${VERSION}_openbsd_386.zip ./bin/${BINARY}_${VERSION}_openbsd_386
+	zip ./bin/${BINARY}_${VERSION}_openbsd_amd64.zip ./bin/${BINARY}_${VERSION}_openbsd_amd64
+	zip ./bin/${BINARY}_${VERSION}_solaris_amd64.zip ./bin/${BINARY}_${VERSION}_solaris_amd64
+	zip ./bin/${BINARY}_${VERSION}_windows_386zip ./bin/${BINARY}_${VERSION}_windows_386.exe
+	zip ./bin/${BINARY}_${VERSION}_windows_amd64.zip ./bin/${BINARY}_${VERSION}_windows_amd64.exe
+		
+
+	shasum -a 256 ./bin/*.zip > ./bin/terraform-provider-${NAME}_${VERSION}_SHA256SUMS
+	gpg --detach-sign ./bin/terraform-provider-${NAME}_${VERSION}_SHA256SUMS
 
 install: build
 	mkdir -p ~/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
