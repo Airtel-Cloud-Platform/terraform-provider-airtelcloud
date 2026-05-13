@@ -1,0 +1,11 @@
+4a9bf60b01cde3cb181328da71ca41619942e1103f43cab2553be3a3d4a53e1c  ./bin/terraform-provider-airtelcloud_1.0.0_darwin_amd64.zip
+6162ece22288c61d77bb01bc02523ba778c8c2e2eec6f7fcb5972fd702e16ddb  ./bin/terraform-provider-airtelcloud_1.0.0_freebsd_386.zip
+29e10c9732efc539eadb7f89d7fbb49df3096a9c1f140b6e21e9ce67f77f8628  ./bin/terraform-provider-airtelcloud_1.0.0_freebsd_amd64.zip
+07f9f35947ea5e1971eb3c3f5b2195060a365569b06f333d387412179a49fdd6  ./bin/terraform-provider-airtelcloud_1.0.0_freebsd_arm.zip
+1b9ef9b150ee66d204e53b9bb9bca8345b5ca2400146855003f99b2d316d6cdd  ./bin/terraform-provider-airtelcloud_1.0.0_linux_386.zip
+f5d8dc600bd55c2b24fb50c004bb25aadbee98ef5dd212c7768dc8f70f754751  ./bin/terraform-provider-airtelcloud_1.0.0_linux_amd64.zip
+34dacfed2235397841543d024317cd96011b62be7b2d4d0412b519afcb2fa951  ./bin/terraform-provider-airtelcloud_1.0.0_linux_arm.zip
+95d4bca8b35cc2f1bdedb330d026386e3547ae16d14785ee20f2b53028fd7895  ./bin/terraform-provider-airtelcloud_1.0.0_openbsd_386.zip
+7ae2c1669e24b1a9237e2fa7f3902ac4671890683510a2e4c01b84512cdc746d  ./bin/terraform-provider-airtelcloud_1.0.0_openbsd_amd64.zip
+5bd05b8398ccac60ac5f1291e1ec58dfd81c25f8e3729c8f393c23b154296d7d  ./bin/terraform-provider-airtelcloud_1.0.0_solaris_amd64.zip
+ae84bb69f464b1e633cf00c725b270f3f98f4baf8e6c1ade4c4ed71c5b74e8ac  ./bin/terraform-provider-airtelcloud_1.0.0_windows_amd64.zip
