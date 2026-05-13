@@ -23,6 +23,8 @@ release:
 	GOOS=solaris GOARCH=amd64 go build -o bin/${BINARY}_${VERSION}_solaris_amd64
 	GOOS=windows GOARCH=386 go build -o bin/${BINARY}_${VERSION}_windows_386.exe
 	GOOS=windows GOARCH=amd64 go build -o bin/${BINARY}_${VERSION}_windows_amd64.exe
+	GOOS=darwin GOARCH=arm64 go build -o bin/${BINARY}_${VERSION}_darwin_arm64
+
 
 	zip bin/${BINARY}_${VERSION}_darwin_amd64.zip bin/${BINARY}_${VERSION}_darwin_amd64
 	zip bin/${BINARY}_${VERSION}_freebsd_386.zip bin/${BINARY}_${VERSION}_freebsd_386
@@ -37,8 +39,6 @@ release:
 	zip bin/${BINARY}_${VERSION}_windows_386zip bin/${BINARY}_${VERSION}_windows_386.exe
 	zip bin/${BINARY}_${VERSION}_windows_amd64.zip bin/${BINARY}_${VERSION}_windows_amd64.exe
 
-	shasum -a 256 bin/*.zip > bin/terraform-provider-${NAME}_${VERSION}_SHA256SUMS
-	gpg --detach-sign bin/terraform-provider-${NAME}_${VERSION}_SHA256SUMS
 
 install: build
 	mkdir -p ~/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
