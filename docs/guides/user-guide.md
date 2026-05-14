@@ -26,7 +26,7 @@ This guide is a complete reference for managing Airtel Cloud infrastructure usin
 terraform {
   required_providers {
     airtelcloud = {
-      source  = "terraform-providers/airtelcloud"
+      source  = "Airtel-Cloud-Platform/airtelcloud"
       version = "~> 0.2"
     }
   }

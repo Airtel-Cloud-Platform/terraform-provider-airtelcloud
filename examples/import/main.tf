@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     airtelcloud = {
-      source  = "terraform-providers/airtelcloud"
+      source  = "Airtel-Cloud-Platform/airtelcloud"
       version = "~> 0.2"
     }
   }
