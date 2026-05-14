@@ -62,7 +62,7 @@ Create or update `~/.terraformrc`:
 ```hcl
 provider_installation {
   dev_overrides {
-    "terraform-providers/airtelcloud" = "<GOPATH>/bin"
+    "Airtel-Cloud-Platform/airtelcloud" = "<GOPATH>/bin"
   }
   direct {}
 }
@@ -80,7 +80,7 @@ Add the provider block to your Terraform configuration:
 terraform {
   required_providers {
     airtelcloud = {
-      source  = "terraform-providers/airtelcloud"
+      source  = "Airtel-Cloud-Platform/airtelcloud"
       version = "~> 0.2"
     }
   }

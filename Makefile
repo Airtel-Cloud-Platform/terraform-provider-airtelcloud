@@ -27,6 +27,7 @@ release:
 
 
 	zip bin/${BINARY}_${VERSION}_darwin_amd64.zip bin/${BINARY}_${VERSION}_darwin_amd64
+	zip bin/${BINARY}_${VERSION}_darwin_arm64.zip bin/${BINARY}_${VERSION}_darwin_arm64
 	zip bin/${BINARY}_${VERSION}_freebsd_386.zip bin/${BINARY}_${VERSION}_freebsd_386
 	zip bin/${BINARY}_${VERSION}_freebsd_amd64.zip bin/${BINARY}_${VERSION}_freebsd_amd64
 	zip bin/${BINARY}_${VERSION}_freebsd_arm.zip bin/${BINARY}_${VERSION}_freebsd_arm

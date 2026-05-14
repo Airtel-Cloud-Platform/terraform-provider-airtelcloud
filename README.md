@@ -55,7 +55,7 @@ Create or update `~/.terraformrc`:
 ```hcl
 provider_installation {
   dev_overrides {
-    "terraform-providers/airtelcloud" = "<GOPATH>/bin"
+    "Airtel-Cloud-Platform/airtelcloud" = "<GOPATH>/bin"
   }
   direct {}
 }
@@ -84,7 +84,7 @@ Then commit the changes to `go.mod` and `go.sum`.
 terraform {
   required_providers {
     airtelcloud = {
-      source  = "terraform-providers/airtelcloud"
+      source  = "Airtel-Cloud-Platform/airtelcloud"
       version = "~> 0.2"
     }
   }
