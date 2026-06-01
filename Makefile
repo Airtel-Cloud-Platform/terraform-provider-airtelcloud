@@ -2,7 +2,7 @@ HOSTNAME=registry.terraform.io
 NAMESPACE=terraform-providers
 NAME=airtelcloud
 BINARY=terraform-provider-${NAME}
-VERSION=1.0.1
+VERSION=1.0.4
 OS_ARCH=linux_amd64
 
 default: install

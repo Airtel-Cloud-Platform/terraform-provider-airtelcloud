@@ -33,11 +33,14 @@ The Airtel Cloud Terraform provider lets you manage infrastructure on Airtel Clo
 
 ## Building from Source
 
+-> **Note:** Before starting, kindly ensure that `GO` and `Make` are installed/configured on your system.
+
+
 Clone the repository and build using the Makefile:
 
 ```shell
-git clone https://github.com/terraform-providers/terraform-provider-airtelcloud.git
-cd acp-terraform
+git clone https://github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud
+cd terraform-provider-airtelcloud
 
 # Compile the provider binary
 make build
@@ -48,7 +51,7 @@ make install
 
 `make install` copies the binary to both locations:
 
-- `~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/0.2.0/linux_amd64/`
+- `~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/1.0.4/linux_amd64/`
 - `~/go/bin/`
 
 -> **Note:** On macOS, replace `linux_amd64` with `darwin_amd64` in the Makefile `OS_ARCH` variable before running `make install`.
@@ -81,13 +84,13 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "~> 0.2"
+      version = "1.0.4"
     }
   }
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://api.south.cloud.airtel.in"
+  api_endpoint = "https://south.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
   region       = "south-1"
@@ -100,7 +103,7 @@ provider "airtelcloud" {
 
 | Attribute | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `api_endpoint` | String | No | `https://api.south.cloud.airtel.in` | Airtel Cloud API endpoint URL |
+| `api_endpoint` | String | No | `https://south.cloud.airtel.in` | Airtel Cloud API endpoint URL |
 | `api_key` | String | Yes | — | API key for authentication (sensitive) |
 | `api_secret` | String | Yes | — | API secret for HMAC authentication (sensitive) |
 | `region` | String | No | `south-1` | Airtel Cloud region |

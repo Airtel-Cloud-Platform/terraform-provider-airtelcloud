@@ -30,7 +30,7 @@ terraform-provider/
 - **Go source files**: 57 (excl. tests)
 - **Test files**: 31 (13 unit, 10 integration, 7 acceptance, 1 helper)
 - **Total source lines**: ~13,200 (excl. tests)
-- **Provider version**: 0.2.0
+- **Provider version**: 1.0.4
 
 ## Entry Points
 
@@ -177,7 +177,7 @@ make docs-generate             # Generate resource docs
 
 ```hcl
 provider "airtelcloud" {
-  api_endpoint = "https://api.south.cloud.airtel.in"  # optional
+  api_endpoint = "https://south.cloud.airtel.in"  # optional
   api_key      = var.api_key                          # required
   api_secret   = var.api_secret                       # required
   region       = "south"                              # optional

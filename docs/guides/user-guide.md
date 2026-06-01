@@ -27,7 +27,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "~> 0.2"
+      version = "1.0.4"
     }
   }
 }
@@ -66,7 +66,7 @@ provider "airtelcloud" {
 |---|---|---|---|---|
 | `api_key` | String | Yes | — | API key for HMAC-SHA256 authentication. Sensitive. |
 | `api_secret` | String | Yes | — | API secret for HMAC-SHA256 authentication. Sensitive. |
-| `api_endpoint` | String | No | `https://api.south.cloud.airtel.in` | Airtel Cloud API endpoint URL. |
+| `api_endpoint` | String | No | `https://south.cloud.airtel.in` | Airtel Cloud API endpoint URL. |
 | `region` | String | No | `south` | Airtel Cloud region. |
 | `organization` | String | No | — | Organization name or domain. |
 | `project_name` | String | No | — | Project name for API calls. |

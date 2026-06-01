@@ -20,13 +20,13 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "~> 1.0.0"
+      version = "~> 1.0.4"
     }
   }
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://api.south.cloud.airtel.in"
+  api_endpoint = "https://south.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
   region       = "south-1"
@@ -47,7 +47,7 @@ The provider authenticates using an HMAC-SHA256 scheme that requires both an API
 
 ```terraform
 provider "airtelcloud" {
-  api_endpoint = "https://api.south.cloud.airtel.in"
+  api_endpoint = "https://south.cloud.airtel.in"
   api_key      = "your-api-key-here"
   api_secret   = "your-api-secret-here"
   region       = "south-1"
@@ -77,7 +77,7 @@ variable "airtel_api_secret" {
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://api.south.cloud.airtel.in"
+  api_endpoint = "https://south.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
   region       = "south-1"
@@ -88,7 +88,7 @@ provider "airtelcloud" {
 
 The following arguments are supported in the provider configuration:
 
-- `api_endpoint` (Optional) - The Airtel Cloud API endpoint URL. Defaults to `https://api.south.cloud.airtel.in`.
+- `api_endpoint` (Optional) - The Airtel Cloud API endpoint URL. Defaults to `https://south.cloud.airtel.in`.
 - `api_key` (Required) - The API key for authenticating with Airtel Cloud API. Can also be set via the `AIRTEL_API_KEY` environment variable.
 - `api_secret` (Required) - The API secret for HMAC authentication. Can also be set via the `AIRTEL_API_SECRET` environment variable.
 - `region` (Optional) - The default region for resources. Defaults to `south-1`.
