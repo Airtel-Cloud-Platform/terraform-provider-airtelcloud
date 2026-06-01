@@ -20,7 +20,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/terraform-providers/airtelcloud",
+		Address: "registry.terraform.io/Airtel-Cloud-Platform/airtelcloud",
 		Debug:   debug,
 	}
 

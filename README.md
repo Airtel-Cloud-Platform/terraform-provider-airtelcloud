@@ -55,7 +55,7 @@ Create or update `~/.terraformrc`:
 ```hcl
 provider_installation {
   dev_overrides {
-    "terraform-providers/airtelcloud" = "<GOPATH>/bin"
+    "Airtel-Cloud-Platform/airtelcloud" = "<GOPATH>/bin"
   }
   direct {}
 }
