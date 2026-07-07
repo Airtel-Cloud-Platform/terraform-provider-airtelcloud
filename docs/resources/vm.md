@@ -16,13 +16,19 @@ Uses the v2.1 Compute API with domain/project URL paths. The provider's `organiz
 ### Basic Linux VM
 
 ```terraform
+resource "airtelcloud_security_group" "web" {
+  security_group_name = "web-sg"
+  availability_zone   = "S1"
+}
+
 resource "airtelcloud_vm" "web_server" {
   instance_name     = "web-server"
-  flavor_id         = "t2.micro"
-  image_id          = "ubuntu-22.04"
+  flavor_name       = "t2.micro"
+  image_name        = "ubuntu-22.04"
   os_type           = "linux"
   vpc_id            = "vpc-abc123"
   subnet_id         = "subnet-def456"
+  security_group_id = airtelcloud_security_group.web.id
   keypair_id        = "my-keypair"
   availability_zone = "S1"
   disk_size         = 40
@@ -42,13 +48,15 @@ resource "airtelcloud_vm" "web_server" {
 }
 ```
 
+You can attach the security group during provisioning by setting either `security_group_id` or `security_group_name`. If the security group is managed in the same Terraform configuration, prefer `security_group_id = airtelcloud_security_group.<name>.id`.
+
 ### Windows VM with Backup
 
 ```terraform
 resource "airtelcloud_vm" "windows_server" {
   instance_name     = "win-server"
-  flavor_id         = "m5.large"
-  image_id          = "windows-2022"
+  flavor_name       = "m5.large"
+  image_name        = "windows-2022"
   os_type           = "windows"
   vpc_id            = "vpc-abc123"
   subnet_id         = "subnet-def456"
@@ -73,15 +81,18 @@ resource "airtelcloud_vm" "windows_server" {
 ### Required
 
 - `instance_name` (String) - The name of the compute instance.
-- `flavor_id` (String) - The flavor ID for the compute instance (e.g., `t2.micro`, `m5.large`).
-- `image_id` (String) - The ID of the image to use. Forces replacement on change.
+- `flavor_id` or `flavor_name` (String) - Exactly one must be specified. Use `flavor_id` to pass the platform flavor ID, or `flavor_name` to pass the flavor name shown in the catalog. Forces replacement on change.
+- `image_id` or `image_name` (String) - Exactly one must be specified. Use `image_id` to pass the platform image ID, or `image_name` to pass the image name shown in the catalog. Forces replacement on change.
 - `vpc_id` (String) - The ID of the VPC. Forces replacement on change.
 - `subnet_id` (String) - The ID of the subnet. Forces replacement on change.
 - `os_type` (String) - The OS type: `"linux"` or `"windows"`. Forces replacement on change.
 
 ### Optional
 
-- `security_group_id` (String) - The ID of the security group.
+- `flavor_name` (String) - The flavor name for the compute instance. Conflicts with `flavor_id`. Forces replacement on change.
+- `image_name` (String) - The image name for the compute instance. Conflicts with `image_id`. Forces replacement on change.
+- `security_group_id` (String) - The ID of the security group to attach during VM provisioning. One of `security_group_id` or `security_group_name` may be specified.
+- `security_group_name` (String) - The name of the security group to attach during VM provisioning. One of `security_group_id` or `security_group_name` may be specified.
 - `keypair_id` (String) - The ID of the key pair for SSH access. Forces replacement on change.
 - `admin_password` (String, Sensitive) - Admin password for the instance. Forces replacement on change.
 - `user_data` (String) - Cloud-init script to run on instance initialization. Forces replacement on change.

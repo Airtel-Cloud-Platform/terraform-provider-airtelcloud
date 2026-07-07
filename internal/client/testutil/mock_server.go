@@ -12,7 +12,7 @@ import (
 // MockServer represents a mock HTTP server for testing
 type MockServer struct {
 	*httptest.Server
-	Handlers map[string]http.HandlerFunc
+	Handlers  map[string]http.HandlerFunc
 }
 
 // NewMockServer creates a new mock server with predefined handlers
@@ -465,6 +465,7 @@ func (ms *MockServer) listSecurityGroupsHandler(w http.ResponseWriter, r *http.R
 
 func (ms *MockServer) listVPCsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	// Return raw JSON matching real API format (networkId field) instead of
 	// relying on Go struct serialization, so tests catch JSON tag mismatches.
 	response := `{
@@ -474,7 +475,9 @@ func (ms *MockServer) listVPCsHandler(w http.ResponseWriter, r *http.Request) {
 			{"networkId": "vpc-2", "name": "vpc-custom", "cidr_block": "172.16.0.0/16"}
 		]
 	}`
-	w.Write([]byte(response))
+	if _, err := w.Write([]byte(response)); err != nil {
+		fmt.Printf("Error writing response: %v\n", err)
+	}
 }
 
 func (ms *MockServer) listSubnetsHandler(w http.ResponseWriter, r *http.Request) {
