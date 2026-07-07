@@ -60,7 +60,6 @@ resource "airtelcloud_vm" "windows_server" {
   os_type           = "windows"
   vpc_id            = "vpc-abc123"
   subnet_id         = "subnet-def456"
-  admin_password    = var.windows_password
   availability_zone = "S2"
   disk_size         = 100
   boot_from_volume  = true
@@ -75,6 +74,8 @@ resource "airtelcloud_vm" "windows_server" {
   }
 }
 ```
+
+The VM resource currently does not expose dedicated username/password provisioning fields. Use image defaults, keypairs, or initialization scripts as supported by your image.
 
 ## Argument Reference
 
@@ -94,7 +95,6 @@ resource "airtelcloud_vm" "windows_server" {
 - `security_group_id` (String) - The ID of the security group to attach during VM provisioning. One of `security_group_id` or `security_group_name` may be specified.
 - `security_group_name` (String) - The name of the security group to attach during VM provisioning. One of `security_group_id` or `security_group_name` may be specified.
 - `keypair_id` (String) - The ID of the key pair for SSH access. Forces replacement on change.
-- `admin_password` (String, Sensitive) - Admin password for the instance. Forces replacement on change.
 - `user_data` (String) - Cloud-init script to run on instance initialization. Forces replacement on change.
 - `availability_zone` (String) - The availability zone (e.g., `S1`, `S2`). Forces replacement on change.
 - `region` (String) - The region for the instance. Defaults to the provider's `region`.
