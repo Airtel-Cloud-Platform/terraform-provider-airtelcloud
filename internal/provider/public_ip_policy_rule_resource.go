@@ -199,9 +199,9 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 
 	// Find the rule by display_name
 	var createdRule *models.PublicIPPolicyRule
-	for _, rule := range rulesResp.Items {
-		if rule.DisplayName == data.DisplayName.ValueString() {
-			createdRule = &rule
+	for i := range rulesResp.Items {
+		if rulesResp.Items[i].DisplayName == data.DisplayName.ValueString() {
+			createdRule = &rulesResp.Items[i]
 			break
 		}
 	}

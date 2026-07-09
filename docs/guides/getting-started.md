@@ -31,6 +31,16 @@ The Airtel Cloud Terraform provider lets you manage infrastructure on Airtel Clo
 | [Go](https://golang.org/doc/install) | >= 1.24 |
 | Airtel Cloud account | With API key and secret |
 
+Install Go from the [official Go installation guide](https://go.dev/doc/install), then verify your environment:
+
+```shell
+go version
+go env GOPATH
+mkdir -p "$(go env GOPATH)/bin"
+```
+
+If you run commands as `root`, `go env GOPATH` is typically `/root/go`, so your binary path will be `/root/go/bin`.
+
 ## Building from Source
 
 -> **Note:** Before starting, kindly ensure that `GO` and `Make` are installed/configured on your system.
@@ -41,6 +51,8 @@ Clone the repository and build using the Makefile:
 ```shell
 git clone https://github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud
 cd terraform-provider-airtelcloud
+
+
 
 # Compile the provider binary
 make build
@@ -54,7 +66,9 @@ make install
 - `~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/1.0.6/linux_amd64/`
 - `~/go/bin/`
 
--> **Note:** On macOS, replace `linux_amd64` with `darwin_amd64` in the Makefile `OS_ARCH` variable before running `make install`.
+```shell
+ls -l "$(go env GOPATH)/bin/terraform-provider-airtelcloud"
+```
 
 ## Local Development Setup
 
