@@ -63,10 +63,8 @@ make install
 
 `make install` copies the binary to both locations:
 
-- `~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/1.0.4/<GOOS>_<GOARCH>/`
-- `$(go env GOPATH)/bin/`
-
-You can verify installation with:
+- `~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/1.0.5/linux_amd64/`
+- `~/go/bin/`
 
 ```shell
 ls -l "$(go env GOPATH)/bin/terraform-provider-airtelcloud"
@@ -100,7 +98,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.0.4"
+      version = "1.0.5"
     }
   }
 }
