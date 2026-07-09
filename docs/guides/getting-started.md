@@ -51,7 +51,7 @@ make install
 
 `make install` copies the binary to both locations:
 
-- `~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/1.0.5/linux_amd64/`
+- `~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/1.0.6/linux_amd64/`
 - `~/go/bin/`
 
 -> **Note:** On macOS, replace `linux_amd64` with `darwin_amd64` in the Makefile `OS_ARCH` variable before running `make install`.
@@ -84,7 +84,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.0.5"
+      version = "1.0.6"
     }
   }
 }
