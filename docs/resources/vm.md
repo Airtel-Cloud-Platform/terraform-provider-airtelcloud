@@ -16,22 +16,17 @@ Uses the v2.1 Compute API with domain/project URL paths. The provider's `organiz
 ### Basic Linux VM
 
 ```terraform
-resource "airtelcloud_security_group" "web" {
-  security_group_name = "web-sg"
-  availability_zone   = "S1"
-}
 
 resource "airtelcloud_vm" "web_server" {
   instance_name     = "web-server"
-  flavor_name       = "t2.micro"
-  image_name        = "ubuntu-22.04"
+  flavor_name       = "ccd.Large"
+  image_name        = "Ubuntu22_04_Jul2026"
   os_type           = "linux"
-  vpc_id            = "vpc-abc123"
-  subnet_id         = "subnet-def456"
-  security_group_id = airtelcloud_security_group.web.id
-  keypair_id        = "my-keypair"
+  vpc_id            = "vpc-id-123"
+  subnet_id         = "subnet-id-123"
+  security_group_id = "sg-id-123"
   availability_zone = "S1"
-  disk_size         = 40
+  disk_size         = 100
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
@@ -55,17 +50,18 @@ You can attach the security group during provisioning by setting either `securit
 ```terraform
 resource "airtelcloud_vm" "windows_server" {
   instance_name     = "win-server"
-  flavor_name       = "m5.large"
-  image_name        = "windows-2022"
+  flavor_name       = "ccd.Large"
+  image_name        = "WIN2K19_PREACT_Jul2026"
   os_type           = "windows"
-  vpc_id            = "vpc-abc123"
-  subnet_id         = "subnet-def456"
-  availability_zone = "S2"
+  vpc_id            = "vpc-id-123"
+  subnet_id         = "subnet-id-123"
+  security_group_id = "sg-id-123"
+  availability_zone = "S1"
   disk_size         = 100
   boot_from_volume  = true
   enable_backup     = true
   protection_plan   = "daily"
-  start_date        = "2025-01-15"
+  start_date        = "2025-07-15"
   start_time        = "02:00"
 
   tags = {
