@@ -22,9 +22,9 @@ resource "airtelcloud_vm" "web_server" {
   flavor_name       = "ccd.Large"
   image_name        = "Ubuntu22_04_Jul2026"
   os_type           = "linux"
-  vpc_id            = "vpc-id-123"
-  subnet_id         = "subnet-id-123"
-  security_group_id = "sg-id-123"
+  vpc_id            = "<vpc-uuid>"
+  subnet_id         = "<subnet-uuid>"
+  security_group_id = "<security-group-uuid>"
   availability_zone = "S1"
   disk_size         = 100
 
@@ -43,6 +43,8 @@ resource "airtelcloud_vm" "web_server" {
 }
 ```
 
+Replace the UUID placeholders with real IDs from your environment. If these resources are managed in the same Terraform configuration, prefer references instead of hardcoded values, for example: `vpc_id = airtelcloud_vpc.main.id`, `subnet_id = airtelcloud_subnet.main.id`, and `security_group_id = airtelcloud_security_group.main.id`.
+
 You can attach the security group during provisioning by setting either `security_group_id` or `security_group_name`. If the security group is managed in the same Terraform configuration, prefer `security_group_id = airtelcloud_security_group.<name>.id`.
 
 ### Windows VM with Backup
@@ -53,9 +55,9 @@ resource "airtelcloud_vm" "windows_server" {
   flavor_name       = "ccd.Large"
   image_name        = "WIN2K19_PREACT_Jul2026"
   os_type           = "windows"
-  vpc_id            = "vpc-id-123"
-  subnet_id         = "subnet-id-123"
-  security_group_id = "sg-id-123"
+  vpc_id            = "<vpc-uuid>"
+  subnet_id         = "<subnet-uuid>"
+  security_group_id = "<security-group-uuid>"
   availability_zone = "S1"
   disk_size         = 100
   boot_from_volume  = true
