@@ -28,8 +28,10 @@ This repository contains a Terraform provider for managing Airtel Public Cloud r
 Clone the repository and use the Makefile:
 
 ```shell
-git clone https://github.com/terraform-providers/terraform-provider-airtelcloud.git
-cd acp-terraform
+git clone https://github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud.git
+cd terraform-provider-airtelcloud
+
+
 
 # Compile the provider binary
 make build

@@ -3,7 +3,8 @@ NAMESPACE=terraform-providers
 NAME=airtelcloud
 BINARY=terraform-provider-${NAME}
 VERSION=1.0.4
-OS_ARCH=linux_amd64
+OS_ARCH?=$(shell go env GOOS)_$(shell go env GOARCH)
+GOPATH_BIN?=$(shell go env GOPATH)/bin
 
 default: install
 
@@ -43,8 +44,9 @@ release:
 
 install: build
 	mkdir -p ~/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
+	mkdir -p ${GOPATH_BIN}
 	cp ${BINARY} ~/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
-	cp ${BINARY} ~/go/bin/
+	cp ${BINARY} ${GOPATH_BIN}/
 
 test:
 	go test -i $(shell go list ./...) || exit 1
