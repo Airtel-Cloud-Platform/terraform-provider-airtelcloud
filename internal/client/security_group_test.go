@@ -65,7 +65,7 @@ func TestCreateSecurityGroupWithAvailabilityZone(t *testing.T) {
 	defer mockServer.Close()
 
 	var receivedAZ string
-	mockServer.AddHandler("POST", "/api/v1/networks/securitygroup/", func(w http.ResponseWriter, r *http.Request) {
+	mockServer.AddHandler("POST", "/api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/", func(w http.ResponseWriter, r *http.Request) {
 		receivedAZ = r.Header.Get("ce-availability-zone")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -109,30 +109,32 @@ func TestGetSecurityGroup(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		id       int
+		uuid     string
 		wantErr  bool
 		wantName string
+		wantID   int
 	}{
 		{
 			name:     "successful security group retrieval",
-			id:       1,
+			uuid:     "sg-uuid-1234",
 			wantErr:  false,
 			wantName: "test-sg",
+			wantID:   1,
 		},
 		{
 			name:    "security group not found",
-			id:      999,
+			uuid:    "sg-uuid-999",
 			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.id == 999 {
-				mockServer.SetErrorResponse("GET", "/api/v1/networks/securitygroup/999/", 404, "Not found")
+			if tt.uuid == "sg-uuid-999" {
+				mockServer.SetErrorResponse("GET", "/api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-999/", 404, "Not found")
 			}
 
-			sg, err := client.GetSecurityGroup(context.Background(), tt.id)
+			sg, err := client.GetSecurityGroup(context.Background(), tt.uuid)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetSecurityGroup() error = %v, wantErr %v", err, tt.wantErr)
@@ -147,8 +149,8 @@ func TestGetSecurityGroup(t *testing.T) {
 				if sg.SecurityGroupName != tt.wantName {
 					t.Errorf("GetSecurityGroup() name = %v, want %v", sg.SecurityGroupName, tt.wantName)
 				}
-				if sg.ID != tt.id {
-					t.Errorf("GetSecurityGroup() ID = %v, want %v", sg.ID, tt.id)
+				if sg.ID != tt.wantID {
+					t.Errorf("GetSecurityGroup() ID = %v, want %v", sg.ID, tt.wantID)
 				}
 				if len(sg.Rules) == 0 {
 					t.Error("GetSecurityGroup() returned no rules")
@@ -167,28 +169,28 @@ func TestDeleteSecurityGroup(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		id      int
+		uuid    string
 		wantErr bool
 	}{
 		{
 			name:    "successful security group deletion",
-			id:      1,
+			uuid:    "sg-uuid-1234",
 			wantErr: false,
 		},
 		{
 			name:    "delete nonexistent security group",
-			id:      999,
+			uuid:    "sg-uuid-999",
 			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.id == 999 {
-				mockServer.SetErrorResponse("DELETE", "/api/v1/networks/securitygroup/999/", 404, "Not found")
+			if tt.uuid == "sg-uuid-999" {
+				mockServer.SetErrorResponse("DELETE", "/api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-999/", 404, "Not found")
 			}
 
-			err := client.DeleteSecurityGroup(context.Background(), tt.id)
+			err := client.DeleteSecurityGroup(context.Background(), tt.uuid)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DeleteSecurityGroup() error = %v, wantErr %v", err, tt.wantErr)
@@ -211,7 +213,7 @@ func TestListSecurityGroupsDetailed(t *testing.T) {
 		{
 			name: "empty list",
 			setup: func(ms *testutil.MockServer) {
-				ms.AddHandler("GET", "/api/v1/networks/securitygroup/", func(w http.ResponseWriter, r *http.Request) {
+				ms.AddHandler("GET", "/api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/", func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					json.NewEncoder(w).Encode([]models.SecurityGroupDetail{})
 				})
@@ -221,7 +223,7 @@ func TestListSecurityGroupsDetailed(t *testing.T) {
 		{
 			name: "server error",
 			setup: func(ms *testutil.MockServer) {
-				ms.SetErrorResponse("GET", "/api/v1/networks/securitygroup/", 500, "Internal server error")
+				ms.SetErrorResponse("GET", "/api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/", 500, "Internal server error")
 			},
 			wantErr: true,
 		},
@@ -272,13 +274,13 @@ func TestCreateSecurityGroupRule(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		sgID    int
+		sgUUID  string
 		request *models.CreateSecurityGroupRuleRequest
 		wantErr bool
 	}{
 		{
-			name: "successful rule creation",
-			sgID: 1,
+			name:   "successful rule creation",
+			sgUUID: "sg-uuid-1234",
 			request: &models.CreateSecurityGroupRuleRequest{
 				Direction:      "ingress",
 				Protocol:       "tcp",
@@ -294,7 +296,7 @@ func TestCreateSecurityGroupRule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rule, err := client.CreateSecurityGroupRule(context.Background(), tt.sgID, tt.request)
+			rule, err := client.CreateSecurityGroupRule(context.Background(), tt.sgUUID, tt.request)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateSecurityGroupRule() error = %v, wantErr %v", err, tt.wantErr)
@@ -328,32 +330,30 @@ func TestGetSecurityGroupRule(t *testing.T) {
 	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
 
 	tests := []struct {
-		name    string
-		sgID    int
-		ruleID  int
-		wantErr bool
+		name     string
+		sgUUID   string
+		ruleUUID string
+		wantErr  bool
+		wantID   int
 	}{
 		{
-			name:    "successful rule retrieval",
-			sgID:    1,
-			ruleID:  10,
-			wantErr: false,
+			name:     "successful rule retrieval",
+			sgUUID:   "sg-uuid-1234",
+			ruleUUID: "rule-uuid-1",
+			wantErr:  false,
+			wantID:   10,
 		},
 		{
-			name:    "rule not found",
-			sgID:    1,
-			ruleID:  999,
-			wantErr: true,
+			name:     "rule not found",
+			sgUUID:   "sg-uuid-1234",
+			ruleUUID: "rule-uuid-999",
+			wantErr:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.ruleID == 999 {
-				mockServer.SetErrorResponse("GET", "/api/v1/networks/securitygroup/1/securitygrouprule/999/", 404, "Not found")
-			}
-
-			rule, err := client.GetSecurityGroupRule(context.Background(), tt.sgID, tt.ruleID)
+			rule, err := client.GetSecurityGroupRule(context.Background(), tt.sgUUID, tt.ruleUUID)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetSecurityGroupRule() error = %v, wantErr %v", err, tt.wantErr)
@@ -365,8 +365,8 @@ func TestGetSecurityGroupRule(t *testing.T) {
 					t.Error("GetSecurityGroupRule() returned nil")
 					return
 				}
-				if rule.ID != tt.ruleID {
-					t.Errorf("GetSecurityGroupRule() ID = %v, want %v", rule.ID, tt.ruleID)
+				if rule.ID != tt.wantID {
+					t.Errorf("GetSecurityGroupRule() ID = %v, want %v", rule.ID, tt.wantID)
 				}
 				if rule.Direction != "ingress" {
 					t.Errorf("GetSecurityGroupRule() direction = %v, want ingress", rule.Direction)
@@ -384,32 +384,32 @@ func TestDeleteSecurityGroupRule(t *testing.T) {
 	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
 
 	tests := []struct {
-		name    string
-		sgID    int
-		ruleID  int
-		wantErr bool
+		name     string
+		sgUUID   string
+		ruleUUID string
+		wantErr  bool
 	}{
 		{
-			name:    "successful rule deletion",
-			sgID:    1,
-			ruleID:  10,
-			wantErr: false,
+			name:     "successful rule deletion",
+			sgUUID:   "sg-uuid-1234",
+			ruleUUID: "rule-uuid-1",
+			wantErr:  false,
 		},
 		{
-			name:    "delete nonexistent rule",
-			sgID:    1,
-			ruleID:  999,
-			wantErr: false,
+			name:     "delete nonexistent rule",
+			sgUUID:   "sg-uuid-1234",
+			ruleUUID: "rule-uuid-999",
+			wantErr:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.ruleID == 999 {
-				mockServer.SetErrorResponse("DELETE", "/api/v1/networks/securitygroup/1/securitygrouprule/999/", 404, "Not found")
+			if tt.ruleUUID == "rule-uuid-999" {
+				mockServer.SetErrorResponse("DELETE", "/api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-1234/security-group-rules/rule-uuid-999/", 404, "Not found")
 			}
 
-			err := client.DeleteSecurityGroupRule(context.Background(), tt.sgID, tt.ruleID)
+			err := client.DeleteSecurityGroupRule(context.Background(), tt.sgUUID, tt.ruleUUID)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DeleteSecurityGroupRule() error = %v, wantErr %v", err, tt.wantErr)
@@ -421,32 +421,32 @@ func TestDeleteSecurityGroupRule(t *testing.T) {
 func TestListSecurityGroupRules(t *testing.T) {
 	tests := []struct {
 		name      string
-		sgID      int
+		sgUUID    string
 		setup     func(ms *testutil.MockServer)
 		wantCount int
 		wantErr   bool
 	}{
 		{
 			name:      "successful list all rules",
-			sgID:      1,
+			sgUUID:    "sg-uuid-1234",
 			wantCount: 2,
 		},
 		{
-			name: "empty list",
-			sgID: 1,
+			name:   "empty list",
+			sgUUID: "sg-uuid-1234",
 			setup: func(ms *testutil.MockServer) {
-				ms.AddHandler("GET", "/api/v1/networks/securitygroup/1/securitygrouprule/", func(w http.ResponseWriter, r *http.Request) {
+				ms.AddHandler("GET", "/api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-1234/", func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode([]models.SecurityGroupRuleDetail{})
+					json.NewEncoder(w).Encode(models.SecurityGroupDetail{ID: 1, UUID: "sg-uuid-1234", Rules: []models.SecurityGroupRuleDetail{}})
 				})
 			},
 			wantCount: 0,
 		},
 		{
-			name: "server error",
-			sgID: 1,
+			name:   "server error",
+			sgUUID: "sg-uuid-1234",
 			setup: func(ms *testutil.MockServer) {
-				ms.SetErrorResponse("GET", "/api/v1/networks/securitygroup/1/securitygrouprule/", 500, "Internal server error")
+				ms.SetErrorResponse("GET", "/api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-1234/", 500, "Internal server error")
 			},
 			wantErr: true,
 		},
@@ -464,7 +464,7 @@ func TestListSecurityGroupRules(t *testing.T) {
 			baseURL := strings.TrimSuffix(mockServer.URL, "/")
 			client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
 
-			rules, err := client.ListSecurityGroupRules(context.Background(), tt.sgID)
+			rules, err := client.ListSecurityGroupRules(context.Background(), tt.sgUUID)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ListSecurityGroupRules() error = %v, wantErr %v", err, tt.wantErr)

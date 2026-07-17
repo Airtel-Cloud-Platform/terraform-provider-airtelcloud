@@ -8,10 +8,10 @@ terraform {
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://south.cloud.airtel.in"
+  api_endpoint = "https://north.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "south"
+  region       = "north"
   organization = var.organization
   project_name = var.project_name
 }
@@ -47,7 +47,7 @@ variable "resource_prefix" {
 # Create a security group
 resource "airtelcloud_security_group" "web" {
   security_group_name = "${var.resource_prefix}-sg-http-servers"
-  availability_zone   = "S2"
+  availability_zone   = "N2"
 }
 
 # Output security group details

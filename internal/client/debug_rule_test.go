@@ -26,7 +26,7 @@ func TestSecurityGroupIntegration_DebugRuleCreate(t *testing.T) {
 	}
 	t.Logf("SG created: ID=%d", sg.ID)
 	defer func() {
-		client.DeleteSecurityGroup(ctx, sg.ID)
+		client.DeleteSecurityGroup(ctx, sg.UUID)
 	}()
 
 	// Create a rule via bulk endpoint and observe ALL returned rules
@@ -46,7 +46,7 @@ func TestSecurityGroupIntegration_DebugRuleCreate(t *testing.T) {
 	}
 
 	var rules []models.SecurityGroupRuleDetail
-	err = client.PostURLEncodedForm(ctx, fmt.Sprintf("/api/v1/networks/securitygroup/%d/bulksecuritygrouprule/", sg.ID), formData, &rules)
+	err = client.PostURLEncodedForm(ctx, fmt.Sprintf("%s/%d/bulk-security-group-rules/", client.securityGroupBasePath(), sg.ID), formData, &rules)
 	if err != nil {
 		t.Fatalf("Bulk create failed: %v", err)
 	}

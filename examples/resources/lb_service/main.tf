@@ -92,6 +92,9 @@ resource "airtelcloud_lb_virtual_server" "http" {
       weight     = 50
     },
     {
+      # Each node may reference its backend instance by name instead of id
+      # (compute_id and compute_name are mutually exclusive per node):
+      # compute_name = "my-instance"
       compute_id = 102
       compute_ip = "192.168.1.11"
       port       = 8080

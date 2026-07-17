@@ -48,7 +48,7 @@ func TestSecurityGroupIntegration_CreateGetDelete(t *testing.T) {
 	// Cleanup: Delete security group at the end
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		} else {
@@ -58,7 +58,7 @@ func TestSecurityGroupIntegration_CreateGetDelete(t *testing.T) {
 
 	// Get security group
 	t.Logf("Getting security group: %d", sg.ID)
-	fetchedSG, err := client.GetSecurityGroup(ctx, sg.ID)
+	fetchedSG, err := client.GetSecurityGroup(ctx, sg.UUID)
 	if err != nil {
 		t.Fatalf("GetSecurityGroup failed: %v", err)
 	}
@@ -108,9 +108,9 @@ func TestSecurityGroupIntegration_GetNonExistent(t *testing.T) {
 	client := createVPCTestClient(t, config)
 	ctx := context.Background()
 
-	nonExistentID := 99999999
+	nonExistentID := "nonexistent-sg-uuid"
 
-	t.Logf("Attempting to get non-existent security group: %d", nonExistentID)
+	t.Logf("Attempting to get non-existent security group: %s", nonExistentID)
 
 	_, err := client.GetSecurityGroup(ctx, nonExistentID)
 	if err == nil {
@@ -150,7 +150,7 @@ func TestSecurityGroupIntegration_RuleLifecycle(t *testing.T) {
 	// Cleanup: Delete security group at the end
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		} else {
@@ -169,7 +169,7 @@ func TestSecurityGroupIntegration_RuleLifecycle(t *testing.T) {
 	}
 
 	t.Log("Creating SSH ingress rule")
-	rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, ruleReq)
+	rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, ruleReq)
 	if err != nil {
 		t.Fatalf("CreateSecurityGroupRule failed: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestSecurityGroupIntegration_RuleLifecycle(t *testing.T) {
 
 	// Get rule
 	t.Logf("Getting rule: %d", rule.ID)
-	fetchedRule, err := client.GetSecurityGroupRule(ctx, sg.ID, rule.ID)
+	fetchedRule, err := client.GetSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Fatalf("GetSecurityGroupRule failed: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestSecurityGroupIntegration_RuleLifecycle(t *testing.T) {
 
 	// List rules
 	t.Log("Listing rules")
-	rules, err := client.ListSecurityGroupRules(ctx, sg.ID)
+	rules, err := client.ListSecurityGroupRules(ctx, sg.UUID)
 	if err != nil {
 		t.Fatalf("ListSecurityGroupRules failed: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestSecurityGroupIntegration_RuleLifecycle(t *testing.T) {
 
 	// Delete rule
 	t.Logf("Deleting rule: %d", rule.ID)
-	err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+	err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Errorf("DeleteSecurityGroupRule failed: %v", err)
 	} else {
@@ -235,7 +235,7 @@ func TestSecurityGroupIntegration_MultipleRules(t *testing.T) {
 	// Cleanup: Delete security group at the end
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		} else {
@@ -287,7 +287,7 @@ func TestSecurityGroupIntegration_MultipleRules(t *testing.T) {
 	var createdRules []*models.SecurityGroupRuleDetail
 	for _, rc := range ruleConfigs {
 		t.Logf("Creating %s rule", rc.name)
-		rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, rc.req)
+		rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, rc.req)
 		if err != nil {
 			t.Fatalf("CreateSecurityGroupRule (%s) failed: %v", rc.name, err)
 		}
@@ -296,7 +296,7 @@ func TestSecurityGroupIntegration_MultipleRules(t *testing.T) {
 	}
 
 	// List rules and verify count
-	rules, err := client.ListSecurityGroupRules(ctx, sg.ID)
+	rules, err := client.ListSecurityGroupRules(ctx, sg.UUID)
 	if err != nil {
 		t.Fatalf("ListSecurityGroupRules failed: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestSecurityGroupIntegration_MultipleRules(t *testing.T) {
 	// Delete all created rules
 	for i, rule := range createdRules {
 		t.Logf("Deleting rule %d: ID=%d", i+1, rule.ID)
-		err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+		err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroupRule (ID=%d) failed: %v", rule.ID, err)
 		}
@@ -338,7 +338,7 @@ func TestSecurityGroupIntegration_EgressRule(t *testing.T) {
 
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		}
@@ -355,7 +355,7 @@ func TestSecurityGroupIntegration_EgressRule(t *testing.T) {
 	}
 
 	t.Log("Creating egress HTTPS rule")
-	rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, ruleReq)
+	rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, ruleReq)
 	if err != nil {
 		t.Fatalf("CreateSecurityGroupRule failed: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestSecurityGroupIntegration_EgressRule(t *testing.T) {
 	}
 
 	// Re-fetch and verify direction persists
-	fetched, err := client.GetSecurityGroupRule(ctx, sg.ID, rule.ID)
+	fetched, err := client.GetSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Fatalf("GetSecurityGroupRule failed: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestSecurityGroupIntegration_EgressRule(t *testing.T) {
 	}
 
 	// Cleanup rule
-	err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+	err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Errorf("DeleteSecurityGroupRule failed: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestSecurityGroupIntegration_UDPRule(t *testing.T) {
 
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		}
@@ -428,7 +428,7 @@ func TestSecurityGroupIntegration_UDPRule(t *testing.T) {
 	}
 
 	t.Log("Creating UDP DNS ingress rule")
-	rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, ruleReq)
+	rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, ruleReq)
 	if err != nil {
 		t.Fatalf("CreateSecurityGroupRule failed: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestSecurityGroupIntegration_UDPRule(t *testing.T) {
 	}
 
 	// Cleanup rule
-	err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+	err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Errorf("DeleteSecurityGroupRule failed: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestSecurityGroupIntegration_ICMPRule(t *testing.T) {
 
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		}
@@ -489,7 +489,7 @@ func TestSecurityGroupIntegration_ICMPRule(t *testing.T) {
 	}
 
 	t.Log("Creating ICMP ingress rule")
-	rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, ruleReq)
+	rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, ruleReq)
 	if err != nil {
 		t.Fatalf("CreateSecurityGroupRule failed: %v", err)
 	}
@@ -501,7 +501,7 @@ func TestSecurityGroupIntegration_ICMPRule(t *testing.T) {
 	}
 
 	// Cleanup rule
-	err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+	err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Errorf("DeleteSecurityGroupRule failed: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestSecurityGroupIntegration_PortRange(t *testing.T) {
 
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		}
@@ -545,7 +545,7 @@ func TestSecurityGroupIntegration_PortRange(t *testing.T) {
 	}
 
 	t.Log("Creating TCP port range rule (8000-9000)")
-	rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, ruleReq)
+	rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, ruleReq)
 	if err != nil {
 		t.Fatalf("CreateSecurityGroupRule failed: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestSecurityGroupIntegration_PortRange(t *testing.T) {
 	}
 
 	// Cleanup rule
-	err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+	err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Errorf("DeleteSecurityGroupRule failed: %v", err)
 	}
@@ -587,7 +587,7 @@ func TestSecurityGroupIntegration_RuleWithDescription(t *testing.T) {
 
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		}
@@ -606,7 +606,7 @@ func TestSecurityGroupIntegration_RuleWithDescription(t *testing.T) {
 	}
 
 	t.Log("Creating MySQL rule with description")
-	rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, ruleReq)
+	rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, ruleReq)
 	if err != nil {
 		t.Fatalf("CreateSecurityGroupRule failed: %v", err)
 	}
@@ -618,7 +618,7 @@ func TestSecurityGroupIntegration_RuleWithDescription(t *testing.T) {
 	}
 
 	// Re-fetch and verify description persists
-	fetched, err := client.GetSecurityGroupRule(ctx, sg.ID, rule.ID)
+	fetched, err := client.GetSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Fatalf("GetSecurityGroupRule failed: %v", err)
 	}
@@ -628,7 +628,7 @@ func TestSecurityGroupIntegration_RuleWithDescription(t *testing.T) {
 	}
 
 	// Cleanup rule
-	err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+	err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Errorf("DeleteSecurityGroupRule failed: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestSecurityGroupIntegration_RestrictedCIDR(t *testing.T) {
 
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		}
@@ -672,7 +672,7 @@ func TestSecurityGroupIntegration_RestrictedCIDR(t *testing.T) {
 	}
 
 	t.Log("Creating SSH rule with restricted CIDR 10.0.0.0/8")
-	rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, ruleReq)
+	rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, ruleReq)
 	if err != nil {
 		t.Fatalf("CreateSecurityGroupRule failed: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestSecurityGroupIntegration_RestrictedCIDR(t *testing.T) {
 	}
 
 	// Cleanup rule
-	err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+	err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 	if err != nil {
 		t.Errorf("DeleteSecurityGroupRule failed: %v", err)
 	}
@@ -711,17 +711,17 @@ func TestSecurityGroupIntegration_GetNonExistentRule(t *testing.T) {
 
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		}
 	}()
 
-	nonExistentRuleID := 99999999
+	nonExistentRuleID := "nonexistent-rule-uuid"
 
-	t.Logf("Attempting to get non-existent rule: %d", nonExistentRuleID)
+	t.Logf("Attempting to get non-existent rule: %s", nonExistentRuleID)
 
-	_, err = client.GetSecurityGroupRule(ctx, sg.ID, nonExistentRuleID)
+	_, err = client.GetSecurityGroupRule(ctx, sg.UUID, nonExistentRuleID)
 	if err == nil {
 		t.Error("Expected error for non-existent security group rule, got nil")
 		return
@@ -757,7 +757,7 @@ func TestSecurityGroupIntegration_MultipleProtocolRules(t *testing.T) {
 
 	defer func() {
 		t.Logf("Deleting security group: %d", sg.ID)
-		err := client.DeleteSecurityGroup(ctx, sg.ID)
+		err := client.DeleteSecurityGroup(ctx, sg.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroup failed: %v", err)
 		}
@@ -821,7 +821,7 @@ func TestSecurityGroupIntegration_MultipleProtocolRules(t *testing.T) {
 	var createdRules []*models.SecurityGroupRuleDetail
 	for _, rc := range ruleConfigs {
 		t.Logf("Creating %s rule", rc.name)
-		rule, err := client.CreateSecurityGroupRule(ctx, sg.ID, rc.req)
+		rule, err := client.CreateSecurityGroupRule(ctx, sg.UUID, rc.req)
 		if err != nil {
 			t.Fatalf("CreateSecurityGroupRule (%s) failed: %v", rc.name, err)
 		}
@@ -830,7 +830,7 @@ func TestSecurityGroupIntegration_MultipleProtocolRules(t *testing.T) {
 	}
 
 	// List rules and verify count
-	rules, err := client.ListSecurityGroupRules(ctx, sg.ID)
+	rules, err := client.ListSecurityGroupRules(ctx, sg.UUID)
 	if err != nil {
 		t.Fatalf("ListSecurityGroupRules failed: %v", err)
 	}
@@ -851,7 +851,7 @@ func TestSecurityGroupIntegration_MultipleProtocolRules(t *testing.T) {
 	// Delete all created rules
 	for i, rule := range createdRules {
 		t.Logf("Deleting rule %d: ID=%d", i+1, rule.ID)
-		err = client.DeleteSecurityGroupRule(ctx, sg.ID, rule.ID)
+		err = client.DeleteSecurityGroupRule(ctx, sg.UUID, rule.UUID)
 		if err != nil {
 			t.Errorf("DeleteSecurityGroupRule (ID=%d) failed: %v", rule.ID, err)
 		}

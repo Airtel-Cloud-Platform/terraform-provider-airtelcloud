@@ -16,12 +16,23 @@ This repository contains a Terraform provider for managing Airtel Public Cloud r
 - **Backup**: Create and manage virtual machine backups and protection plans.
 - **Public IP**: Create and manage Public IPs and related policies.
 
+## Prerequisites
 
+| Requirement | Version |
+|---|---|
+| [Terraform](https://www.terraform.io/downloads.html) | >= 1.0 |
+| [Go](https://golang.org/doc/install) | >= 1.24 |
+| Airtel Cloud account | With API key and secret |
 
-## Requirements
+Install Go from the [official Go installation guide](https://go.dev/doc/install), then verify your environment:
 
-- [Terraform](https://www.terraform.io/downloads.html) >= 1.0
-- [Go](https://golang.org/doc/install) >= 1.24
+```shell
+go version
+go env GOPATH
+mkdir -p "$(go env GOPATH)/bin"
+```
+
+If you run commands as `root`, `go env GOPATH` is typically `/root/go`, so your binary path will be `/root/go/bin`.
 
 ## Building the Provider
 
@@ -30,8 +41,6 @@ Clone the repository and use the Makefile:
 ```shell
 git clone https://github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud.git
 cd terraform-provider-airtelcloud
-
-
 
 # Compile the provider binary
 make build
@@ -43,7 +52,7 @@ make install
 `make install` places the binary at:
 
 ```
-~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/0.2.0/<OS_ARCH>/
+~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.0.6/<OS_ARCH>/
 ```
 
 where `<OS_ARCH>` is `linux_amd64` by default (configurable in the Makefile).
@@ -57,7 +66,7 @@ Create or update `~/.terraformrc`:
 ```hcl
 provider_installation {
   dev_overrides {
-    "Airtel-Cloud-Platform/airtelcloud" = "<GOPATH>/bin"
+      "Airtel-Cloud-Platform/airtelcloud" = "<GOPATH>/bin"
   }
   direct {}
 }
@@ -91,7 +100,6 @@ terraform {
     }
   }
 }
-
 
 provider "airtelcloud" {
   api_endpoint = "https://south.cloud.airtel.in"

@@ -22,6 +22,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &VolumeResource{}
 var _ resource.ResourceWithImportState = &VolumeResource{}
+var _ resource.ResourceWithValidateConfig = &VolumeResource{}
 
 func NewVolumeResource() resource.Resource {
 	return &VolumeResource{}
@@ -45,6 +46,7 @@ type VolumeResourceModel struct {
 	VPCID            types.String `tfsdk:"vpc_id"`
 	SubnetID         types.String `tfsdk:"subnet_id"`
 	ComputeID        types.String `tfsdk:"compute_id"`
+	ComputeName      types.String `tfsdk:"compute_name"`
 	IsEncrypted      types.Bool   `tfsdk:"is_encrypted"`
 	Bootable         types.Bool   `tfsdk:"bootable"`
 	EnableBackup     types.Bool   `tfsdk:"enable_backup"`
@@ -52,21 +54,58 @@ type VolumeResourceModel struct {
 	AttachmentDevice types.String `tfsdk:"attachment_device"`
 }
 
-// computeIDPlanModifier ensures that removing compute_id from config
-// produces a null plan value instead of preserving the prior state.
+// computeIDPlanModifier computes the plan value for the Optional+Computed compute_id
+// attribute, accounting for the sibling compute_name attribute:
+//   - compute_id set in config: keep the configured value.
+//   - neither compute_id nor compute_name set: null (detach).
+//   - compute_name set, on create: unknown (resolved during apply).
+//   - compute_name set, on update with unchanged name: keep the prior resolved id.
+//   - compute_name set, on update with changed name: unknown (re-resolved on apply).
 type computeIDPlanModifier struct{}
 
 func (m computeIDPlanModifier) Description(_ context.Context) string {
-	return "Sets plan value to null when compute_id is removed from configuration."
+	return "Derives compute_id from config, or from a resolved compute_name, otherwise null when both are removed."
 }
 
 func (m computeIDPlanModifier) MarkdownDescription(ctx context.Context) string {
 	return m.Description(ctx)
 }
 
-func (m computeIDPlanModifier) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	if req.ConfigValue.IsNull() {
+func (m computeIDPlanModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	// compute_id explicitly set in config: keep it.
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+
+	var configName types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("compute_name"), &configName)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Neither compute_id nor compute_name in config: detach.
+	if configName.IsNull() {
 		resp.PlanValue = types.StringNull()
+		return
+	}
+
+	// compute_name is set. On create there is no prior state to reuse.
+	if req.State.Raw.IsNull() {
+		resp.PlanValue = types.StringUnknown()
+		return
+	}
+
+	// On update, reuse the prior resolved id when the name is unchanged so re-plans
+	// are clean; mark unknown when the name changed so it is re-resolved during apply.
+	var stateName types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("compute_name"), &stateName)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if configName.Equal(stateName) {
+		resp.PlanValue = req.StateValue
+	} else {
+		resp.PlanValue = types.StringUnknown()
 	}
 }
 
@@ -166,12 +205,16 @@ func (r *VolumeResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"compute_id": schema.StringAttribute{
-				MarkdownDescription: "The compute instance ID to attach the volume to.",
+				MarkdownDescription: "The compute instance ID to attach the volume to. Mutually exclusive with compute_name.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					computeIDPlanModifier{},
 				},
+			},
+			"compute_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the compute instance to attach the volume to. If set, it is resolved to compute_id. Mutually exclusive with compute_id.",
+				Optional:            true,
 			},
 			"is_encrypted": schema.BoolAttribute{
 				MarkdownDescription: "Whether the volume is encrypted. Default: `false`.",
@@ -234,6 +277,22 @@ func (r *VolumeResource) Configure(ctx context.Context, req resource.ConfigureRe
 	r.client = client
 }
 
+// ValidateConfig enforces that compute_id and compute_name are not both set. Both
+// may be omitted — an unattached volume is valid.
+func (r *VolumeResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data VolumeResourceModel
+
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.ComputeID.IsNull() && !data.ComputeName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of compute_id or compute_name may be specified, not both.")
+	}
+}
+
 func (r *VolumeResource) volumeClient(subnetID types.String) *client.Client {
 	if !subnetID.IsNull() && subnetID.ValueString() != "" {
 		return r.client.WithSubnetID(subnetID.ValueString())
@@ -251,6 +310,26 @@ func (r *VolumeResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 
 	volumeClient := r.volumeClient(data.SubnetID)
+
+	// Resolve compute_name to compute_id when configured by name, and persist the
+	// resolved id into the Computed compute_id attribute so it is known in state.
+	computeID := data.ComputeID.ValueString()
+	if computeID == "" && !data.ComputeName.IsNull() {
+		resolved, err := volumeClient.ResolveComputeID(ctx, data.ComputeName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Compute Resolution Error", fmt.Sprintf("Unable to resolve compute name %q: %s", data.ComputeName.ValueString(), err))
+			return
+		}
+		computeID = resolved
+	}
+	// Mirror the plan modifier: an empty compute id means the volume is not
+	// attached, which the plan represents as null. Setting StringValue("") here
+	// would conflict with that null plan value ("was null, but now \"\"").
+	if computeID == "" {
+		data.ComputeID = types.StringNull()
+	} else {
+		data.ComputeID = types.StringValue(computeID)
+	}
 
 	// Validate volume type name against the API and resolve its ID
 	volumeTypeName := data.Type.ValueString()
@@ -305,7 +384,7 @@ func (r *VolumeResource) Create(ctx context.Context, req resource.CreateRequest,
 		VPCID:            data.VPCID.ValueString(),
 		Network:          data.VPCID.ValueString(),
 		SubnetID:         data.SubnetID.ValueString(),
-		ComputeID:        data.ComputeID.ValueString(),
+		ComputeID:        computeID,
 		IsEncrypted:      isEncrypted,
 		Bootable:         data.Bootable.ValueBool(),
 		EnableBackup:     data.EnableBackup.ValueBool(),
@@ -435,9 +514,20 @@ func (r *VolumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	// Handle attach/detach if compute_id changed
+	// Resolve the target compute id for this apply. When configured by name the
+	// Computed compute_id is unknown in the plan (its plan modifier only reuses the
+	// prior id when the name is unchanged), so resolve compute_name to a concrete id
+	// before diffing — otherwise a changed name would look like a detach.
 	oldComputeID := state.ComputeID.ValueString()
 	newComputeID := plan.ComputeID.ValueString()
+	if newComputeID == "" && !plan.ComputeName.IsNull() {
+		resolved, err := volumeClient.ResolveComputeID(ctx, plan.ComputeName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Compute Resolution Error", fmt.Sprintf("Unable to resolve compute name %q: %s", plan.ComputeName.ValueString(), err))
+			return
+		}
+		newComputeID = resolved
+	}
 	if oldComputeID != newComputeID {
 		// Use API as source of truth for current attachment state
 		actualAttachedID := ""
@@ -492,6 +582,15 @@ func (r *VolumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	computeID := newComputeID
+
+	// Persist the resolved compute id into the Computed compute_id attribute. It may
+	// be unknown in the plan (configured by a changed name); writing an unknown value
+	// to state is an error, so settle it here to the resolved id (or null if detached).
+	if computeID != "" {
+		plan.ComputeID = types.StringValue(computeID)
+	} else {
+		plan.ComputeID = types.StringNull()
+	}
 
 	updateReq := &models.UpdateVolumeRequest{
 		VolumeName:   plan.Name.ValueString(),

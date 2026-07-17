@@ -201,8 +201,8 @@ func TestResolveKeypairID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveKeypairID() error = %v", err)
 	}
-	if id != "1" {
-		t.Errorf("ResolveKeypairID() = %v, want 1", id)
+	if id != "aae08127-a18d-4aa3-b332-a77066ab7c90" {
+		t.Errorf("ResolveKeypairID() = %v, want aae08127-a18d-4aa3-b332-a77066ab7c90", id)
 	}
 
 	_, err = client.ResolveKeypairID(context.Background(), "nonexistent")
@@ -218,7 +218,7 @@ func TestResolveSecurityGroupID(t *testing.T) {
 	baseURL := strings.TrimSuffix(mockServer.URL, "/")
 	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
 
-	id, err := client.ResolveSecurityGroupID(context.Background(), "default")
+	id, err := client.ResolveSecurityGroupID(context.Background(), "test-sg")
 	if err != nil {
 		t.Fatalf("ResolveSecurityGroupID() error = %v", err)
 	}
@@ -260,16 +260,19 @@ func TestCreateComputeFormData(t *testing.T) {
 	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
 
 	req := &models.CreateComputeRequest{
-		InstanceName:   "test-instance",
-		ImageID:        "ubuntu-20.04",
-		FlavorID:       "1",
-		VPCID:          "vpc-1",
-		SubnetID:       "subnet-1",
-		NetworkID:      "subnet-1",
-		AZName:         "south-1a",
-		OSType:         "linux",
-		VolumeSize:     20,
-		BootFromVolume: true,
+		InstanceName:      "test-instance",
+		ImageID:           "ubuntu-20.04",
+		FlavorID:          "1",
+		VPCID:             "vpc-1",
+		SubnetID:          "subnet-1",
+		NetworkID:         "subnet-1",
+		AZName:            "south-1a",
+		OSType:            "linux",
+		VolumeSize:        20,
+		BootFromVolume:    true,
+		VMUsername:        "clouduser",
+		VMPassword:        "T3rraform!Pass",
+		VMConfirmPassword: "T3rraform!Pass",
 	}
 
 	compute, err := client.CreateCompute(context.Background(), req)
@@ -282,13 +285,16 @@ func TestCreateComputeFormData(t *testing.T) {
 
 	// Verify form data was sent correctly
 	expectedFields := map[string]string{
-		"instance_name":    "test-instance",
-		"image_id":         "ubuntu-20.04",
-		"flavor_id":        "1",
-		"vpc_id":           "vpc-1",
-		"os_type":          "linux",
-		"volume_size":      "20",
-		"boot_from_volume": "true",
+		"instance_name":       "test-instance",
+		"image_id":            "ubuntu-20.04",
+		"flavor_id":           "1",
+		"vpc_id":              "vpc-1",
+		"os_type":             "linux",
+		"volume_size":         "20",
+		"boot_from_volume":    "true",
+		"vm_username":         "clouduser",
+		"vm_password":         "T3rraform!Pass",
+		"vm_confirm_password": "T3rraform!Pass",
 	}
 
 	for field, expected := range expectedFields {
@@ -296,6 +302,50 @@ func TestCreateComputeFormData(t *testing.T) {
 			t.Errorf("CreateCompute() form missing field %q", field)
 		} else if got != expected {
 			t.Errorf("CreateCompute() form field %q = %q, want %q", field, got, expected)
+		}
+	}
+}
+
+// TestCreateComputeFormDataWithoutCredentials guards the omitempty contract: a
+// request with no credentials must not put the credential fields on the wire, so
+// existing keypair-based configs are unaffected.
+func TestCreateComputeFormDataWithoutCredentials(t *testing.T) {
+	var capturedForm map[string]string
+
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	mockServer.AddHandler("POST", "/api/v2.1/computes/domain/test-org/project/test-project/computes/", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		capturedForm = make(map[string]string)
+		for key := range r.PostForm {
+			capturedForm[key] = r.PostFormValue(key)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode([]models.Compute{{ID: "test-id", Status: "ACTIVE"}})
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	req := &models.CreateComputeRequest{
+		InstanceName: "test-instance",
+		OSType:       "linux",
+		KeypairID:    "7",
+	}
+
+	if _, err := client.CreateCompute(context.Background(), req); err != nil {
+		t.Fatalf("CreateCompute() error = %v", err)
+	}
+
+	if got, ok := capturedForm["keypair_id"]; !ok || got != "7" {
+		t.Errorf("CreateCompute() form field keypair_id = %q (present=%v), want %q", got, ok, "7")
+	}
+	for _, field := range []string{"vm_username", "vm_password", "vm_confirm_password"} {
+		if got, ok := capturedForm[field]; ok {
+			t.Errorf("CreateCompute() form should omit %q when unset, got %q", field, got)
 		}
 	}
 }

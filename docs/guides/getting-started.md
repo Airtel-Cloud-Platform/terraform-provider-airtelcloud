@@ -45,14 +45,11 @@ If you run commands as `root`, `go env GOPATH` is typically `/root/go`, so your 
 
 -> **Note:** Before starting, kindly ensure that `GO` and `Make` are installed/configured on your system.
 
-
 Clone the repository and build using the Makefile:
 
 ```shell
 git clone https://github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud
 cd terraform-provider-airtelcloud
-
-
 
 # Compile the provider binary
 make build
@@ -63,8 +60,10 @@ make install
 
 `make install` copies the binary to both locations:
 
-- `~/.terraform.d/plugins/registry.terraform.io/terraform-providers/airtelcloud/1.0.6/linux_amd64/`
-- `~/go/bin/`
+- `~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.0.6/<GOOS>_<GOARCH>/`
+- `$(go env GOPATH)/bin/`
+
+You can verify installation with:
 
 ```shell
 ls -l "$(go env GOPATH)/bin/terraform-provider-airtelcloud"
@@ -79,7 +78,7 @@ Create or update `~/.terraformrc`:
 ```hcl
 provider_installation {
   dev_overrides {
-    "Airtel-Cloud-Platform/airtelcloud" = "<GOPATH>/bin"
+   "Airtel-Cloud-Platform/airtelcloud" = "<GOPATH>/bin"
   }
   direct {}
 }

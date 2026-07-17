@@ -50,6 +50,8 @@ resource "airtelcloud_volume" "attached" {
   vpc_id            = airtelcloud_vpc.example.id
   subnet_id         = airtelcloud_subnet.example.id
   compute_id        = airtelcloud_vm.example.id
+  # Or attach by name instead of id (mutually exclusive with compute_id):
+  # compute_name    = airtelcloud_vm.example.instance_name
   is_encrypted      = true
   bootable          = false
 }
@@ -57,7 +59,7 @@ resource "airtelcloud_volume" "attached" {
 
 ### Re-attach Volume to a Different Compute Instance
 
-Changing `compute_id` detaches the volume from the old instance and attaches it to the new one without destroying and recreating the volume.
+Changing `compute_id` (or `compute_name`) detaches the volume from the old instance and attaches it to the new one without destroying and recreating the volume.
 
 ```terraform
 resource "airtelcloud_volume" "data" {
@@ -89,7 +91,8 @@ resource "airtelcloud_volume" "data" {
 
 ### Optional
 
-- `compute_id` (String) - The compute instance ID to attach the volume to. Changing this value will detach from the old instance and attach to the new one in-place (no replacement).
+- `compute_id` (String) - The compute instance ID to attach the volume to. Changing this value will detach from the old instance and attach to the new one in-place (no replacement). Mutually exclusive with `compute_name`.
+- `compute_name` (String) - The name of the compute instance to attach the volume to. If set, it is resolved to `compute_id`. Mutually exclusive with `compute_id`.
 - `enable_backup` (Boolean) - Whether backup is enabled for the volume. Default: `false`.
 
 ## Attribute Reference

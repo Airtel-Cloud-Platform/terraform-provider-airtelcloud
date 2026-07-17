@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -173,7 +172,7 @@ func (r *SecurityGroupResource) Read(ctx context.Context, req resource.ReadReque
 
 	sgClient := r.sgClient(data.AvailabilityZone)
 
-	sg, err := sgClient.GetSecurityGroup(ctx, int(data.ID.ValueInt64()))
+	sg, err := sgClient.GetSecurityGroup(ctx, data.UUID.ValueString())
 	if err != nil {
 		if apiErr, ok := err.(*client.APIError); ok && apiErr.StatusCode == 404 {
 			resp.State.RemoveResource(ctx)
@@ -211,7 +210,7 @@ func (r *SecurityGroupResource) Delete(ctx context.Context, req resource.DeleteR
 
 	sgClient := r.sgClient(data.AvailabilityZone)
 
-	err := sgClient.DeleteSecurityGroup(ctx, int(data.ID.ValueInt64()))
+	err := sgClient.DeleteSecurityGroup(ctx, data.UUID.ValueString())
 	if err != nil {
 		if apiErr, ok := err.(*client.APIError); ok && apiErr.StatusCode == 404 {
 			return
@@ -222,14 +221,15 @@ func (r *SecurityGroupResource) Delete(ctx context.Context, req resource.DeleteR
 }
 
 func (r *SecurityGroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	id, err := strconv.ParseInt(req.ID, 10, 64)
-	if err != nil {
+	// Security groups are addressed by UUID in the v2.1 API, so import by UUID.
+	// Read() repopulates the numeric id and remaining attributes.
+	if req.ID == "" {
 		resp.Diagnostics.AddError(
 			"Invalid Import ID",
-			fmt.Sprintf("Expected a numeric ID, got: %q", req.ID),
+			"Expected a non-empty security group UUID.",
 		)
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("uuid"), req.ID)...)
 }

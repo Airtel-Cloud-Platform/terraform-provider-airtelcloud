@@ -8,10 +8,10 @@ terraform {
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://south.cloud.airtel.in"
+  api_endpoint = "https://north.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "south"
+  region       = "north"
   organization = var.organization
   project_name = var.project_name
 }
@@ -44,9 +44,19 @@ variable "resource_prefix" {
   default     = "tft"
 }
 
-# Create a snapshot of a compute instance
+# Create a snapshot of a compute instance.
+#
+# Specify the target compute by ID or by name (exactly one of compute_id /
+# compute_name). When compute_name is set it is resolved to compute_id at apply.
+#
+# Import an existing snapshot with either of:
+#   terraform import airtelcloud_compute_snapshot.example <snapshot_uuid>
+#   terraform import airtelcloud_compute_snapshot.example <compute_id>:<snapshot_uuid>
 resource "airtelcloud_compute_snapshot" "example" {
-  compute_id = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
+  #compute_id = "aa8ad6fc-5400-452f-95ee-8ecb95a7f3d4"
+  # Or reference the compute by name instead of compute_id:
+  compute_name = "ashok"
+  snapshot_name = "${var.resource_prefix}-snapshot"
 
   timeouts {
     create = "10m"

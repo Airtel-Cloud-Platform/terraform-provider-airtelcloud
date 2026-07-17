@@ -360,11 +360,17 @@ resource "airtelcloud_vm" "web1" {
   boot_from_volume  = true
   disk_size         = 100
   availability_zone = "S1"
+  admin_username    = "clouduser"
+  admin_password    = var.vm_admin_password
   description       = "Web server behind load balancer"
 }
 ```
 
 -> **Note:** Provide exactly one of `flavor_id` / `flavor_name`, `image_id` / `image_name`, `vpc_id` / `vpc_name`, and `subnet_id` / `subnet_name`. The provider resolves names to IDs automatically.
+
+-> **Note:** A `linux` instance needs exactly one authentication method: either `admin_username` + `admin_password`, or `keypair_id` / `keypair_name`. Setting both, or neither, fails at plan time. `admin_username` / `admin_password` are not supported for `windows`.
+
+~> **Warning:** `admin_password` is stored in plaintext in the Terraform state file. Use a remote backend with encryption at rest and restricted access. The API never returns the password, so `terraform import` cannot recover it.
 
 #### Argument Reference
 
@@ -382,8 +388,10 @@ resource "airtelcloud_vm" "web1" {
 | `subnet_name` | String | No | Subnet name. Resolved to ID. |
 | `security_group_id` | String | No | Security group ID. Mutually exclusive with `security_group_name`. |
 | `security_group_name` | String | No | Security group name. |
-| `keypair_id` | String | No | Keypair ID. Mutually exclusive with `keypair_name`. Forces new resource. |
+| `keypair_id` | String | No | Keypair ID. Mutually exclusive with `keypair_name` and with `admin_username` / `admin_password`. Forces new resource. |
 | `keypair_name` | String | No | Keypair name. Forces new resource. |
+| `admin_username` | String | No | Login username (`linux` only). Must be set with `admin_password`. Mutually exclusive with `keypair_id` / `keypair_name`. Forces new resource. |
+| `admin_password` | String | No | Login password (`linux` only, sensitive). Must be set with `admin_username`. Mutually exclusive with `keypair_id` / `keypair_name`. Forces new resource. |
 | `user_data` | String | No | Cloud-init user data script. Forces new resource. |
 | `availability_zone` | String | No | Availability zone (e.g., `S1`). Forces new resource. |
 | `disk_size` | Int64 | No | Root disk size in GB. Default: `20`. Forces new resource. |
@@ -1077,20 +1085,36 @@ Creates an immutable point-in-time snapshot of a VM. Requires an existing comput
 
 ```terraform
 resource "airtelcloud_compute_snapshot" "web_snapshot" {
-  compute_id = airtelcloud_vm.web1.id
+  compute_id    = airtelcloud_vm.web1.id
+  snapshot_name = "web1-snapshot"
 
   timeouts {
     create = "15m"
     delete = "10m"
   }
 }
+
+# Alternatively, reference the compute by name (resolved to compute_id at apply):
+resource "airtelcloud_compute_snapshot" "web_snapshot_by_name" {
+  compute_name  = "web1"
+  snapshot_name = "web1-snapshot"
+}
 ```
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `compute_id` | String | Yes | VM ID to snapshot. Forces new resource. |
+| `compute_id` | String | Conditional | VM ID to snapshot. Forces new resource. Provide exactly one of `compute_id` or `compute_name`. Computed when `compute_name` is used. |
+| `compute_name` | String | Conditional | VM name to snapshot; resolved to `compute_id` at apply. Provide exactly one of `compute_id` or `compute_name`. |
+| `snapshot_name` | String | Yes | Name to give the snapshot. Forces new resource. |
 
-Computed: `id` (UUID), `name`, `status`, `is_active`, `is_image`, `created`. Timeouts: create (10m default), delete (10m default). Import: `terraform import airtelcloud_compute_snapshot.web_snapshot <uuid>`
+Computed: `id` (UUID), `name`, `status`, `is_active`, `is_image`, `image_id`, `created`, `updated`. Timeouts: create (10m default), delete (10m default).
+
+Import with either the snapshot UUID alone, or `<compute_id>:<snapshot_uuid>` (which skips a project-wide lookup):
+
+```shell
+terraform import airtelcloud_compute_snapshot.web_snapshot <snapshot_uuid>
+terraform import airtelcloud_compute_snapshot.web_snapshot <compute_id>:<snapshot_uuid>
+```
 
 -> **Note:** Snapshots are immutable and cannot be updated.
 

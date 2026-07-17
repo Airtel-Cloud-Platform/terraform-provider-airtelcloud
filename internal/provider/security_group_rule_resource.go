@@ -169,6 +169,15 @@ func (r *SecurityGroupRuleResource) Configure(ctx context.Context, req resource.
 	r.client = c
 }
 
+// resolveSGUUID returns the security group's UUID, preferring the value already stored in
+// state and falling back to a lookup by numeric ID (e.g. for imported resources).
+func (r *SecurityGroupRuleResource) resolveSGUUID(ctx context.Context, data SecurityGroupRuleResourceModel) (string, error) {
+	if !data.SecurityGroupUUID.IsNull() && data.SecurityGroupUUID.ValueString() != "" {
+		return data.SecurityGroupUUID.ValueString(), nil
+	}
+	return r.client.ResolveSecurityGroupUUID(ctx, int(data.SecurityGroupID.ValueInt64()))
+}
+
 func (r *SecurityGroupRuleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data SecurityGroupRuleResourceModel
 
@@ -178,6 +187,13 @@ func (r *SecurityGroupRuleResource) Create(ctx context.Context, req resource.Cre
 	}
 
 	sgID := int(data.SecurityGroupID.ValueInt64())
+
+	// The v2.1 API addresses security groups by UUID, so resolve the numeric ID first.
+	sgUUID, err := r.client.ResolveSecurityGroupUUID(ctx, sgID)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve security group %d, got error: %s", sgID, err))
+		return
+	}
 
 	createReq := &models.CreateSecurityGroupRuleRequest{
 		Direction:      data.Direction.ValueString(),
@@ -190,7 +206,7 @@ func (r *SecurityGroupRuleResource) Create(ctx context.Context, req resource.Cre
 		Description:    data.Description.ValueString(),
 	}
 
-	rule, err := r.client.CreateSecurityGroupRule(ctx, sgID, createReq)
+	rule, err := r.client.CreateSecurityGroupRule(ctx, sgUUID, createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create security group rule, got error: %s", err))
 		return
@@ -199,7 +215,7 @@ func (r *SecurityGroupRuleResource) Create(ctx context.Context, req resource.Cre
 	// Set computed fields from API response
 	data.ID = types.Int64Value(int64(rule.ID))
 	data.UUID = types.StringValue(rule.UUID)
-	data.SecurityGroupUUID = types.StringValue("")
+	data.SecurityGroupUUID = types.StringValue(sgUUID)
 	data.Status = types.StringValue(rule.Status)
 	data.ProviderSecurityGroupRuleID = types.StringValue(rule.ProviderSecurityGroupRuleID)
 
@@ -222,12 +238,19 @@ func (r *SecurityGroupRuleResource) Read(ctx context.Context, req resource.ReadR
 		return
 	}
 
-	ruleID := int(data.ID.ValueInt64())
-	sgID := int(data.SecurityGroupID.ValueInt64())
-
-	rule, err := r.client.GetSecurityGroupRule(ctx, sgID, ruleID)
+	sgUUID, err := r.resolveSGUUID(ctx, data)
 	if err != nil {
-		if apiErr, ok := err.(*client.APIError); ok && apiErr.StatusCode == 404 {
+		if client.IsNotFoundError(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve security group, got error: %s", err))
+		return
+	}
+
+	rule, err := r.client.GetSecurityGroupRule(ctx, sgUUID, data.UUID.ValueString())
+	if err != nil {
+		if client.IsNotFoundError(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -237,7 +260,7 @@ func (r *SecurityGroupRuleResource) Read(ctx context.Context, req resource.ReadR
 
 	data.ID = types.Int64Value(int64(rule.ID))
 	data.UUID = types.StringValue(rule.UUID)
-	data.SecurityGroupUUID = types.StringValue("")
+	data.SecurityGroupUUID = types.StringValue(sgUUID)
 	data.Direction = types.StringValue(rule.Direction)
 	data.Protocol = types.StringValue(rule.Protocol)
 	data.PortRangeMin = types.StringValue(rule.PortRangeMin)
@@ -267,12 +290,19 @@ func (r *SecurityGroupRuleResource) Delete(ctx context.Context, req resource.Del
 		return
 	}
 
-	ruleID := int(data.ID.ValueInt64())
-	sgID := int(data.SecurityGroupID.ValueInt64())
-
-	err := r.client.DeleteSecurityGroupRule(ctx, sgID, ruleID)
+	sgUUID, err := r.resolveSGUUID(ctx, data)
 	if err != nil {
-		if apiErr, ok := err.(*client.APIError); ok && apiErr.StatusCode == 404 {
+		if client.IsNotFoundError(err) {
+			// Security group already gone, so the rule is too.
+			return
+		}
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve security group, got error: %s", err))
+		return
+	}
+
+	err = r.client.DeleteSecurityGroupRule(ctx, sgUUID, data.UUID.ValueString())
+	if err != nil {
+		if client.IsNotFoundError(err) {
 			return
 		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete security group rule, got error: %s", err))
@@ -281,12 +311,14 @@ func (r *SecurityGroupRuleResource) Delete(ctx context.Context, req resource.Del
 }
 
 func (r *SecurityGroupRuleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Import format: security_group_id/rule_id
+	// Import format: security_group_id/rule_uuid
+	// Rules are addressed by UUID in the v2.1 API; Read() resolves the security group's UUID
+	// from the numeric security_group_id and repopulates the numeric rule id.
 	idParts := strings.Split(req.ID, "/")
 	if len(idParts) != 2 || idParts[0] == "" || idParts[1] == "" {
 		resp.Diagnostics.AddError(
 			"Unexpected Import Identifier",
-			fmt.Sprintf("Expected import identifier with format: security_group_id/rule_id. Got: %q", req.ID),
+			fmt.Sprintf("Expected import identifier with format: security_group_id/rule_uuid. Got: %q", req.ID),
 		)
 		return
 	}
@@ -300,15 +332,6 @@ func (r *SecurityGroupRuleResource) ImportState(ctx context.Context, req resourc
 		return
 	}
 
-	ruleID, err := strconv.ParseInt(idParts[1], 10, 64)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected numeric rule_id, got: %q", idParts[1]),
-		)
-		return
-	}
-
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("security_group_id"), sgID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), ruleID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("uuid"), idParts[1])...)
 }

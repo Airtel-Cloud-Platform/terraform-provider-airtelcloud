@@ -278,6 +278,75 @@ func TestListComputes(t *testing.T) {
 	}
 }
 
+func TestResolveComputeID(t *testing.T) {
+	tests := []struct {
+		name    string
+		lookup  string
+		setup   func(ms *testutil.MockServer)
+		wantID  string
+		wantErr bool
+	}{
+		{
+			name:   "resolves first compute by name",
+			lookup: "instance-1",
+			wantID: "compute-1",
+		},
+		{
+			name:   "resolves second compute by name",
+			lookup: "instance-2",
+			wantID: "compute-2",
+		},
+		{
+			name:    "name not found",
+			lookup:  "does-not-exist",
+			wantErr: true,
+		},
+		{
+			name:   "found but empty ID",
+			lookup: "instance-1",
+			setup: func(ms *testutil.MockServer) {
+				ms.AddHandler("GET", "/api/v2.1/computes/domain/test-org/project/test-project/computes/", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode([]models.Compute{{ID: "", InstanceName: "instance-1"}})
+				})
+			},
+			wantErr: true,
+		},
+		{
+			name:   "server error",
+			lookup: "instance-1",
+			setup: func(ms *testutil.MockServer) {
+				ms.SetErrorResponse("GET", "/api/v2.1/computes/domain/test-org/project/test-project/computes/", 500, "Internal server error")
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockServer := testutil.NewMockServer()
+			defer mockServer.Close()
+
+			if tt.setup != nil {
+				tt.setup(mockServer)
+			}
+
+			baseURL := strings.TrimSuffix(mockServer.URL, "/")
+			client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+			id, err := client.ResolveComputeID(context.Background(), tt.lookup)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ResolveComputeID() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && id != tt.wantID {
+				t.Errorf("ResolveComputeID() = %v, want %v", id, tt.wantID)
+			}
+		})
+	}
+}
+
 func TestListFlavors(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -424,9 +493,9 @@ func TestListKeypairs(t *testing.T) {
 		{
 			name: "empty list",
 			setup: func(ms *testutil.MockServer) {
-				ms.AddHandler("GET", "/api/v2.1/computes/domain/test-org/project/test-project/computes/keypairs/", func(w http.ResponseWriter, r *http.Request) {
+				ms.AddHandler("GET", "/ext/api/v1/keypairs/domain/test-org/keypairs", func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode([]models.Keypair{})
+					w.Write([]byte(`{"message":"Keypair fetched successfully.","data":{"items":[],"count":0,"offset":0,"limit":30}}`))
 				})
 			},
 			wantCount: 0,
@@ -434,7 +503,7 @@ func TestListKeypairs(t *testing.T) {
 		{
 			name: "server error",
 			setup: func(ms *testutil.MockServer) {
-				ms.SetErrorResponse("GET", "/api/v2.1/computes/domain/test-org/project/test-project/computes/keypairs/", 500, "Internal server error")
+				ms.SetErrorResponse("GET", "/ext/api/v1/keypairs/domain/test-org/keypairs", 500, "Internal server error")
 			},
 			wantErr: true,
 		},
@@ -467,74 +536,14 @@ func TestListKeypairs(t *testing.T) {
 					if keypairs[0].Name != "keypair-1" {
 						t.Errorf("ListKeypairs() first Name = %v, want keypair-1", keypairs[0].Name)
 					}
-					if keypairs[1].ID != 2 {
-						t.Errorf("ListKeypairs() second ID = %v, want 2", keypairs[1].ID)
+					// The API nests items under "data" and keys the ID as "uuid".
+					// Asserting the ID here guards against both the envelope and
+					// the JSON tag regressing.
+					if keypairs[0].ID != "aae08127-a18d-4aa3-b332-a77066ab7c90" {
+						t.Errorf("ListKeypairs() first ID = %v, want aae08127-a18d-4aa3-b332-a77066ab7c90", keypairs[0].ID)
 					}
-				}
-			}
-		})
-	}
-}
-
-func TestListSecurityGroups(t *testing.T) {
-	tests := []struct {
-		name      string
-		setup     func(ms *testutil.MockServer)
-		wantCount int
-		wantErr   bool
-	}{
-		{
-			name:      "successful list",
-			wantCount: 2,
-		},
-		{
-			name: "empty list",
-			setup: func(ms *testutil.MockServer) {
-				ms.AddHandler("GET", "/api/v2.1/computes/domain/test-org/project/test-project/computes/security-groups/", func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					json.NewEncoder(w).Encode([]models.SecurityGroup{})
-				})
-			},
-			wantCount: 0,
-		},
-		{
-			name: "server error",
-			setup: func(ms *testutil.MockServer) {
-				ms.SetErrorResponse("GET", "/api/v2.1/computes/domain/test-org/project/test-project/computes/security-groups/", 500, "Internal server error")
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockServer := testutil.NewMockServer()
-			defer mockServer.Close()
-
-			if tt.setup != nil {
-				tt.setup(mockServer)
-			}
-
-			baseURL := strings.TrimSuffix(mockServer.URL, "/")
-			client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
-
-			groups, err := client.ListSecurityGroups(context.Background())
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ListSecurityGroups() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if !tt.wantErr {
-				if len(groups) != tt.wantCount {
-					t.Errorf("ListSecurityGroups() count = %d, want %d", len(groups), tt.wantCount)
-				}
-				if tt.wantCount == 2 {
-					if groups[0].Name != "default" {
-						t.Errorf("ListSecurityGroups() first Name = %v, want default", groups[0].Name)
-					}
-					if groups[1].Name != "web-sg" {
-						t.Errorf("ListSecurityGroups() second Name = %v, want web-sg", groups[1].Name)
+					if keypairs[1].ID != "b1f2c3d4-5678-4abc-9def-0123456789ab" {
+						t.Errorf("ListKeypairs() second ID = %v, want b1f2c3d4-5678-4abc-9def-0123456789ab", keypairs[1].ID)
 					}
 				}
 			}

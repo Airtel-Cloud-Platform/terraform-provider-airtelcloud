@@ -124,3 +124,7 @@ VMs can be imported using the `id`:
 ```shell
 terraform import airtelcloud_vm.web_server <compute-id>
 ```
+
+The API does not return credentials, so `admin_username` and `admin_password` are
+empty after an import. If your configuration sets them, the next plan plans a
+replacement — the same limitation applies to `keypair_id`.
