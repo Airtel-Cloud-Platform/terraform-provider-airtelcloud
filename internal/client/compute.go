@@ -29,24 +29,20 @@ func (c *Client) ListImages(ctx context.Context) ([]models.Image, error) {
 	return images, nil
 }
 
-// ListKeypairs retrieves all SSH keypairs
-func (c *Client) ListKeypairs(ctx context.Context) ([]models.Keypair, error) {
-	var keypairs []models.Keypair
-	err := c.Get(ctx, fmt.Sprintf("%s/keypairs/", c.computeBasePath()), &keypairs)
-	if err != nil {
-		return nil, err
-	}
-	return keypairs, nil
+// keypairBasePath returns the base path for keypair endpoints. Keypairs live on
+// the /ext service and are scoped by domain only — there is no project segment.
+func (c *Client) keypairBasePath() string {
+	return fmt.Sprintf("/ext/api/v1/keypairs/domain/%s/keypairs", c.Organization)
 }
 
-// ListSecurityGroups retrieves all security groups
-func (c *Client) ListSecurityGroups(ctx context.Context) ([]models.SecurityGroup, error) {
-	var groups []models.SecurityGroup
-	err := c.Get(ctx, fmt.Sprintf("%s/security-groups/", c.computeBasePath()), &groups)
+// ListKeypairs retrieves all SSH keypairs
+func (c *Client) ListKeypairs(ctx context.Context) ([]models.Keypair, error) {
+	var response models.KeypairListResponse
+	err := c.Get(ctx, fmt.Sprintf("%s?limit=30", c.keypairBasePath()), &response)
 	if err != nil {
 		return nil, err
 	}
-	return groups, nil
+	return response.Data.Items, nil
 }
 
 // ResolveFlavorID resolves a flavor name to its ID
@@ -85,24 +81,17 @@ func (c *Client) ResolveKeypairID(ctx context.Context, name string) (string, err
 	}
 	for _, kp := range keypairs {
 		if kp.Name == name {
-			return strconv.Itoa(kp.ID), nil
+			if kp.ID == "" {
+				return "", fmt.Errorf("keypair %q found but has empty ID (API response field mismatch)", name)
+			}
+			tflog.Debug(ctx, "ResolveKeypairID: resolved keypair", map[string]interface{}{
+				"name": name,
+				"id":   kp.ID,
+			})
+			return kp.ID, nil
 		}
 	}
 	return "", fmt.Errorf("keypair with name %q not found", name)
-}
-
-// ResolveSecurityGroupID resolves a security group name to its ID
-func (c *Client) ResolveSecurityGroupID(ctx context.Context, name string) (int, error) {
-	groups, err := c.ListSecurityGroups(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to list security groups: %w", err)
-	}
-	for _, sg := range groups {
-		if sg.Name == name {
-			return sg.ID, nil
-		}
-	}
-	return 0, fmt.Errorf("security group with name %q not found", name)
 }
 
 // ResolveVPCID resolves a VPC name to its ID
@@ -142,4 +131,29 @@ func (c *Client) ResolveSubnetID(ctx context.Context, vpcID, name string) (strin
 		}
 	}
 	return "", fmt.Errorf("subnet with name %q not found in VPC %s", name, vpcID)
+}
+
+// ResolveComputeID resolves a compute (VM) instance name to its ID
+func (c *Client) ResolveComputeID(ctx context.Context, name string) (string, error) {
+	computes, err := c.ListComputes(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list computes: %w", err)
+	}
+	tflog.Debug(ctx, "ResolveComputeID: listing computes", map[string]interface{}{
+		"compute_count": len(computes),
+		"searched_name": name,
+	})
+	for _, comp := range computes {
+		if comp.InstanceName == name {
+			if comp.ID == "" {
+				return "", fmt.Errorf("compute %q found but has empty ID (API response field mismatch)", name)
+			}
+			tflog.Debug(ctx, "ResolveComputeID: resolved compute", map[string]interface{}{
+				"name": name,
+				"id":   comp.ID,
+			})
+			return comp.ID, nil
+		}
+	}
+	return "", fmt.Errorf("compute with name %q not found", name)
 }

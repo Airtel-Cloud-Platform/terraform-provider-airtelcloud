@@ -8,10 +8,10 @@ terraform {
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://south.cloud.airtel.in"
+  api_endpoint = "https://north.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "south"
+  region       = "north"
   organization = var.organization
   project_name = var.project_name
 }
@@ -46,8 +46,8 @@ variable "resource_prefix" {
 
 # Create a security group to attach rules to
 resource "airtelcloud_security_group" "web" {
-  security_group_name = "${var.resource_prefix}-sg-http-servers"
-  availability_zone   = "S2"
+  security_group_name = "${var.resource_prefix}-sg1-http-servers"
+  availability_zone   = "N2"
 }
 
 # Allow SSH from internal network
@@ -73,6 +73,12 @@ resource "airtelcloud_security_group_rule" "ssh" {
 #  ethertype         = "IPv4"
 #  description       = "Allow HTTP"
 #}
+
+# Output rule details
+output "security_group_uuid" {
+  description = "UUID of the security group"
+  value       = airtelcloud_security_group.web.uuid
+}
 
 # Output rule details
 output "ssh_rule_id" {

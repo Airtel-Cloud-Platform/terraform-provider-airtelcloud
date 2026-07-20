@@ -1,5 +1,7 @@
 #!/bin/bash
+
 set -euo pipefail
+source .env.local
 
 # ---------------------------------------------------------------------------
 # Environment: source .env if present, fall back to defaults

@@ -51,6 +51,8 @@ resource "airtelcloud_volume" "data_volume" {
   type              = "s1_wkld_ntp02_4iops_backend"
   availability_zone = "S1"
   compute_id        = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
+  # Or attach by name instead of id (mutually exclusive with compute_id):
+  # compute_name    = "my-instance"
 
   # Networking
   vpc_id    = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"

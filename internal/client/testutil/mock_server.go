@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
@@ -12,13 +13,18 @@ import (
 // MockServer represents a mock HTTP server for testing
 type MockServer struct {
 	*httptest.Server
-	Handlers  map[string]http.HandlerFunc
+	Handlers map[string]http.HandlerFunc
+
+	// DeletedSnapshots records snapshots removed by DELETE, so the list and
+	// detail endpoints stop reporting them.
+	DeletedSnapshots map[string]bool
 }
 
 // NewMockServer creates a new mock server with predefined handlers
 func NewMockServer() *MockServer {
 	ms := &MockServer{
-		Handlers: make(map[string]http.HandlerFunc),
+		Handlers:         make(map[string]http.HandlerFunc),
+		DeletedSnapshots: make(map[string]bool),
 	}
 
 	// Set up default handlers
@@ -60,8 +66,7 @@ func (ms *MockServer) setupDefaultHandlers() {
 	ms.Handlers["GET /api/v2.1/volumes/domain/test-org/project/test-project/volumes/"] = ms.listVolumesHandler
 	ms.Handlers["GET /api/v2.1/computes/domain/test-org/project/test-project/computes/flavors/"] = ms.listFlavorsHandler
 	ms.Handlers["GET /api/v2.1/computes/domain/test-org/project/test-project/computes/images/"] = ms.listImagesHandler
-	ms.Handlers["GET /api/v2.1/computes/domain/test-org/project/test-project/computes/keypairs/"] = ms.listKeypairsHandler
-	ms.Handlers["GET /api/v2.1/computes/domain/test-org/project/test-project/computes/security-groups/"] = ms.listSecurityGroupsHandler
+	ms.Handlers["GET /ext/api/v1/keypairs/domain/test-org/keypairs"] = ms.listKeypairsHandler
 	ms.Handlers["GET /api/network-manager/v1/domain/test-org/project/test-project/networks"] = ms.listVPCsHandler
 	ms.Handlers["GET /api/network-manager/v1/domain/test-org/project/test-project/network/test-network-id/subnets"] = ms.listSubnetsHandler
 
@@ -73,6 +78,7 @@ func (ms *MockServer) setupDefaultHandlers() {
 
 	// Compute Snapshot handlers
 	ms.Handlers["POST /api/v2.1/computes/domain/test-org/project/test-project/computes/test-id/snapshot/"] = ms.createComputeSnapshotHandler
+	ms.Handlers["GET /api/v2.1/computes/domain/test-org/project/test-project/computes/test-id/snapshot/"] = ms.listComputeSnapshotsForComputeHandler
 	ms.Handlers["GET /api/v2.1/computes/domain/test-org/project/test-project/computes/snapshot/snap-uuid-1234/"] = ms.getComputeSnapshotHandler
 	ms.Handlers["GET /api/v2.1/computes/domain/test-org/project/test-project/computes/snapshot/"] = ms.listComputeSnapshotsHandler
 	ms.Handlers["DELETE /api/v2.1/computes/domain/test-org/project/test-project/computes/snapshot/snap-uuid-1234/"] = ms.deleteComputeSnapshotHandler
@@ -127,17 +133,17 @@ func (ms *MockServer) setupDefaultHandlers() {
 
 	// LB Flavor handler (shares compute flavors path, dispatched by ?type=lb query param)
 
-	// Security Group handlers (network API v1)
-	ms.Handlers["POST /api/v1/networks/securitygroup/"] = ms.createSecurityGroupHandler
-	ms.Handlers["GET /api/v1/networks/securitygroup/1/"] = ms.getSecurityGroupHandler
-	ms.Handlers["GET /api/v1/networks/securitygroup/"] = ms.listSecurityGroupsDetailedHandler
-	ms.Handlers["DELETE /api/v1/networks/securitygroup/1/"] = ms.deleteSecurityGroupHandler
+	// Security Group handlers (network API v2.1, org/project scoped).
+	// Security groups are addressed by UUID in the v2.1 API; numeric IDs return 404.
+	ms.Handlers["POST /api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/"] = ms.createSecurityGroupHandler
+	ms.Handlers["GET /api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-1234/"] = ms.getSecurityGroupHandler
+	ms.Handlers["GET /api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/"] = ms.listSecurityGroupsDetailedHandler
+	ms.Handlers["DELETE /api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-1234/"] = ms.deleteSecurityGroupHandler
 
-	// Security Group Rule handlers (integer ID based paths matching Swagger API)
-	ms.Handlers["POST /api/v1/networks/securitygroup/1/bulksecuritygrouprule/"] = ms.createSecurityGroupRuleHandler
-	ms.Handlers["GET /api/v1/networks/securitygroup/1/securitygrouprule/10/"] = ms.getSecurityGroupRuleHandler
-	ms.Handlers["GET /api/v1/networks/securitygroup/1/securitygrouprule/"] = ms.listSecurityGroupRulesHandler
-	ms.Handlers["DELETE /api/v1/networks/securitygroup/1/securitygrouprule/10/"] = ms.deleteSecurityGroupRuleHandler
+	// Security Group Rule handlers. Create uses the bulk endpoint (SG by UUID); GET/List are
+	// served from the security group detail; delete addresses the rule by UUID.
+	ms.Handlers["POST /api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-1234/bulk-security-group-rules/"] = ms.createSecurityGroupRuleHandler
+	ms.Handlers["DELETE /api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-1234/security-group-rules/rule-uuid-1/"] = ms.deleteSecurityGroupRuleHandler
 }
 
 // routeHandler routes requests to the appropriate handler
@@ -447,20 +453,21 @@ func (ms *MockServer) listImagesHandler(w http.ResponseWriter, r *http.Request) 
 
 func (ms *MockServer) listKeypairsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	response := []models.Keypair{
-		{ID: 1, Name: "keypair-1", Fingerprint: "aa:bb:cc:dd"},
-		{ID: 2, Name: "keypair-2", Fingerprint: "ee:ff:00:11"},
-	}
-	json.NewEncoder(w).Encode(response)
-}
-
-func (ms *MockServer) listSecurityGroupsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	response := []models.SecurityGroup{
-		{ID: 1, Name: "default"},
-		{ID: 2, Name: "web-sg"},
-	}
-	json.NewEncoder(w).Encode(response)
+	// Return raw JSON matching real API format (uuid field, nested data envelope)
+	// instead of relying on Go struct serialization, so tests catch JSON tag mismatches.
+	response := `{
+		"message": "Keypair fetched successfully.",
+		"data": {
+			"items": [
+				{"uuid": "aae08127-a18d-4aa3-b332-a77066ab7c90", "name": "keypair-1", "fingerprint": "aa:bb:cc:dd", "desc": null, "labels": [], "meta": {}},
+				{"uuid": "b1f2c3d4-5678-4abc-9def-0123456789ab", "name": "keypair-2", "fingerprint": "ee:ff:00:11", "desc": null, "labels": [], "meta": {}}
+			],
+			"count": 2,
+			"offset": 0,
+			"limit": 30
+		}
+	}`
+	w.Write([]byte(response))
 }
 
 func (ms *MockServer) listVPCsHandler(w http.ResponseWriter, r *http.Request) {
@@ -564,6 +571,18 @@ func (ms *MockServer) getSecurityGroupHandler(w http.ResponseWriter, r *http.Req
 				Status:         "ACTIVE",
 				Description:    "Allow SSH",
 			},
+			{
+				ID:             11,
+				UUID:           "rule-uuid-2",
+				Direction:      "egress",
+				Protocol:       "tcp",
+				PortRangeMin:   "443",
+				PortRangeMax:   "443",
+				RemoteIPPrefix: "0.0.0.0/0",
+				Ethertype:      "IPv4",
+				Status:         "ACTIVE",
+				Description:    "Allow HTTPS outbound",
+			},
 		},
 	}
 	json.NewEncoder(w).Encode(sg)
@@ -592,7 +611,7 @@ func (ms *MockServer) listSecurityGroupsDetailedHandler(w http.ResponseWriter, r
 func (ms *MockServer) deleteSecurityGroupHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 	// After deletion, subsequent GET requests should return 404
-	ms.Handlers["GET /api/v1/networks/securitygroup/1/"] = func(w http.ResponseWriter, r *http.Request) {
+	ms.Handlers["GET /api/v2.1/networks/domain/test-org/project/test-project/networks/security-groups/sg-uuid-1234/"] = func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Not found"})
 	}
@@ -620,64 +639,11 @@ func (ms *MockServer) createSecurityGroupRuleHandler(w http.ResponseWriter, r *h
 	json.NewEncoder(w).Encode(rules)
 }
 
-func (ms *MockServer) getSecurityGroupRuleHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	rule := models.SecurityGroupRuleDetail{
-		ID:                          10,
-		UUID:                        "rule-uuid-1",
-		Direction:                   "ingress",
-		Protocol:                    "tcp",
-		PortRangeMin:                "22",
-		PortRangeMax:                "22",
-		RemoteIPPrefix:              "0.0.0.0/0",
-		Ethertype:                   "IPv4",
-		Status:                      "ACTIVE",
-		Description:                 "Allow SSH",
-		ProviderSecurityGroupRuleID: "provider-rule-1",
-	}
-	json.NewEncoder(w).Encode(rule)
-}
-
-func (ms *MockServer) listSecurityGroupRulesHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	rules := []models.SecurityGroupRuleDetail{
-		{
-			ID:             10,
-			UUID:           "rule-uuid-1",
-			Direction:      "ingress",
-			Protocol:       "tcp",
-			PortRangeMin:   "22",
-			PortRangeMax:   "22",
-			RemoteIPPrefix: "0.0.0.0/0",
-			Ethertype:      "IPv4",
-			Status:         "ACTIVE",
-			Description:    "Allow SSH",
-		},
-		{
-			ID:             11,
-			UUID:           "rule-uuid-2",
-			Direction:      "egress",
-			Protocol:       "tcp",
-			PortRangeMin:   "443",
-			PortRangeMax:   "443",
-			RemoteIPPrefix: "0.0.0.0/0",
-			Ethertype:      "IPv4",
-			Status:         "ACTIVE",
-			Description:    "Allow HTTPS outbound",
-		},
-	}
-	json.NewEncoder(w).Encode(rules)
-}
+// Note: individual rule GET and rule LIST are served from the security group detail
+// (GET /security-groups/{uuid}/), so there are no dedicated rule GET/LIST handlers.
 
 func (ms *MockServer) deleteSecurityGroupRuleHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
-	// After deletion, subsequent GET requests should return 404
-	ms.Handlers["GET /api/v1/networks/securitygroup/1/securitygrouprule/10/"] = func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Not found"})
-	}
 }
 
 // VPC Peering handlers
@@ -734,66 +700,96 @@ func (ms *MockServer) deleteVPCPeeringHandler(w http.ResponseWriter, r *http.Req
 }
 
 // Compute Snapshot handlers
+//
+// These deliberately write raw JSON literals rather than encoding
+// models.ComputeSnapshot: a struct round-trips through its own tags cleanly and
+// would hide type mismatches with the real API, which returns labels as an
+// object and image_id as a number.
 
+// SnapshotJSON is the verified wire shape of a compute snapshot.
+const SnapshotJSON = `{"snapshot_description": null, "snapshot_name": "test-snapshot",
+	"uuid": "snap-uuid-1234", "id": 334, "created": "1784023036", "updated": "1784023047",
+	"image_id": 1407, "user_id": 22, "task_id": "", "status": "Active",
+	"labels": {"labels": [], "default_labels": []},
+	"is_active": true, "is_image": true, "action": "created",
+	"compute": {"id": "test-id", "instance_name": "test-instance", "network_id": "network-1"}}`
+
+const secondSnapshotJSON = `{"snapshot_name": "test-snapshot-2", "uuid": "snap-uuid-5678",
+	"id": 335, "created": "1784023100", "updated": "1784023100", "image_id": 1408,
+	"status": "Active", "labels": {"labels": [], "default_labels": []},
+	"is_active": true, "is_image": true, "action": "created",
+	"compute": {"id": "test-id", "instance_name": "test-instance", "network_id": "network-1"}}`
+
+// createComputeSnapshotHandler mirrors the real API: snapshot_name is the only
+// required form field, and its absence is a 422.
 func (ms *MockServer) createComputeSnapshotHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 
-	snapshot := models.ComputeSnapshot{
-		ID:           1,
-		UUID:         "snap-uuid-1234",
-		SnapshotName: "test-snapshot",
-		Status:       "active",
-		IsActive:     true,
-		IsImage:      false,
-		Created:      "2026-03-26T10:00:00Z",
+	if err := r.ParseForm(); err != nil || r.FormValue("snapshot_name") == "" {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":   422,
+			"message":  "The request was well-formed but was unable to be followed due to semantic errors.",
+			"messages": map[string][]string{"snapshot_name": {"Missing data for required field."}},
+		})
+		return
 	}
-	json.NewEncoder(w).Encode(snapshot)
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, SnapshotJSON)
 }
 
+// getComputeSnapshotHandler requires the subnet-id header, exactly as the real
+// API does: without it the endpoint cannot resolve the backing provider.
 func (ms *MockServer) getComputeSnapshotHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	snapshot := models.ComputeSnapshot{
-		ID:           1,
-		UUID:         "snap-uuid-1234",
-		SnapshotName: "test-snapshot",
-		Status:       "active",
-		IsActive:     true,
-		IsImage:      false,
-		Created:      "2026-03-26T10:00:00Z",
+	if r.Header.Get("subnet-id") == "" {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  404,
+			"message": "Failed to get provider",
+		})
+		return
 	}
-	json.NewEncoder(w).Encode(snapshot)
+
+	if ms.DeletedSnapshots["snap-uuid-1234"] {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Not found"})
+		return
+	}
+
+	fmt.Fprint(w, SnapshotJSON)
 }
 
+// listComputeSnapshotsHandler is the project-wide list. It needs no subnet-id header.
 func (ms *MockServer) listComputeSnapshotsHandler(w http.ResponseWriter, r *http.Request) {
+	ms.writeSnapshotList(w)
+}
+
+// listComputeSnapshotsForComputeHandler lists one compute's snapshots. It needs
+// no subnet-id header.
+func (ms *MockServer) listComputeSnapshotsForComputeHandler(w http.ResponseWriter, r *http.Request) {
+	ms.writeSnapshotList(w)
+}
+
+func (ms *MockServer) writeSnapshotList(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 
-	snapshots := []models.ComputeSnapshot{
-		{
-			ID:           1,
-			UUID:         "snap-uuid-1234",
-			SnapshotName: "test-snapshot",
-			Status:       "active",
-			IsActive:     true,
-		},
-		{
-			ID:           2,
-			UUID:         "snap-uuid-5678",
-			SnapshotName: "test-snapshot-2",
-			Status:       "active",
-			IsActive:     true,
-		},
+	snapshots := []string{}
+	if !ms.DeletedSnapshots["snap-uuid-1234"] {
+		snapshots = append(snapshots, SnapshotJSON)
 	}
-	json.NewEncoder(w).Encode(snapshots)
+	if !ms.DeletedSnapshots["snap-uuid-5678"] {
+		snapshots = append(snapshots, secondSnapshotJSON)
+	}
+
+	fmt.Fprintf(w, "[%s]", strings.Join(snapshots, ","))
 }
 
 func (ms *MockServer) deleteComputeSnapshotHandler(w http.ResponseWriter, r *http.Request) {
+	ms.DeletedSnapshots["snap-uuid-1234"] = true
 	w.WriteHeader(http.StatusNoContent)
-	ms.Handlers["GET /api/v2.1/computes/domain/test-org/project/test-project/computes/snapshot/snap-uuid-1234/"] = func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Not found"})
-	}
 }
 
 // Protection handlers

@@ -59,11 +59,12 @@ type LBVirtualServerResourceModel struct {
 
 var nodeObjectType = types.ObjectType{
 	AttrTypes: map[string]attr.Type{
-		"compute_id": types.Int64Type,
-		"compute_ip": types.StringType,
-		"port":       types.Int64Type,
-		"weight":     types.Int64Type,
-		"max_conn":   types.Int64Type,
+		"compute_id":   types.Int64Type,
+		"compute_name": types.StringType,
+		"compute_ip":   types.StringType,
+		"port":         types.Int64Type,
+		"weight":       types.Int64Type,
+		"max_conn":     types.Int64Type,
 	},
 }
 
@@ -136,8 +137,12 @@ func (r *LBVirtualServerResource) Schema(ctx context.Context, req resource.Schem
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"compute_id": schema.Int64Attribute{
-							MarkdownDescription: "The compute instance ID.",
-							Required:            true,
+							MarkdownDescription: "The compute instance ID. Either compute_id or compute_name must be specified for each node.",
+							Optional:            true,
+						},
+						"compute_name": schema.StringAttribute{
+							MarkdownDescription: "The compute instance name. If set, it is resolved to compute_id. Either compute_id or compute_name must be specified for each node.",
+							Optional:            true,
 						},
 						"compute_ip": schema.StringAttribute{
 							MarkdownDescription: "The compute instance IP address.",
@@ -233,8 +238,36 @@ func (r *LBVirtualServerResource) extractNodes(ctx context.Context, data *LBVirt
 	nodes := make([]models.VirtualServerNode, len(nodeObjects))
 	for i, obj := range nodeObjects {
 		attrs := obj.Attributes()
+
+		computeIDAttr := attrs["compute_id"].(types.Int64)
+		computeNameAttr := attrs["compute_name"].(types.String)
+
+		// Resolve the node's compute reference: exactly one of compute_id or
+		// compute_name must be set per node. When configured by name, resolve to the
+		// numeric compute ID the API expects.
+		idSet := !computeIDAttr.IsNull()
+		nameSet := !computeNameAttr.IsNull() && computeNameAttr.ValueString() != ""
+		if idSet && nameSet {
+			return nil, fmt.Errorf("node %d: only one of compute_id or compute_name may be specified, not both", i)
+		}
+		if !idSet && !nameSet {
+			return nil, fmt.Errorf("node %d: one of compute_id or compute_name must be specified", i)
+		}
+
+		computeID := int(computeIDAttr.ValueInt64())
+		if nameSet {
+			resolved, err := r.client.ResolveComputeID(ctx, computeNameAttr.ValueString())
+			if err != nil {
+				return nil, fmt.Errorf("node %d: unable to resolve compute name %q: %w", i, computeNameAttr.ValueString(), err)
+			}
+			computeID, err = strconv.Atoi(resolved)
+			if err != nil {
+				return nil, fmt.Errorf("node %d: compute %q resolved to non-numeric id %q, which the load balancer node requires as an integer: %w", i, computeNameAttr.ValueString(), resolved, err)
+			}
+		}
+
 		nodes[i] = models.VirtualServerNode{
-			ComputeID: int(attrs["compute_id"].(types.Int64).ValueInt64()),
+			ComputeID: computeID,
 			ComputeIP: attrs["compute_ip"].(types.String).ValueString(),
 			Port:      int(attrs["port"].(types.Int64).ValueInt64()),
 		}

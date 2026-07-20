@@ -171,6 +171,6 @@ For a more complete example, see [`examples/complete/main.tf`](https://github.co
 
 ## Support and Contributing
 
-For support, please refer to the [GitHub repository](https://github.com/terraform-providers/terraform-provider-airtelcloud) or open an issue.
+For support, please refer to the [GitHub repository](https://github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud) or open an issue.
 
 Contributions are welcome! Please read the contributing guidelines before submitting pull requests.

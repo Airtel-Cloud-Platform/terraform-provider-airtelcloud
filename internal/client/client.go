@@ -69,7 +69,7 @@ func NewClient(endpoint, apiKey, apiSecret, region, organization, projectName, s
 		HTTPClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
-		UserAgent: "terraform-provider-airtelcloud/0.2.0",
+		UserAgent: "terraform-provider-airtelcloud/0.3.0",
 	}, nil
 }
 
@@ -105,12 +105,18 @@ func (c *Client) generateHMACAuth() string {
 	return data + "." + signature
 }
 
+// normalizePath prepends the default /api prefix to paths that don't already
+// carry a service prefix. Keypairs live behind /ext, which is served as-is.
+func normalizePath(path string) string {
+	if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/ext") {
+		return path
+	}
+	return "/api" + path
+}
+
 // doRequest performs an HTTP request with proper authentication and error handling
 func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
-	// Ensure path starts with /api/v1
-	if !strings.HasPrefix(path, "/api") {
-		path = "/api" + path
-	}
+	path = normalizePath(path)
 
 	// Parse the path to properly handle query strings
 	rel, err := url.Parse(path)
@@ -232,10 +238,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 
 // doFormRequest performs an HTTP request with form-data encoding
 func (c *Client) doFormRequest(ctx context.Context, method, path string, formData map[string]interface{}) (*http.Response, error) {
-	// Ensure path starts with /api/v1
-	if !strings.HasPrefix(path, "/api") {
-		path = "/api" + path
-	}
+	path = normalizePath(path)
 
 	// Parse the path to properly handle query strings
 	rel, err := url.Parse(path)
@@ -315,7 +318,7 @@ func (c *Client) doFormRequest(ctx context.Context, method, path string, formDat
 		"method":       method,
 		"url":          u.String(),
 		"headers":      req.Header,
-		"form_fields":  formData,
+		"form_fields":  redactFormData(formData),
 		"content_type": writer.FormDataContentType(),
 	})
 
@@ -542,11 +545,30 @@ func (c *Client) Patch(ctx context.Context, path string, body interface{}, v int
 }
 
 // doURLEncodedFormRequest performs an HTTP request with application/x-www-form-urlencoded encoding
-func (c *Client) doURLEncodedFormRequest(ctx context.Context, method, path string, formData map[string]interface{}) (*http.Response, error) {
-	// Ensure path starts with /api
-	if !strings.HasPrefix(path, "/api") {
-		path = "/api" + path
+// sensitiveFormFields lists form parameters whose values must never reach the logs.
+// Terraform's Sensitive attribute flag masks values in CLI output but has no effect
+// on provider debug logs, so the client redacts them itself.
+var sensitiveFormFields = map[string]struct{}{
+	"vm_password":         {},
+	"vm_confirm_password": {},
+}
+
+// redactFormData returns a copy of formData with sensitive values masked, suitable
+// for debug logging. The input map is not mutated.
+func redactFormData(formData map[string]interface{}) map[string]interface{} {
+	redacted := make(map[string]interface{}, len(formData))
+	for key, value := range formData {
+		if _, ok := sensitiveFormFields[strings.ToLower(key)]; ok {
+			redacted[key] = "***REDACTED***"
+			continue
+		}
+		redacted[key] = value
 	}
+	return redacted
+}
+
+func (c *Client) doURLEncodedFormRequest(ctx context.Context, method, path string, formData map[string]interface{}) (*http.Response, error) {
+	path = normalizePath(path)
 
 	// Parse the path to properly handle query strings
 	rel, err := url.Parse(path)
@@ -625,7 +647,7 @@ func (c *Client) doURLEncodedFormRequest(ctx context.Context, method, path strin
 		"method":       method,
 		"url":          u.String(),
 		"headers":      req.Header,
-		"form_fields":  formData,
+		"form_fields":  redactFormData(formData),
 		"content_type": "application/x-www-form-urlencoded",
 	})
 
@@ -796,9 +818,7 @@ func (c *Client) PatchWithQueryParams(ctx context.Context, path string, params u
 
 // doQueryParamRequest performs an HTTP request with parameters encoded in the URL query string
 func (c *Client) doQueryParamRequest(ctx context.Context, method, path string, params url.Values) (*http.Response, error) {
-	if !strings.HasPrefix(path, "/api") {
-		path = "/api" + path
-	}
+	path = normalizePath(path)
 
 	rel, err := url.Parse(path)
 	if err != nil {

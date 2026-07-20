@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -56,6 +57,8 @@ type VMResourceModel struct {
 	SecurityGroupName  types.String   `tfsdk:"security_group_name"`
 	KeypairID          types.String   `tfsdk:"keypair_id"`
 	KeypairName        types.String   `tfsdk:"keypair_name"`
+	AdminUsername      types.String   `tfsdk:"admin_username"`
+	AdminPassword      types.String   `tfsdk:"admin_password"`
 	PublicIP           types.String   `tfsdk:"public_ip"`
 	PrivateIP          types.String   `tfsdk:"private_ip"`
 	Status             types.String   `tfsdk:"status"`
@@ -170,6 +173,24 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			"keypair_name": schema.StringAttribute{
 				MarkdownDescription: "The name of the key pair for SSH access. Mutually exclusive with keypair_id.",
 				Optional:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"admin_username": schema.StringAttribute{
+				MarkdownDescription: "Login username to create on the instance. Only supported when os_type is \"linux\". " +
+					"Must be set together with admin_password. Mutually exclusive with keypair_id and keypair_name.",
+				Optional: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"admin_password": schema.StringAttribute{
+				MarkdownDescription: "Login password for admin_username. Only supported when os_type is \"linux\". " +
+					"Must be set together with admin_username. Mutually exclusive with keypair_id and keypair_name. " +
+					"Stored in plaintext in Terraform state.",
+				Optional:  true,
+				Sensitive: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -341,6 +362,53 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 		resp.Diagnostics.AddError("Invalid Configuration",
 			"Only one of keypair_id or keypair_name may be specified, not both.")
 	}
+
+	// Validate VM credentials (admin_username / admin_password).
+	//
+	// Presence is tested with IsNull() alone: a value sourced from a variable or
+	// another resource is Unknown rather than Null, so IsNull() still answers
+	// "is this set in config?". Reading a value is guarded by IsUnknown().
+	usernameSet := !data.AdminUsername.IsNull()
+	passwordSet := !data.AdminPassword.IsNull()
+	keypairSet := !data.KeypairID.IsNull() || !data.KeypairName.IsNull()
+	credentialsSet := usernameSet || passwordSet
+
+	if usernameSet != passwordSet {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"admin_username and admin_password must be specified together.")
+	}
+
+	if credentialsSet {
+		if keypairSet {
+			resp.Diagnostics.AddError("Invalid Configuration",
+				"admin_username/admin_password may not be combined with keypair_id or keypair_name. "+
+					"Use either password credentials or an SSH keypair, not both.")
+		}
+
+		if !data.OSType.IsUnknown() && !strings.EqualFold(data.OSType.ValueString(), "linux") {
+			resp.Diagnostics.AddError("Invalid Configuration",
+				"admin_username/admin_password are only supported when os_type is \"linux\".")
+		}
+
+		// The form encoder drops empty strings, so an explicit "" would silently
+		// send a half-populated request.
+		if usernameSet && !data.AdminUsername.IsUnknown() && data.AdminUsername.ValueString() == "" {
+			resp.Diagnostics.AddError("Invalid Configuration",
+				"admin_username may not be an empty string.")
+		}
+		if passwordSet && !data.AdminPassword.IsUnknown() && data.AdminPassword.ValueString() == "" {
+			resp.Diagnostics.AddError("Invalid Configuration",
+				"admin_password may not be an empty string.")
+		}
+	}
+
+	// A linux instance needs exactly one authentication method.
+	if !data.OSType.IsUnknown() && strings.EqualFold(data.OSType.ValueString(), "linux") &&
+		!credentialsSet && !keypairSet {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"A linux instance requires an authentication method: set either keypair_id/keypair_name "+
+				"or admin_username and admin_password.")
+	}
 }
 
 func (r *VMResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -466,6 +534,11 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		keypairID = resolved
 	}
 
+	// VM credentials. Mutual exclusion with the keypair is enforced in ValidateConfig.
+	// The API's confirm field is populated from admin_password: double entry guards
+	// against typos in an interactive form, but here the config is the source of truth.
+	adminPassword := data.AdminPassword.ValueString()
+
 	// Use provider region as default if not set
 	region := data.Region.ValueString()
 	if region == "" {
@@ -496,6 +569,9 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		NetworkID:            subnetID,
 		SecurityGroupID:      secGroupID,
 		KeypairID:            keypairID,
+		VMUsername:           data.AdminUsername.ValueString(),
+		VMPassword:           adminPassword,
+		VMConfirmPassword:    adminPassword,
 		UserCloudInitScripts: data.UserData.ValueString(),
 		AZName:               data.AvailabilityZone.ValueString(),
 		Region:               region,
@@ -583,11 +659,22 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	if compute.SubnetID != "" {
 		data.SubnetID = types.StringValue(compute.SubnetID)
 	}
-	if compute.SecurityGroupID != 0 {
+	// Only refresh security_group_id from the API when the practitioner configured
+	// the security group by ID. When it was configured by name, security_group_id is
+	// left null in config; writing the API's numeric ID back would read as drift and
+	// produce a perpetual diff. There is no API field for the security group name, so
+	// security_group_name cannot be refreshed and is left untouched (config-owned).
+	if compute.SecurityGroupID != 0 && data.SecurityGroupName.IsNull() {
 		data.SecurityGroupID = types.StringValue(fmt.Sprintf("%d", compute.SecurityGroupID))
 	}
-	if compute.KeypairName != "" {
-		data.KeypairID = types.StringValue(compute.KeypairName)
+	// The compute API only ever reports the keypair by name; it returns no keypair ID.
+	// So keypair_id is left untouched here — there is nothing to refresh it from, and
+	// both keypair attributes are Optional (not Computed) with RequiresReplace, meaning
+	// any value written back that the practitioner didn't configure reads as drift and
+	// forces the VM to be replaced. Refresh keypair_name only when the keypair was
+	// configured by name; if it was configured by ID, keypair_name must stay null.
+	if compute.KeypairName != "" && data.KeypairID.IsNull() {
+		data.KeypairName = types.StringValue(compute.KeypairName)
 	}
 	data.Status = types.StringValue(compute.Status)
 	data.PublicIP = types.StringValue(models.FlexString(compute.PublicIPs))
@@ -688,12 +775,21 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		}
 	}
 
-	// Convert security group ID for update
+	// Resolve security group for update: honor security_group_id when set, otherwise
+	// re-resolve security_group_name so a changed name is picked up (Create resolves
+	// name the same way).
 	var secGroupID int
 	if !data.SecurityGroupID.IsNull() && data.SecurityGroupID.ValueString() != "" {
 		if sgID, err := strconv.Atoi(data.SecurityGroupID.ValueString()); err == nil {
 			secGroupID = sgID
 		}
+	} else if !data.SecurityGroupName.IsNull() {
+		resolved, err := computeClient.ResolveSecurityGroupID(ctx, data.SecurityGroupName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Security Group Resolution Error", err.Error())
+			return
+		}
+		secGroupID = resolved
 	}
 
 	description := data.Description.ValueString()

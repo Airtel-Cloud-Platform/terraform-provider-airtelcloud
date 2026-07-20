@@ -30,38 +30,38 @@ type Port struct {
 
 // Compute represents a virtual machine in Airtel Cloud (matches API response)
 type Compute struct {
-	ID                 string    `json:"id"`
-	ProviderInstanceID string    `json:"provider_instance_id"`
-	InstanceName       string    `json:"instance_name,omitempty"`
-	Description        string    `json:"description,omitempty"`
-	InstanceType       string    `json:"instance_type,omitempty"`
-	FlavorID           interface{} `json:"flavor_id"`
-	ImageID            interface{} `json:"image_id,omitempty"`
-	NetworkID          string    `json:"network_id"`
-	SubnetID           string    `json:"subnet_id,omitempty"`
-	Status             string    `json:"status,omitempty"`
-	PublicIPs          interface{} `json:"public_ips,omitempty"`
-	FloatingIP         string    `json:"floating_ip,omitempty"`
-	VPCID              string    `json:"vpc_id,omitempty"`
-	SecurityGroupID    int       `json:"sec_group_id,omitempty"`
-	KeypairName        string    `json:"keypair_name,omitempty"`
-	UserData           string    `json:"userdata,omitempty"`
-	AvailabilityZone   string    `json:"availability_zone,omitempty"`
-	AZName             string    `json:"az_name,omitempty"`
-	Region             string    `json:"region,omitempty"`
-	OSType             string    `json:"os_type,omitempty"`
-	BootFromVolume     bool      `json:"boot_from_volume,omitempty"`
-	VolumeSize         int       `json:"volume_size,omitempty"`
-	VolumeTypeID       int       `json:"volume_type_id,omitempty"`
-	EnableBackup       bool      `json:"enable_backup,omitempty"`
-	EnableAntivirus    bool      `json:"enable_antivirus,omitempty"`
-	BillingUnit        string    `json:"billing_unit,omitempty"`
-	IsFirewall         bool      `json:"is_firewall,omitempty"`
-	IsVPN              bool      `json:"is_vpn,omitempty"`
-	ManagedBy          string    `json:"managed_by,omitempty"`
-	CreatedAt          string `json:"created,omitempty"`
-	UpdatedAt          string `json:"updated,omitempty"`
-	DeletedAt          string `json:"deleted,omitempty"`
+	ID                 string          `json:"id"`
+	ProviderInstanceID string          `json:"provider_instance_id"`
+	InstanceName       string          `json:"instance_name,omitempty"`
+	Description        string          `json:"description,omitempty"`
+	InstanceType       string          `json:"instance_type,omitempty"`
+	FlavorID           interface{}     `json:"flavor_id"`
+	ImageID            interface{}     `json:"image_id,omitempty"`
+	NetworkID          string          `json:"network_id"`
+	SubnetID           string          `json:"subnet_id,omitempty"`
+	Status             string          `json:"status,omitempty"`
+	PublicIPs          interface{}     `json:"public_ips,omitempty"`
+	FloatingIP         string          `json:"floating_ip,omitempty"`
+	VPCID              string          `json:"vpc_id,omitempty"`
+	SecurityGroupID    int             `json:"sec_group_id,omitempty"`
+	KeypairName        string          `json:"keypair_name,omitempty"`
+	UserData           string          `json:"userdata,omitempty"`
+	AvailabilityZone   string          `json:"availability_zone,omitempty"`
+	AZName             string          `json:"az_name,omitempty"`
+	Region             string          `json:"region,omitempty"`
+	OSType             string          `json:"os_type,omitempty"`
+	BootFromVolume     bool            `json:"boot_from_volume,omitempty"`
+	VolumeSize         int             `json:"volume_size,omitempty"`
+	VolumeTypeID       int             `json:"volume_type_id,omitempty"`
+	EnableBackup       bool            `json:"enable_backup,omitempty"`
+	EnableAntivirus    bool            `json:"enable_antivirus,omitempty"`
+	BillingUnit        string          `json:"billing_unit,omitempty"`
+	IsFirewall         bool            `json:"is_firewall,omitempty"`
+	IsVPN              bool            `json:"is_vpn,omitempty"`
+	ManagedBy          string          `json:"managed_by,omitempty"`
+	CreatedAt          string          `json:"created,omitempty"`
+	UpdatedAt          string          `json:"updated,omitempty"`
+	DeletedAt          string          `json:"deleted,omitempty"`
 	Action             string          `json:"action,omitempty"`
 	Labels             json.RawMessage `json:"labels,omitempty"`
 	Ports              []Port          `json:"ports,omitempty"`
@@ -91,6 +91,9 @@ type CreateComputeRequest struct {
 	OSType               string `form:"os_type,omitempty"`
 	VMCount              int    `form:"vm_count,omitempty"`
 	KeypairID            string `form:"keypair_id,omitempty"`
+	VMUsername           string `form:"vm_username,omitempty"`
+	VMPassword           string `form:"vm_password,omitempty"`
+	VMConfirmPassword    string `form:"vm_confirm_password,omitempty"`
 	SubnetID             string `form:"subnetId,omitempty"`
 	NetworkID            string `form:"network_id,omitempty"`
 	UserCloudInitScripts string `form:"user_cloud_init_scripts,omitempty"`
@@ -136,15 +139,21 @@ type Image struct {
 	Description string `json:"description,omitempty"`
 }
 
-// SecurityGroup represents a security group (from list API)
-type SecurityGroup struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-}
-
 // Keypair represents an SSH keypair (from list API)
 type Keypair struct {
-	ID          int    `json:"id"`
+	ID          string `json:"uuid"`
 	Name        string `json:"name"`
 	Fingerprint string `json:"fingerprint,omitempty"`
+}
+
+// KeypairListResponse wraps the keypair list API response. Unlike the compute
+// list endpoints, the /ext keypairs service nests its page inside a "data" object.
+type KeypairListResponse struct {
+	Message string `json:"message"`
+	Data    struct {
+		Items  []Keypair `json:"items"`
+		Count  int       `json:"count"`
+		Offset int       `json:"offset"`
+		Limit  int       `json:"limit"`
+	} `json:"data"`
 }

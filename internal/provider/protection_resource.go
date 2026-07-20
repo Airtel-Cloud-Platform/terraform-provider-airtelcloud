@@ -20,6 +20,7 @@ import (
 
 var _ resource.Resource = &ProtectionResource{}
 var _ resource.ResourceWithImportState = &ProtectionResource{}
+var _ resource.ResourceWithValidateConfig = &ProtectionResource{}
 
 func NewProtectionResource() resource.Resource {
 	return &ProtectionResource{}
@@ -35,6 +36,7 @@ type ProtectionResourceModel struct {
 	Description     types.String `tfsdk:"description"`
 	PolicyTypeID    types.String `tfsdk:"policy_type_id"`
 	ComputeID       types.String `tfsdk:"compute_id"`
+	ComputeName     types.String `tfsdk:"compute_name"`
 	ProtectionPlan  types.String `tfsdk:"protection_plan"`
 	EnableScheduler types.String `tfsdk:"enable_scheduler"`
 	StartDate       types.String `tfsdk:"start_date"`
@@ -75,8 +77,16 @@ func (r *ProtectionResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Optional:            true,
 			},
 			"compute_id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the compute instance to protect.",
-				Required:            true,
+				MarkdownDescription: "The ID of the compute instance to protect. Either compute_id or compute_name must be specified.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"compute_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the compute instance to protect. If set, it is resolved to compute_id. Either compute_id or compute_name must be specified.",
+				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -140,6 +150,25 @@ func (r *ProtectionResource) Configure(ctx context.Context, req resource.Configu
 	r.client = c
 }
 
+// ValidateConfig enforces that exactly one of compute_id or compute_name is set.
+func (r *ProtectionResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data ProtectionResourceModel
+
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.ComputeID.IsNull() && !data.ComputeName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of compute_id or compute_name may be specified, not both.")
+	}
+	if data.ComputeID.IsNull() && data.ComputeName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of compute_id or compute_name must be specified.")
+	}
+}
+
 func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data ProtectionResourceModel
 
@@ -148,11 +177,24 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
+	// Resolve compute_name to compute_id when configured by name, and persist the
+	// resolved id into the Computed compute_id attribute so it is known in state.
+	computeID := data.ComputeID.ValueString()
+	if computeID == "" && !data.ComputeName.IsNull() {
+		resolved, err := r.client.ResolveComputeID(ctx, data.ComputeName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve compute name %q: %s", data.ComputeName.ValueString(), err))
+			return
+		}
+		computeID = resolved
+	}
+	data.ComputeID = types.StringValue(computeID)
+
 	createReq := &models.CreateProtectionRequest{
 		Name:            data.Name.ValueString(),
 		Description:     data.Description.ValueString(),
 		PolicyTypeID:    data.PolicyTypeID.ValueString(),
-		ComputeID:       data.ComputeID.ValueString(),
+		ComputeID:       computeID,
 		ProtectionPlan:  data.ProtectionPlan.ValueString(),
 		EnableScheduler: data.EnableScheduler.ValueString(),
 		StartDate:       data.StartDate.ValueString(),
@@ -212,7 +254,11 @@ func (r *ProtectionResource) Read(ctx context.Context, req resource.ReadRequest,
 	if protection.Description != "" {
 		data.Description = types.StringValue(protection.Description)
 	}
-	if protection.ComputeID != "" {
+	// Only refresh compute_id from the API when configured by id. When configured by
+	// name, compute_id is Computed from the resolved name; overwriting it here is
+	// harmless but the resolved value already in state is authoritative, and the API
+	// reports no compute name to refresh compute_name from.
+	if protection.ComputeID != "" && data.ComputeName.IsNull() {
 		data.ComputeID = types.StringValue(protection.ComputeID)
 	}
 	if protection.ProtectionPlan != "" {

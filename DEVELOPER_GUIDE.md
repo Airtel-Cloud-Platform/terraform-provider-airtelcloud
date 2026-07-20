@@ -4,7 +4,7 @@ A comprehensive guide for adding new resources to the `terraform-provider-airtel
 
 **Framework**: Terraform Plugin Framework v1.16.1 (not SDKv2)
 **Go version**: 1.24+
-**Module**: `github.com/terraform-providers/terraform-provider-airtelcloud`
+**Module**: `github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud`
 
 ---
 
@@ -225,6 +225,7 @@ Different API services use different URL structures:
 | Service | Path Pattern | Example |
 |---------|-------------|---------|
 | Compute (v2.1) | `/api/v2.1/computes/domain/{org}/project/{project}/computes` | VM, flavors, images, snapshots |
+| Keypairs (ext v1) | `/ext/api/v1/keypairs/domain/{domain}/keypairs` | SSH keypairs — **domain-scoped, no project segment** |
 | Volume (v2.1) | `/api/v2.1/volumes/domain/{org}/project/{project}/volumes` | Block storage |
 | Backup (v2.1) | `/api/v2.1/backups/domain/{org}/project/{project}/backups` | Protection, protection plans |
 | Load Balancer (v2.1) | `/api/v2.1/load-balancers/domain/{org}/project/{project}/load-balancers` | LB Service, VIP, Cert, VS |
@@ -235,10 +236,13 @@ Different API services use different URL structures:
 | IPAM | `/ipam/domain/{org}/project/{project}` | Public IP allocation |
 | IPAM Admin | `/api/v1/admin/ipam_vip` | Public IP policy rules |
 
-> **IMPORTANT — Path Prefix Rule**: The `doRequest()` and `doFormRequest()` methods in `client.go` automatically prepend `/api` if the path doesn't already start with `/api`. This means:
+> **IMPORTANT — Path Prefix Rule**: Every request helper in `client.go` (`doRequest`, `doFormRequest`, `doURLEncodedFormRequest`, `doQueryParamRequest`) runs its path through `normalizePath()`, which prepends `/api` unless the path already starts with a recognized service prefix — `/api` or `/ext`. This means:
 > - Path `/v1/zones` → becomes `/api/v1/zones` ✓
 > - Path `/api/v2.1/computes/...` → stays as-is ✓
+> - Path `/ext/api/v1/keypairs/...` → stays as-is ✓
 > - Do NOT double-prefix: `/api/api/v1/zones` ✗
+>
+> If a service moves behind a new prefix, add it to `normalizePath()` — otherwise its paths get silently rewritten to `/api/<prefix>/...`.
 
 #### Client Method Templates
 
@@ -1364,6 +1368,7 @@ func (c *Client) Delete{Name}(ctx context.Context, id string) error {
 
 Different services use different API versions:
 - Compute, Volume: `/api/v2.1/...`
+- Keypairs: `/ext/api/v1/keypairs/...` (domain-scoped only — no project segment)
 - Network Manager (VPC, Subnet): `/api/network-manager/v1/...`
 - Security Groups: `/api/v1/networks/...`
 - DNS: `/api/v1/zones/...`

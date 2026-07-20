@@ -61,6 +61,8 @@ resource "airtelcloud_protection" "web_server" {
   name             = "${var.resource_prefix}-web-backup"
   description      = "Backup policy for web server"
   compute_id       = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
+  # Or reference the instance by name instead of id (mutually exclusive with compute_id):
+  # compute_name   = "my-instance"
   protection_plan  = airtelcloud_protection_plan.daily.name
   enable_scheduler = "true"
   start_date       = "2026-04-01"
