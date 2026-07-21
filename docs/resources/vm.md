@@ -22,11 +22,13 @@ resource "airtelcloud_vm" "web_server" {
   flavor_name       = "ccd.Large"
   image_name        = "Ubuntu22_04_Jul2026"
   os_type           = "linux"
-  vpc_id            = "<vpc-uuid>"
-  subnet_id         = "<subnet-uuid>"
-  security_group_id = "<security-group-uuid>"
-  availability_zone = "S1"
+  vpc_name          = "vpc01"
+  subnet_name       = "sub1"
+  security_group_name = "all-open-az1"
+  availability_zone = "N1"
   disk_size         = 100
+  admin_username    = "clouduser"
+  admin_password    = var.vm_admin_password
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
@@ -43,9 +45,15 @@ resource "airtelcloud_vm" "web_server" {
 }
 ```
 
-Replace the UUID placeholders with real IDs from your environment. If these resources are managed in the same Terraform configuration, prefer references instead of hardcoded values, for example: `vpc_id = airtelcloud_vpc.main.id`, `subnet_id = airtelcloud_subnet.main.id`, and `security_group_id = airtelcloud_security_group.main.id`.
+Replace the name placeholders with real values from your environment. If these resources are managed in the same Terraform configuration, you can also use IDs via references, for example: `vpc_id = airtelcloud_vpc.main.id`, `subnet_id = airtelcloud_subnet.main.id`, and `security_group_id = airtelcloud_security_group.main.id`.
 
 You can attach the security group during provisioning by setting either `security_group_id` or `security_group_name`. If the security group is managed in the same Terraform configuration, prefer `security_group_id = airtelcloud_security_group.<name>.id`.
+
+For Linux VMs, configure exactly one authentication method:
+- Username/password: set both `admin_username` and `admin_password`
+- SSH keypair: set one of `keypair_id` or `keypair_name`
+
+Do not combine username/password with keypair fields.
 
 ### Windows VM with Backup
 
@@ -55,10 +63,10 @@ resource "airtelcloud_vm" "windows_server" {
   flavor_name       = "ccd.Large"
   image_name        = "WIN2K19_PREACT_Jul2026"
   os_type           = "windows"
-  vpc_id            = "<vpc-uuid>"
-  subnet_id         = "<subnet-uuid>"
-  security_group_id = "<security-group-uuid>"
-  availability_zone = "S1"
+  vpc_name          = "vpc01"
+  subnet_name       = "sub1"
+  security_group_name = "all-open-az1"
+  availability_zone = "N1"
   disk_size         = 100
   boot_from_volume  = true
   enable_backup     = true
@@ -73,8 +81,6 @@ resource "airtelcloud_vm" "windows_server" {
 }
 ```
 
-The VM resource currently does not expose dedicated username/password provisioning fields. Use image defaults, keypairs, or initialization scripts as supported by your image.
-
 ## Argument Reference
 
 ### Required
@@ -82,17 +88,22 @@ The VM resource currently does not expose dedicated username/password provisioni
 - `instance_name` (String) - The name of the compute instance.
 - `flavor_id` or `flavor_name` (String) - Exactly one must be specified. Use `flavor_id` to pass the platform flavor ID, or `flavor_name` to pass the flavor name shown in the catalog. Forces replacement on change.
 - `image_id` or `image_name` (String) - Exactly one must be specified. Use `image_id` to pass the platform image ID, or `image_name` to pass the image name shown in the catalog. Forces replacement on change.
-- `vpc_id` (String) - The ID of the VPC. Forces replacement on change.
-- `subnet_id` (String) - The ID of the subnet. Forces replacement on change.
+- `vpc_id` or `vpc_name` (String) - Exactly one must be specified. The VPC ID or VPC name. Forces replacement on change.
+- `subnet_id` or `subnet_name` (String) - Exactly one must be specified. The subnet ID or subnet name. Forces replacement on change.
 - `os_type` (String) - The OS type: `"linux"` or `"windows"`. Forces replacement on change.
 
 ### Optional
 
 - `flavor_name` (String) - The flavor name for the compute instance. Conflicts with `flavor_id`. Forces replacement on change.
 - `image_name` (String) - The image name for the compute instance. Conflicts with `image_id`. Forces replacement on change.
+- `vpc_name` (String) - The VPC name. Conflicts with `vpc_id`.
+- `subnet_name` (String) - The subnet name. Conflicts with `subnet_id`.
 - `security_group_id` (String) - The ID of the security group to attach during VM provisioning. One of `security_group_id` or `security_group_name` may be specified.
 - `security_group_name` (String) - The name of the security group to attach during VM provisioning. One of `security_group_id` or `security_group_name` may be specified.
 - `keypair_id` (String) - The ID of the key pair for SSH access. Forces replacement on change.
+- `keypair_name` (String) - The name of the key pair for SSH access. Conflicts with `keypair_id`. Forces replacement on change.
+- `admin_username` (String) - Login username to create on the instance. Supported only when `os_type = "linux"`. Must be set together with `admin_password`, and cannot be combined with `keypair_id` or `keypair_name`. Forces replacement on change.
+- `admin_password` (String, Sensitive) - Login password for `admin_username`. Supported only when `os_type = "linux"`. Must be set together with `admin_username`, and cannot be combined with `keypair_id` or `keypair_name`. Stored in plaintext in Terraform state. Forces replacement on change.
 - `user_data` (String) - Cloud-init script to run on instance initialization. Forces replacement on change.
 - `availability_zone` (String) - The availability zone (e.g., `S1`, `S2`). Forces replacement on change.
 - `region` (String) - The region for the instance. Defaults to the provider's `region`.
