@@ -52,7 +52,7 @@ make install
 `make install` places the binary at:
 
 ```
-~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.1.0/<OS_ARCH>/
+~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.1.1/<OS_ARCH>/
 ```
 
 where `<OS_ARCH>` is `linux_amd64` by default (configurable in the Makefile).
@@ -96,7 +96,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.1.0"
+      version = "1.1.1"
     }
   }
 }
