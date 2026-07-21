@@ -30,7 +30,7 @@ terraform-provider/
 - **Go source files**: 57 (excl. tests)
 - **Test files**: 31 (13 unit, 10 integration, 7 acceptance, 1 helper)
 - **Total source lines**: ~13,200 (excl. tests)
-- **Provider version**: 1.1.0
+- **Provider version**: 1.1.1
 
 ## Entry Points
 
