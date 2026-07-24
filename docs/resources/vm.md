@@ -45,6 +45,28 @@ resource "airtelcloud_vm" "web_server" {
 }
 ```
 
+### Linux VM with SSH Keypair
+
+```terraform
+resource "airtelcloud_vm" "web_server_keypair" {
+  instance_name       = "web-server-keypair"
+  flavor_name         = "ccd.Large"
+  image_name          = "Ubuntu22_04_Jul2026"
+  os_type             = "linux"
+  vpc_name            = "vpc01"
+  subnet_name         = "sub1"
+  security_group_name = "all-open-az1"
+  availability_zone   = "N1"
+  disk_size           = 100
+  keypair_name        = "my-linux-keypair"
+
+  tags = {
+    Environment = "production"
+    Purpose     = "web-server-keypair"
+  }
+}
+```
+
 Replace the name placeholders with real values from your environment. If these resources are managed in the same Terraform configuration, you can also use IDs via references, for example: `vpc_id = airtelcloud_vpc.main.id`, `subnet_id = airtelcloud_subnet.main.id`, and `security_group_id = airtelcloud_security_group.main.id`.
 
 You can attach the security group during provisioning by setting either `security_group_id` or `security_group_name`. If the security group is managed in the same Terraform configuration, prefer `security_group_id = airtelcloud_security_group.<name>.id`.
@@ -59,20 +81,20 @@ Do not combine username/password with keypair fields.
 
 ```terraform
 resource "airtelcloud_vm" "windows_server" {
-  instance_name     = "win-server"
-  flavor_name       = "ccd.Large"
-  image_name        = "WIN2K19_PREACT_Jul2026"
-  os_type           = "windows"
-  vpc_name          = "vpc01"
-  subnet_name       = "sub1"
+  instance_name       = "win-server"
+  flavor_name         = "ccd.Large"
+  image_name          = "WIN2K19_PREACT_Jul2026"
+  os_type             = "windows"
+  vpc_name            = "vpc01"
+  subnet_name         = "sub1"
   security_group_name = "all-open-az1"
-  availability_zone = "N1"
-  disk_size         = 100
-  boot_from_volume  = true
-  enable_backup     = true
-  protection_plan   = "daily"
-  start_date        = "2025-07-15"
-  start_time        = "02:00"
+  availability_zone   = "N1"
+  disk_size           = 100
+  boot_from_volume    = true
+  enable_backup       = true
+  protection_plan     = "daily"
+  start_date          = "2025-07-15"
+  start_time          = "02:00"
 
   tags = {
     Environment = "production"

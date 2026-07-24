@@ -364,6 +364,21 @@ resource "airtelcloud_vm" "web1" {
   admin_password    = var.vm_admin_password
   description       = "Web server behind load balancer"
 }
+
+resource "airtelcloud_vm" "web1_keypair" {
+  instance_name       = "web-server-1-keypair"
+  os_type             = "linux"
+  flavor_name         = "ccd.Large"
+  image_name          = "CentOS_Stream9_Mar2026"
+  vpc_id              = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
+  subnet_id           = "35df162d-5211-4d58-84ed-6a499626949c"
+  boot_from_volume    = true
+  disk_size           = 100
+  availability_zone   = "S1"
+  security_group_name = "all-open-az1"
+  keypair_name        = "my-linux-keypair"
+  description         = "Web server authenticated with SSH keypair"
+}
 ```
 
 -> **Note:** Provide exactly one of `flavor_id` / `flavor_name`, `image_id` / `image_name`, `vpc_id` / `vpc_name`, and `subnet_id` / `subnet_name`. The provider resolves names to IDs automatically.
