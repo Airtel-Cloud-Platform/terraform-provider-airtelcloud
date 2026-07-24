@@ -12,10 +12,10 @@ terraform-provider/
 ├── docs/                      # Auto-generated terraform-plugin-docs
 │   ├── index.md
 │   ├── guides/getting-started.md
-│   └── resources/             # 9 resource doc files
+│   └── resources/             # 22 resource doc files
 ├── examples/
 │   ├── complete/              # Full working example
-│   ├── resources/             # Per-resource examples (17 dirs)
+│   ├── resources/             # Per-resource examples (21 dirs)
 │   └── import/                # Import example
 ├── internal/
 │   ├── client/                # HTTP client layer (17 files + 13 unit + 10 integration tests)
@@ -186,3 +186,7 @@ provider "airtelcloud" {
   subnet_id    = "subnet-abc"                         # optional
 }
 ```
+e92be6fc-2b9e-45b0-9d20-91f8ea0c4092
+G4DnUhEQA6Ns34HHIPq+IHo5cV9b2Llj24X+Y70HtW
+elements
+copper
