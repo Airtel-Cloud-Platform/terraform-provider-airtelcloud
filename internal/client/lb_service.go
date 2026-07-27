@@ -21,7 +21,7 @@ func (c *Client) lbBasePath() string {
 // ListLBFlavors retrieves all available LB flavors
 func (c *Client) ListLBFlavors(ctx context.Context) ([]models.LBFlavor, error) {
 	var flavors []models.LBFlavor
-	err := c.Get(ctx, fmt.Sprintf("%s/flavors/?type=lb", c.lbBasePath()), &flavors)
+	err := c.Get(ctx, fmt.Sprintf("%s/flavors/?type=lb", c.computeBasePath()), &flavors)
 	if err != nil {
 		return nil, err
 	}

@@ -1,2 +1,6 @@
 /bin/
 /terraform-provider-airtelcloud
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.tfplan

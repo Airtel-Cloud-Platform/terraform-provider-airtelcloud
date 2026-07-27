@@ -358,6 +358,7 @@ resource "airtelcloud_lb_virtual_server" "http" {
   routing_algorithm = "ROUND_ROBIN"
   vpc_id            = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
   interval          = 30
+  monitor_name      = "http-monitor"
 
   # Backend nodes — reference a VM (default) or a baremetal server by name/id
   # (compute_name and compute_id are mutually exclusive per node).

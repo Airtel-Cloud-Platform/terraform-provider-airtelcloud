@@ -50,12 +50,13 @@ variable "resource_prefix" {
 resource "airtelcloud_lb_virtual_server" "http" {
   lb_service_id     = "ac238c5b-6334-49b9-b9c0-decc0aaf63d6"
   name              = "${var.resource_prefix}-http-vs"
-  vip_port_id       = 123
+  vip               = "10.1.1.100"
   protocol          = "HTTP"
   port              = 80
   routing_algorithm = "ROUND_ROBIN"
   vpc_id            = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
   interval          = 30
+  monitor_name      = "http-monitor"
   monitor_protocol  = "HTTP"
   x_forwarded_for   = true
 
