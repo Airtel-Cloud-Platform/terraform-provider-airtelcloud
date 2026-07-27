@@ -349,29 +349,30 @@ resource "airtelcloud_protection" "web_server" {
 
 # Create an HTTP virtual server with two backend nodes
 resource "airtelcloud_lb_virtual_server" "http" {
-  lb_service_id     = airtelcloud_lb_service.web_lb.id
-  name              = "${var.resource_prefix}-http-vs"
-  vip_port_id       = tonumber(airtelcloud_lb_vip.web_vip.id)
+  lb_service_id = airtelcloud_lb_service.web_lb.id
+  name          = "${var.resource_prefix}-http-vs"
+  # vip_port_id is computed from the VIP fixed IP below.
+  vip               = airtelcloud_lb_vip.web_vip.fixed_ips
   protocol          = "HTTP"
   port              = 80
   routing_algorithm = "ROUND_ROBIN"
   vpc_id            = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
   interval          = 30
 
-  # Backend nodes — compute_ip references VM private IPs dynamically.
-  # compute_id is the platform's internal integer ID (not the VM UUID).
+  # Backend nodes — reference a VM (default) or a baremetal server by name/id
+  # (compute_name and compute_id are mutually exclusive per node).
   nodes = [
     {
-      compute_id = 1
-      compute_ip = airtelcloud_vm.web1.private_ip
-      port       = 8080
-      weight     = 50
+      compute_name = airtelcloud_vm.web1.instance_name
+      compute_ip   = airtelcloud_vm.web1.private_ip
+      port         = 8080
+      weight       = 50
     },
     {
-      compute_id = 2
-      compute_ip = airtelcloud_vm.web2.private_ip
-      port       = 8080
-      weight     = 50
+      compute_name = airtelcloud_vm.web2.instance_name
+      compute_ip   = airtelcloud_vm.web2.private_ip
+      port         = 8080
+      weight       = 50
     },
   ]
 

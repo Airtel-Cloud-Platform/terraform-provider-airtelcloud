@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // lbBasePath returns the base path for load balancer endpoints
@@ -20,7 +21,7 @@ func (c *Client) lbBasePath() string {
 // ListLBFlavors retrieves all available LB flavors
 func (c *Client) ListLBFlavors(ctx context.Context) ([]models.LBFlavor, error) {
 	var flavors []models.LBFlavor
-	err := c.Get(ctx, fmt.Sprintf("%s/flavors/?type=lb", c.computeBasePath()), &flavors)
+	err := c.Get(ctx, fmt.Sprintf("%s/flavors/?type=lb", c.lbBasePath()), &flavors)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +65,31 @@ func (c *Client) ListLBServices(ctx context.Context) ([]models.LBService, error)
 // DeleteLBService deletes an LB service
 func (c *Client) DeleteLBService(ctx context.Context, id string) error {
 	return c.Delete(ctx, fmt.Sprintf("%s/lb_service/%s", c.lbBasePath(), id))
+}
+
+// ResolveLBServiceID resolves a load balancer service name to its ID
+func (c *Client) ResolveLBServiceID(ctx context.Context, name string) (string, error) {
+	services, err := c.ListLBServices(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list LB services: %w", err)
+	}
+	tflog.Debug(ctx, "ResolveLBServiceID: listing LB services", map[string]interface{}{
+		"service_count": len(services),
+		"searched_name": name,
+	})
+	for _, svc := range services {
+		if svc.Name == name {
+			if svc.ID == "" {
+				return "", fmt.Errorf("LB service %q found but has empty ID (API response field mismatch)", name)
+			}
+			tflog.Debug(ctx, "ResolveLBServiceID: resolved LB service", map[string]interface{}{
+				"name": name,
+				"id":   svc.ID,
+			})
+			return svc.ID, nil
+		}
+	}
+	return "", fmt.Errorf("LB service with name %q not found", name)
 }
 
 // WaitForLBServiceReady polls until the LB service reaches Active status
@@ -156,6 +182,29 @@ func (c *Client) ListLBVips(ctx context.Context, lbServiceID string) ([]models.L
 // DeleteLBVip deletes a VIP port
 func (c *Client) DeleteLBVip(ctx context.Context, lbServiceID string, vipID int) error {
 	return c.Delete(ctx, fmt.Sprintf("%s/%s/vip/%s/", c.lbVipBasePath(), lbServiceID, strconv.Itoa(vipID)))
+}
+
+// ResolveVipPortID resolves an LB VIP's port id by matching its fixed_ips against
+// the given fixed IP. The caller must scope the client with the LB service's
+// network (WithSubnetID) so ListLBVips returns the VIPs.
+func (c *Client) ResolveVipPortID(ctx context.Context, lbServiceID, fixedIP string) (int, error) {
+	vips, err := c.ListLBVips(ctx, lbServiceID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list LB VIPs to resolve vip_port_id for fixed IP %s: %w", fixedIP, err)
+	}
+	tflog.Debug(ctx, "ResolveVipPortID: listing LB VIPs", map[string]interface{}{
+		"vip_count":     len(vips),
+		"searched_ip":   fixedIP,
+		"lb_service_id": lbServiceID,
+	})
+	for _, vip := range vips {
+		for _, ip := range vip.FixedIPs {
+			if ip == fixedIP {
+				return vip.ID, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("no LB VIP found with fixed IP %q on LB service %s", fixedIP, lbServiceID)
 }
 
 // --- LB Certificate ---

@@ -80,13 +80,20 @@ type LBVirtualServer struct {
 	Updated            string `json:"updated,omitempty"`
 }
 
-// VirtualServerNode represents a backend node in a virtual server
+// VirtualServerNode represents a backend node (pool member) in a virtual server.
+// A node may be backed by a VM (source_type "vm", resource_type "compute") or a
+// baremetal server (source_type "bm", resource_type "baremetal").
 type VirtualServerNode struct {
-	ComputeID int    `json:"compute_id"`
-	ComputeIP string `json:"compute_ip"`
-	Port      int    `json:"port"`
-	Weight    int    `json:"weight,omitempty"`
-	MaxConn   int    `json:"max_conn,omitempty"`
+	Port          int    `json:"port"`
+	Weight        int    `json:"weight,omitempty"`
+	MaxConn       int    `json:"max_conn,omitempty"`
+	InstanceName  string `json:"instance_name"`
+	BackendPortID int    `json:"backend_port_id"`
+	SourceType    string `json:"source_type"`             // "vm" | "bm"
+	ResourceID    string `json:"resource_id"`             // compute/baremetal UUID
+	ResourceName  string `json:"resource_name,omitempty"` // required for baremetal
+	ResourceIP    string `json:"resource_ip"`
+	ResourceType  string `json:"resource_type"` // "compute" | "baremetal"
 }
 
 // LBFlavor represents a load balancer flavor

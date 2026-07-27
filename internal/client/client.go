@@ -753,6 +753,33 @@ func (c *Client) PutURLEncodedForm(ctx context.Context, path string, formData ma
 	return nil
 }
 
+// PatchURLEncodedForm performs a PATCH request with application/x-www-form-urlencoded encoding
+func (c *Client) PatchURLEncodedForm(ctx context.Context, path string, formData map[string]interface{}, v interface{}) error {
+	resp, err := c.doURLEncodedFormRequest(ctx, "PATCH", path, formData)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if v != nil {
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			tflog.Error(ctx, "Failed to read PatchURLEncodedForm response body", map[string]interface{}{
+				"error": readErr.Error(),
+			})
+			return readErr
+		}
+
+		tflog.Debug(ctx, "PatchURLEncodedForm response body", map[string]interface{}{
+			"body": string(bodyBytes),
+		})
+
+		return json.Unmarshal(bodyBytes, v)
+	}
+
+	return nil
+}
+
 // Delete performs a DELETE request
 func (c *Client) Delete(ctx context.Context, path string) error {
 	resp, err := c.doRequest(ctx, "DELETE", path, nil)

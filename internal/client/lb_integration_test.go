@@ -393,44 +393,42 @@ func TestLBIntegration_VirtualServerLifecycle(t *testing.T) {
 		if c.Status == "ACTIVE" || c.Status == "Active" || c.Status == "active" {
 			privateIP := c.PrivateIP()
 			if privateIP != "" {
+				backendPortID := 0
+				if len(c.Ports) > 0 {
+					backendPortID = c.Ports[0].ID
+				}
 				backendNode = models.VirtualServerNode{
-					ComputeID: func() int {
-						if len(c.Ports) > 0 {
-							return c.Ports[0].ID
-						}
-						return 0
-					}(),
-					ComputeIP: privateIP,
-					Port:      8080,
-					Weight:    1,
+					ResourceID:    c.ID,
+					InstanceName:  c.InstanceName,
+					ResourceIP:    privateIP,
+					BackendPortID: backendPortID,
+					SourceType:    "vm",
+					ResourceType:  "compute",
+					Port:          8080,
+					Weight:        1,
 				}
 				t.Logf("Using compute %s (%s) as backend node", c.ID, privateIP)
 				break
 			}
 		}
 	}
-	if backendNode.ComputeIP == "" {
+	if backendNode.ResourceIP == "" {
 		t.Skip("No active compute with private IP found for backend node, skipping")
 	}
 
-	params := BuildVirtualServerParams(
-		vsName,
-		"HTTP",
-		defaults.VPCID,
-		"ROUND_ROBIN",
-		"", // monitor_protocol
-		"", // certificate_id
-		vip.ID,
-		80,    // port
-		30,    // interval
-		false, // persistence_enabled
-		true,  // x_forwarded_for
-		false, // redirect_https
-		"",    // persistence_type
-		[]models.VirtualServerNode{backendNode},
-	)
+	formData := BuildVirtualServerFormData(VirtualServerCreateParams{
+		Name:             vsName,
+		Protocol:         "HTTP",
+		VPCID:            defaults.VPCID,
+		RoutingAlgorithm: "ROUND_ROBIN",
+		VipPortID:        vip.ID,
+		Port:             80,
+		Interval:         30,
+		XForwardedFor:    true,
+		Nodes:            []models.VirtualServerNode{backendNode},
+	})
 
-	vs, err := scopedClient.CreateVirtualServer(ctx, svc.ID, params)
+	vs, err := scopedClient.CreateVirtualServer(ctx, svc.ID, formData)
 	if err != nil {
 		t.Fatalf("CreateVirtualServer failed: %v", err)
 	}
@@ -494,24 +492,19 @@ func TestLBIntegration_VirtualServerLifecycle(t *testing.T) {
 
 	// Update virtual server (change routing algorithm)
 	t.Log("Updating virtual server routing algorithm to LEAST_CONNECTIONS...")
-	updateParams := BuildVirtualServerParams(
-		vsName,
-		"HTTP",
-		defaults.VPCID,
-		"LEAST_CONNECTIONS",
-		"", // monitor_protocol
-		"", // certificate_id
-		vip.ID,
-		80,
-		30,
-		false,
-		true,
-		false,
-		"",
-		[]models.VirtualServerNode{backendNode},
-	)
+	updateFormData := BuildVirtualServerFormData(VirtualServerCreateParams{
+		Name:             vsName,
+		Protocol:         "HTTP",
+		VPCID:            defaults.VPCID,
+		RoutingAlgorithm: "LEAST_CONNECTIONS",
+		VipPortID:        vip.ID,
+		Port:             80,
+		Interval:         30,
+		XForwardedFor:    true,
+		Nodes:            []models.VirtualServerNode{backendNode},
+	})
 
-	updatedVS, err := scopedClient.UpdateVirtualServer(ctx, svc.ID, vs.ID, updateParams)
+	updatedVS, err := scopedClient.UpdateVirtualServer(ctx, svc.ID, vs.ID, updateFormData)
 	if err != nil {
 		t.Fatalf("UpdateVirtualServer failed: %v", err)
 	}

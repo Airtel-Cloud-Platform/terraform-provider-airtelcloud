@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -44,18 +43,20 @@ func TestCreateVirtualServer(t *testing.T) {
 			client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
 
 			nodes := []models.VirtualServerNode{
-				{ComputeID: 1, ComputeIP: "10.0.0.1", Port: 80},
+				{
+					ResourceID: "compute-uuid-1", InstanceName: "vm-1", ResourceIP: "10.0.0.1",
+					BackendPortID: 101, SourceType: "vm", ResourceType: "compute", Port: 80,
+				},
 			}
 
-			params := BuildVirtualServerParams(
-				"test-vs", "HTTP", "vpc-1", "ROUND_ROBIN", "", "",
-				1, 80, 30,
-				false, true, false,
-				"",
-				nodes,
-			)
+			formData := BuildVirtualServerFormData(VirtualServerCreateParams{
+				Name: "test-vs", Protocol: "HTTP", VPCID: "vpc-1", RoutingAlgorithm: "ROUND_ROBIN",
+				VipPortID: 1, Port: 80, Interval: 30,
+				XForwardedFor: true,
+				Nodes:         nodes,
+			})
 
-			vs, err := client.CreateVirtualServer(context.Background(), "lb-svc-1", params)
+			vs, err := client.CreateVirtualServer(context.Background(), "lb-svc-1", formData)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateVirtualServer() error = %v, wantErr %v", err, tt.wantErr)
@@ -192,11 +193,12 @@ func TestUpdateVirtualServer(t *testing.T) {
 	baseURL := strings.TrimSuffix(mockServer.URL, "/")
 	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
 
-	params := url.Values{}
-	params.Set("routing_algorithm", "LEAST_CONNECTIONS")
-	params.Set("x_forwarded_for", "true")
+	formData := map[string]interface{}{
+		"routing_algorithm": "LEAST_CONNECTIONS",
+		"x_forwarded_for":   "true",
+	}
 
-	vs, err := client.UpdateVirtualServer(context.Background(), "lb-svc-1", "vs-1", params)
+	vs, err := client.UpdateVirtualServer(context.Background(), "lb-svc-1", "vs-1", formData)
 	if err != nil {
 		t.Fatalf("UpdateVirtualServer() error = %v", err)
 	}
@@ -219,38 +221,56 @@ func TestDeleteVirtualServer(t *testing.T) {
 	}
 }
 
-func TestBuildVirtualServerParams(t *testing.T) {
+func TestBuildVirtualServerFormData(t *testing.T) {
 	nodes := []models.VirtualServerNode{
-		{ComputeID: 1, ComputeIP: "10.0.0.1", Port: 80, Weight: 50},
-		{ComputeID: 2, ComputeIP: "10.0.0.2", Port: 80, Weight: 50},
+		{
+			ResourceID: "compute-uuid-1", InstanceName: "vm-1", ResourceIP: "10.0.0.1",
+			BackendPortID: 101, SourceType: "vm", ResourceType: "compute", Port: 80, Weight: 50,
+		},
+		{
+			ResourceID: "compute-uuid-2", InstanceName: "vm-2", ResourceIP: "10.0.0.2",
+			BackendPortID: 102, SourceType: "vm", ResourceType: "compute", Port: 80, Weight: 50,
+		},
 	}
 
-	params := BuildVirtualServerParams(
-		"test-vs", "HTTP", "vpc-1", "ROUND_ROBIN", "HTTP", "",
-		1, 80, 30,
-		true, true, false,
-		"source_ip",
-		nodes,
-	)
+	formData := BuildVirtualServerFormData(VirtualServerCreateParams{
+		Name: "test-vs", Protocol: "HTTP", VPCID: "vpc-1", RoutingAlgorithm: "ROUND_ROBIN",
+		MonitorProtocol: "HTTP", VipPortID: 1, Port: 80, Interval: 30,
+		PersistenceEnabled: true, XForwardedFor: true, PersistenceType: "source_ip",
+		Nodes: nodes,
+	})
 
-	if params.Get("name") != "test-vs" {
-		t.Errorf("BuildVirtualServerParams() name = %v, want test-vs", params.Get("name"))
+	if formData["name"] != "test-vs" {
+		t.Errorf("BuildVirtualServerFormData() name = %v, want test-vs", formData["name"])
 	}
-	if params.Get("protocol") != "HTTP" {
-		t.Errorf("BuildVirtualServerParams() protocol = %v, want HTTP", params.Get("protocol"))
+	if formData["protocol"] != "HTTP" {
+		t.Errorf("BuildVirtualServerFormData() protocol = %v, want HTTP", formData["protocol"])
 	}
-	if params.Get("routing_algorithm") != "ROUND_ROBIN" {
-		t.Errorf("BuildVirtualServerParams() routing_algorithm = %v, want ROUND_ROBIN", params.Get("routing_algorithm"))
+	if formData["routing_algorithm"] != "ROUND_ROBIN" {
+		t.Errorf("BuildVirtualServerFormData() routing_algorithm = %v, want ROUND_ROBIN", formData["routing_algorithm"])
 	}
-	if params.Get("persistence_enabled") != "true" {
-		t.Errorf("BuildVirtualServerParams() persistence_enabled = %v, want true", params.Get("persistence_enabled"))
+	if formData["persistence_enabled"] != "true" {
+		t.Errorf("BuildVirtualServerFormData() persistence_enabled = %v, want true", formData["persistence_enabled"])
 	}
-	if params.Get("persistence_type") != "source_ip" {
-		t.Errorf("BuildVirtualServerParams() persistence_type = %v, want source_ip", params.Get("persistence_type"))
+	if formData["persistence_type"] != "source_ip" {
+		t.Errorf("BuildVirtualServerFormData() persistence_type = %v, want source_ip", formData["persistence_type"])
 	}
 
-	nodeValues := params["nodes"]
-	if len(nodeValues) != 2 {
-		t.Errorf("BuildVirtualServerParams() nodes count = %d, want 2", len(nodeValues))
+	// nodes must be repeated fields — a []string of per-node JSON objects.
+	nodeJSONs, ok := formData["nodes"].([]string)
+	if !ok {
+		t.Fatalf("BuildVirtualServerFormData() nodes field is %T, want []string", formData["nodes"])
+	}
+	if len(nodeJSONs) != 2 {
+		t.Fatalf("BuildVirtualServerFormData() nodes count = %d, want 2", len(nodeJSONs))
+	}
+	for i, raw := range nodeJSONs {
+		var n models.VirtualServerNode
+		if err := json.Unmarshal([]byte(raw), &n); err != nil {
+			t.Fatalf("BuildVirtualServerFormData() node %d is not a JSON object: %v", i, err)
+		}
+		if n.ResourceID == "" || n.ResourceType == "" || n.ResourceIP == "" || n.BackendPortID == 0 {
+			t.Errorf("BuildVirtualServerFormData() node %d missing required fields: %+v", i, n)
+		}
 	}
 }

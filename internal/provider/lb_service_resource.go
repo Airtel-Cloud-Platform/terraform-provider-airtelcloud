@@ -23,6 +23,7 @@ import (
 
 var _ resource.Resource = &LBServiceResource{}
 var _ resource.ResourceWithImportState = &LBServiceResource{}
+var _ resource.ResourceWithValidateConfig = &LBServiceResource{}
 
 func NewLBServiceResource() resource.Resource {
 	return &LBServiceResource{}
@@ -37,7 +38,8 @@ type LBServiceResourceModel struct {
 	Name            types.String   `tfsdk:"name"`
 	Description     types.String   `tfsdk:"description"`
 	FlavorID        types.Int64    `tfsdk:"flavor_id"`
-	NetworkID       types.String   `tfsdk:"network_id"`
+	SubnetID        types.String   `tfsdk:"subnet_id"`
+	SubnetName      types.String   `tfsdk:"subnet_name"`
 	VPCID           types.String   `tfsdk:"vpc_id"`
 	VPCName         types.String   `tfsdk:"vpc_name"`
 	HA              types.Bool     `tfsdk:"ha"`
@@ -85,23 +87,32 @@ func (r *LBServiceResource) Schema(ctx context.Context, req resource.SchemaReque
 					int64planmodifier.UseStateForUnknown(),
 				},
 			},
-			"network_id": schema.StringAttribute{
-				MarkdownDescription: "The network (subnet) ID for the load balancer.",
-				Required:            true,
+			"subnet_id": schema.StringAttribute{
+				MarkdownDescription: "The subnet ID the load balancer is created in. Either subnet_id or subnet_name must be specified.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"subnet_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the subnet, resolved to subnet_id within the given VPC. Either subnet_id or subnet_name must be specified.",
+				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"vpc_id": schema.StringAttribute{
-				MarkdownDescription: "The VPC ID.",
-				Required:            true,
+				MarkdownDescription: "The VPC ID. Either vpc_id or vpc_name must be specified.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"vpc_name": schema.StringAttribute{
-				MarkdownDescription: "The VPC name.",
-				Required:            true,
+				MarkdownDescription: "The VPC name. If set, it is resolved to vpc_id. Either vpc_id or vpc_name must be specified.",
+				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -158,6 +169,34 @@ func (r *LBServiceResource) Configure(ctx context.Context, req resource.Configur
 	r.client = c
 }
 
+// ValidateConfig enforces that exactly one of vpc_id or vpc_name and exactly one of
+// subnet_id or subnet_name is set.
+func (r *LBServiceResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data LBServiceResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.VPCID.IsNull() && !data.VPCName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of vpc_id or vpc_name may be specified, not both.")
+	}
+	if data.VPCID.IsNull() && data.VPCName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of vpc_id or vpc_name must be specified.")
+	}
+
+	if !data.SubnetID.IsNull() && !data.SubnetName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of subnet_id or subnet_name may be specified, not both.")
+	}
+	if data.SubnetID.IsNull() && data.SubnetName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of subnet_id or subnet_name must be specified.")
+	}
+}
+
 func (r *LBServiceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data LBServiceResourceModel
 
@@ -171,9 +210,32 @@ func (r *LBServiceResource) Create(ctx context.Context, req resource.CreateReque
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Resolve vpc_name -> vpc_id client-side and persist into the Computed attribute.
+	vpcID := data.VPCID.ValueString()
+	if vpcID == "" && !data.VPCName.IsNull() {
+		resolved, err := r.client.ResolveVPCID(ctx, data.VPCName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("VPC Resolution Error", err.Error())
+			return
+		}
+		vpcID = resolved
+	}
+	data.VPCID = types.StringValue(vpcID)
 
-	// Fetch LB flavor automatically using network_id as subnet-id header
-	scopedClient := r.client.WithSubnetID(data.NetworkID.ValueString())
+	// Resolve subnet_name -> subnet_id within the VPC and persist into the Computed attribute.
+	subnetID := data.SubnetID.ValueString()
+	if subnetID == "" && !data.SubnetName.IsNull() {
+		resolved, err := r.client.ResolveSubnetID(ctx, vpcID, data.SubnetName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Subnet Resolution Error", err.Error())
+			return
+		}
+		subnetID = resolved
+	}
+	data.SubnetID = types.StringValue(subnetID)
+
+	// Fetch LB flavor automatically using the subnet id as the subnet-id header
+	scopedClient := r.client.WithSubnetID(subnetID)
 	lbFlavors, err := scopedClient.ListLBFlavors(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list LB flavors: %s", err))
@@ -189,8 +251,8 @@ func (r *LBServiceResource) Create(ctx context.Context, req resource.CreateReque
 		Name:        data.Name.ValueString(),
 		Description: data.Description.ValueString(),
 		FlavorID:    flavorID,
-		NetworkID:   data.NetworkID.ValueString(),
-		VPCID:       data.VPCID.ValueString(),
+		NetworkID:   subnetID,
+		VPCID:       vpcID,
 		VPCName:     data.VPCName.ValueString(),
 		HA:          data.HA.ValueBool(),
 	}
@@ -250,12 +312,14 @@ func (r *LBServiceResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 	data.FlavorID = types.Int64Value(int64(lbService.FlavorID))
 	if lbService.NetworkID != "" {
-		data.NetworkID = types.StringValue(lbService.NetworkID)
+		data.SubnetID = types.StringValue(lbService.NetworkID)
 	}
 	if lbService.VPCID != "" {
 		data.VPCID = types.StringValue(lbService.VPCID)
 	}
-	if lbService.VPCName != "" {
+	// vpc_name is Optional (not Computed): only refresh it when it was set in config,
+	// otherwise writing an API value where the plan is null yields an inconsistent state.
+	if !data.VPCName.IsNull() && lbService.VPCName != "" {
 		data.VPCName = types.StringValue(lbService.VPCName)
 	}
 	data.Status = types.StringValue(lbService.Status)

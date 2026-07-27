@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client"
+	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -14,9 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-
-	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client"
-	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -44,7 +43,9 @@ type VolumeResourceModel struct {
 	Status           types.String `tfsdk:"status"`
 	AvailabilityZone types.String `tfsdk:"availability_zone"`
 	VPCID            types.String `tfsdk:"vpc_id"`
+	VPCName          types.String `tfsdk:"vpc_name"`
 	SubnetID         types.String `tfsdk:"subnet_id"`
+	SubnetName       types.String `tfsdk:"subnet_name"`
 	ComputeID        types.String `tfsdk:"compute_id"`
 	ComputeName      types.String `tfsdk:"compute_name"`
 	IsEncrypted      types.Bool   `tfsdk:"is_encrypted"`
@@ -191,18 +192,28 @@ func (r *VolumeResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 			},
 			"vpc_id": schema.StringAttribute{
-				MarkdownDescription: "The VPC network ID for the volume.",
+				MarkdownDescription: "The VPC network ID for the volume. Mutually exclusive with vpc_name.",
 				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"subnet_id": schema.StringAttribute{
-				MarkdownDescription: "The subnet ID for the volume.",
+			"vpc_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the VPC for the volume. If set, it is resolved to vpc_id. Mutually exclusive with vpc_id.",
 				Optional:            true,
+			},
+			"subnet_id": schema.StringAttribute{
+				MarkdownDescription: "The subnet ID for the volume. Mutually exclusive with subnet_name.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"subnet_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the subnet for the volume. If set, it is resolved to subnet_id (requires vpc_id or vpc_name). Mutually exclusive with subnet_id.",
+				Optional:            true,
 			},
 			"compute_id": schema.StringAttribute{
 				MarkdownDescription: "The compute instance ID to attach the volume to. Mutually exclusive with compute_name.",
@@ -291,6 +302,22 @@ func (r *VolumeResource) ValidateConfig(ctx context.Context, req resource.Valida
 		resp.Diagnostics.AddError("Invalid Configuration",
 			"Only one of compute_id or compute_name may be specified, not both.")
 	}
+
+	// VPC and subnet each accept an id or a name (both optional), but not both.
+	if !data.VPCID.IsNull() && !data.VPCName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of vpc_id or vpc_name may be specified, not both.")
+	}
+	if !data.SubnetID.IsNull() && !data.SubnetName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of subnet_id or subnet_name may be specified, not both.")
+	}
+
+	// Resolving subnet_name requires a VPC to scope the lookup.
+	if !data.SubnetName.IsNull() && data.VPCID.IsNull() && data.VPCName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"subnet_name requires one of vpc_id or vpc_name to be specified.")
+	}
 }
 
 func (r *VolumeResource) volumeClient(subnetID types.String) *client.Client {
@@ -307,6 +334,40 @@ func (r *VolumeResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	// Resolve vpc_name -> vpc_id (needed before subnet resolution), then
+	// subnet_name -> subnet_id. Persist the resolved ids into the Computed
+	// attributes so they are known in state.
+	vpcID := data.VPCID.ValueString()
+	if vpcID == "" && !data.VPCName.IsNull() {
+		resolved, err := r.client.ResolveVPCID(ctx, data.VPCName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("VPC Resolution Error", err.Error())
+			return
+		}
+		vpcID = resolved
+	}
+
+	subnetID := data.SubnetID.ValueString()
+	if subnetID == "" && !data.SubnetName.IsNull() {
+		resolved, err := r.client.ResolveSubnetID(ctx, vpcID, data.SubnetName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Subnet Resolution Error", err.Error())
+			return
+		}
+		subnetID = resolved
+	}
+
+	if vpcID == "" {
+		data.VPCID = types.StringNull()
+	} else {
+		data.VPCID = types.StringValue(vpcID)
+	}
+	if subnetID == "" {
+		data.SubnetID = types.StringNull()
+	} else {
+		data.SubnetID = types.StringValue(subnetID)
 	}
 
 	volumeClient := r.volumeClient(data.SubnetID)
@@ -381,9 +442,9 @@ func (r *VolumeResource) Create(ctx context.Context, req resource.CreateRequest,
 		VolumeType:       volumeTypeName,
 		VolumeTypeID:     resolvedVolumeTypeID,
 		BillingUnit:      "MRC",
-		VPCID:            data.VPCID.ValueString(),
-		Network:          data.VPCID.ValueString(),
-		SubnetID:         data.SubnetID.ValueString(),
+		VPCID:            vpcID,
+		Network:          vpcID,
+		SubnetID:         subnetID,
 		ComputeID:        computeID,
 		IsEncrypted:      isEncrypted,
 		Bootable:         data.Bootable.ValueBool(),

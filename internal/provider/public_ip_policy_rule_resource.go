@@ -19,6 +19,7 @@ import (
 
 var _ resource.Resource = &PublicIPPolicyRuleResource{}
 var _ resource.ResourceWithImportState = &PublicIPPolicyRuleResource{}
+var _ resource.ResourceWithValidateConfig = &PublicIPPolicyRuleResource{}
 
 func NewPublicIPPolicyRuleResource() resource.Resource {
 	return &PublicIPPolicyRuleResource{}
@@ -31,6 +32,7 @@ type PublicIPPolicyRuleResource struct {
 type PublicIPPolicyRuleResourceModel struct {
 	ID               types.String `tfsdk:"id"`
 	PublicIPID       types.String `tfsdk:"public_ip_id"`
+	PublicIPName     types.String `tfsdk:"public_ip_name"`
 	DisplayName      types.String `tfsdk:"display_name"`
 	Source           types.String `tfsdk:"source"`
 	Services         types.List   `tfsdk:"services"`
@@ -58,11 +60,16 @@ func (r *PublicIPPolicyRuleResource) Schema(ctx context.Context, req resource.Sc
 				},
 			},
 			"public_ip_id": schema.StringAttribute{
-				MarkdownDescription: "The UUID of the parent public IP resource.",
-				Required:            true,
+				MarkdownDescription: "The UUID of the parent public IP resource. Either public_ip_id or public_ip_name must be specified.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"public_ip_name": schema.StringAttribute{
+				MarkdownDescription: "The name (object_name) of the parent public IP resource. If set, it is resolved to public_ip_id. Either public_ip_id or public_ip_name must be specified.",
+				Optional:            true,
 			},
 			"display_name": schema.StringAttribute{
 				MarkdownDescription: "The display name of the policy rule.",
@@ -140,6 +147,24 @@ func (r *PublicIPPolicyRuleResource) Configure(ctx context.Context, req resource
 	r.client = c
 }
 
+// ValidateConfig enforces that exactly one of public_ip_id or public_ip_name is set.
+func (r *PublicIPPolicyRuleResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data PublicIPPolicyRuleResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.PublicIPID.IsNull() && !data.PublicIPName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of public_ip_id or public_ip_name may be specified, not both.")
+	}
+	if data.PublicIPID.IsNull() && data.PublicIPName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of public_ip_id or public_ip_name must be specified.")
+	}
+}
+
 func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data PublicIPPolicyRuleResourceModel
 
@@ -147,6 +172,18 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Resolve public_ip_name -> public_ip_id (UUID) and persist into the Computed attribute.
+	publicIPID := data.PublicIPID.ValueString()
+	if publicIPID == "" && !data.PublicIPName.IsNull() {
+		resolved, err := r.client.ResolvePublicIPID(ctx, data.PublicIPName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Public IP Resolution Error", err.Error())
+			return
+		}
+		publicIPID = resolved
+	}
+	data.PublicIPID = types.StringValue(publicIPID)
 
 	// Get service names from the plan
 	var serviceNames []string

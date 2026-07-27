@@ -19,6 +19,7 @@ import (
 
 var _ resource.Resource = &LBVipResource{}
 var _ resource.ResourceWithImportState = &LBVipResource{}
+var _ resource.ResourceWithValidateConfig = &LBVipResource{}
 
 func NewLBVipResource() resource.Resource {
 	return &LBVipResource{}
@@ -31,6 +32,7 @@ type LBVipResource struct {
 type LBVipResourceModel struct {
 	ID             types.String `tfsdk:"id"`
 	LBServiceID    types.String `tfsdk:"lb_service_id"`
+	LBServiceName  types.String `tfsdk:"lb_service_name"`
 	Name           types.String `tfsdk:"name"`
 	Status         types.String `tfsdk:"status"`
 	FixedIPs       types.String `tfsdk:"fixed_ips"`
@@ -55,11 +57,16 @@ func (r *LBVipResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				},
 			},
 			"lb_service_id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the parent LB service.",
-				Required:            true,
+				MarkdownDescription: "The ID of the parent LB service. Either lb_service_id or lb_service_name must be specified.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"lb_service_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the parent LB service. If set, it is resolved to lb_service_id. Either lb_service_id or lb_service_name must be specified.",
+				Optional:            true,
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The name of the VIP.",
@@ -102,6 +109,24 @@ func (r *LBVipResource) Configure(ctx context.Context, req resource.ConfigureReq
 	r.client = c
 }
 
+// ValidateConfig enforces that exactly one of lb_service_id or lb_service_name is set.
+func (r *LBVipResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data LBVipResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.LBServiceID.IsNull() && !data.LBServiceName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of lb_service_id or lb_service_name may be specified, not both.")
+	}
+	if data.LBServiceID.IsNull() && data.LBServiceName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of lb_service_id or lb_service_name must be specified.")
+	}
+}
+
 func (r *LBVipResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data LBVipResourceModel
 
@@ -109,6 +134,18 @@ func (r *LBVipResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Resolve lb_service_name -> lb_service_id and persist into the Computed attribute.
+	lbServiceID := data.LBServiceID.ValueString()
+	if lbServiceID == "" && !data.LBServiceName.IsNull() {
+		resolved, err := r.client.ResolveLBServiceID(ctx, data.LBServiceName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("LB Service Resolution Error", err.Error())
+			return
+		}
+		lbServiceID = resolved
+	}
+	data.LBServiceID = types.StringValue(lbServiceID)
 
 	// Look up the LB service to get the network_id for the subnet-id header
 	lbService, err := r.client.GetLBService(ctx, data.LBServiceID.ValueString())

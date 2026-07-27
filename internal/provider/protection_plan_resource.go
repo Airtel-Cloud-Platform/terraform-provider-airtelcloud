@@ -19,6 +19,7 @@ import (
 
 var _ resource.Resource = &ProtectionPlanResource{}
 var _ resource.ResourceWithImportState = &ProtectionPlanResource{}
+var _ resource.ResourceWithValidateConfig = &ProtectionPlanResource{}
 
 func NewProtectionPlanResource() resource.Resource {
 	return &ProtectionPlanResource{}
@@ -38,7 +39,10 @@ type ProtectionPlanResourceModel struct {
 	Retention     types.Int64  `tfsdk:"retention"`
 	RetentionUnit types.String `tfsdk:"retention_unit"`
 	Recurrence    types.Int64  `tfsdk:"recurrence"`
+	VPCID         types.String `tfsdk:"vpc_id"`
+	VPCName       types.String `tfsdk:"vpc_name"`
 	SubnetID      types.String `tfsdk:"subnet_id"`
+	SubnetName    types.String `tfsdk:"subnet_name"`
 }
 
 func (r *ProtectionPlanResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -113,12 +117,29 @@ func (r *ProtectionPlanResource) Schema(ctx context.Context, req resource.Schema
 					int64planmodifier.RequiresReplace(),
 				},
 			},
-			"subnet_id": schema.StringAttribute{
-				MarkdownDescription: "The subnet ID used for routing backup API requests. Required by the backup service.",
-				Required:            true,
+			"vpc_id": schema.StringAttribute{
+				MarkdownDescription: "The VPC ID used to scope subnet_name resolution. Only needed when subnet_name is set. Mutually exclusive with vpc_name.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"vpc_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the VPC used to scope subnet_name resolution. If set, it is resolved to vpc_id. Only needed when subnet_name is set. Mutually exclusive with vpc_id.",
+				Optional:            true,
+			},
+			"subnet_id": schema.StringAttribute{
+				MarkdownDescription: "The subnet ID used for routing backup API requests. Either subnet_id or subnet_name must be specified.",
+				Optional:            true,
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"subnet_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the subnet used for routing backup API requests. If set, it is resolved to subnet_id (requires vpc_id or vpc_name). Either subnet_id or subnet_name must be specified.",
+				Optional:            true,
 			},
 		},
 	}
@@ -141,6 +162,35 @@ func (r *ProtectionPlanResource) Configure(ctx context.Context, req resource.Con
 	r.client = c
 }
 
+// ValidateConfig enforces that exactly one of subnet_id or subnet_name is set, that
+// vpc_id and vpc_name are not both set, and that a VPC reference is present when
+// subnet_name is used (needed to scope the subnet lookup).
+func (r *ProtectionPlanResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data ProtectionPlanResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.SubnetID.IsNull() && !data.SubnetName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of subnet_id or subnet_name may be specified, not both.")
+	}
+	if data.SubnetID.IsNull() && data.SubnetName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of subnet_id or subnet_name must be specified.")
+	}
+
+	if !data.VPCID.IsNull() && !data.VPCName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of vpc_id or vpc_name may be specified, not both.")
+	}
+	if !data.SubnetName.IsNull() && data.VPCID.IsNull() && data.VPCName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"subnet_name requires one of vpc_id or vpc_name to be specified.")
+	}
+}
+
 func (r *ProtectionPlanResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data ProtectionPlanResourceModel
 
@@ -160,7 +210,33 @@ func (r *ProtectionPlanResource) Create(ctx context.Context, req resource.Create
 		Recurrence:    int(data.Recurrence.ValueInt64()),
 	}
 
+	// Resolve vpc_name -> vpc_id (needed for subnet resolution), then
+	// subnet_name -> subnet_id. Persist resolved values into the Computed attributes.
+	vpcID := data.VPCID.ValueString()
+	if vpcID == "" && !data.VPCName.IsNull() {
+		resolved, err := r.client.ResolveVPCID(ctx, data.VPCName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("VPC Resolution Error", err.Error())
+			return
+		}
+		vpcID = resolved
+	}
+	if vpcID == "" {
+		data.VPCID = types.StringNull()
+	} else {
+		data.VPCID = types.StringValue(vpcID)
+	}
+
 	subnetID := data.SubnetID.ValueString()
+	if subnetID == "" && !data.SubnetName.IsNull() {
+		resolved, err := r.client.ResolveSubnetID(ctx, vpcID, data.SubnetName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Subnet Resolution Error", err.Error())
+			return
+		}
+		subnetID = resolved
+	}
+	data.SubnetID = types.StringValue(subnetID)
 
 	plan, err := r.client.CreateProtectionPlan(ctx, createReq, subnetID)
 	if err != nil {

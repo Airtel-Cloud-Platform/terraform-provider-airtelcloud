@@ -3,13 +3,11 @@ package provider
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -26,6 +24,7 @@ import (
 
 var _ resource.Resource = &LBVirtualServerResource{}
 var _ resource.ResourceWithImportState = &LBVirtualServerResource{}
+var _ resource.ResourceWithValidateConfig = &LBVirtualServerResource{}
 
 func NewLBVirtualServerResource() resource.Resource {
 	return &LBVirtualServerResource{}
@@ -38,12 +37,14 @@ type LBVirtualServerResource struct {
 type LBVirtualServerResourceModel struct {
 	ID                 types.String   `tfsdk:"id"`
 	LBServiceID        types.String   `tfsdk:"lb_service_id"`
+	LBServiceName      types.String   `tfsdk:"lb_service_name"`
 	Name               types.String   `tfsdk:"name"`
 	VipPortID          types.Int64    `tfsdk:"vip_port_id"`
 	Protocol           types.String   `tfsdk:"protocol"`
 	Port               types.Int64    `tfsdk:"port"`
 	RoutingAlgorithm   types.String   `tfsdk:"routing_algorithm"`
 	VPCID              types.String   `tfsdk:"vpc_id"`
+	VPCName            types.String   `tfsdk:"vpc_name"`
 	Interval           types.Int64    `tfsdk:"interval"`
 	Nodes              types.List     `tfsdk:"nodes"`
 	PersistenceEnabled types.Bool     `tfsdk:"persistence_enabled"`
@@ -52,20 +53,13 @@ type LBVirtualServerResourceModel struct {
 	RedirectHTTPS      types.Bool     `tfsdk:"redirect_https"`
 	CertificateID      types.String   `tfsdk:"certificate_id"`
 	MonitorProtocol    types.String   `tfsdk:"monitor_protocol"`
+	MonitorPort        types.Int64    `tfsdk:"monitor_port"`
+	PoolName           types.String   `tfsdk:"pool_name"`
+	MonitorName        types.String   `tfsdk:"monitor_name"`
+	Timeout            types.Int64    `tfsdk:"timeout"`
 	Status             types.String   `tfsdk:"status"`
 	VIP                types.String   `tfsdk:"vip"`
 	Timeouts           timeouts.Value `tfsdk:"timeouts"`
-}
-
-var nodeObjectType = types.ObjectType{
-	AttrTypes: map[string]attr.Type{
-		"compute_id":   types.Int64Type,
-		"compute_name": types.StringType,
-		"compute_ip":   types.StringType,
-		"port":         types.Int64Type,
-		"weight":       types.Int64Type,
-		"max_conn":     types.Int64Type,
-	},
 }
 
 func (r *LBVirtualServerResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -85,21 +79,33 @@ func (r *LBVirtualServerResource) Schema(ctx context.Context, req resource.Schem
 				},
 			},
 			"lb_service_id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the parent LB service.",
-				Required:            true,
+				MarkdownDescription: "The ID of the parent LB service. Either lb_service_id or lb_service_name must be specified.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"lb_service_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the parent LB service. If set, it is resolved to lb_service_id. Either lb_service_id or lb_service_name must be specified.",
+				Optional:            true,
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The name of the virtual server.",
 				Optional:            true,
 			},
-			"vip_port_id": schema.Int64Attribute{
-				MarkdownDescription: "The VIP port ID to bind this virtual server to.",
+			"vip": schema.StringAttribute{
+				MarkdownDescription: "The VIP fixed IP address to bind this virtual server to (e.g. airtelcloud_lb_vip.example.fixed_ips). The provider resolves it to vip_port_id.",
 				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"vip_port_id": schema.Int64Attribute{
+				MarkdownDescription: "The VIP port ID this virtual server is bound to. Computed by resolving the vip fixed IP.",
+				Computed:            true,
 				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.RequiresReplace(),
+					int64planmodifier.UseStateForUnknown(),
 				},
 			},
 			"protocol": schema.StringAttribute{
@@ -121,11 +127,16 @@ func (r *LBVirtualServerResource) Schema(ctx context.Context, req resource.Schem
 				Required:            true,
 			},
 			"vpc_id": schema.StringAttribute{
-				MarkdownDescription: "The VPC ID.",
-				Required:            true,
+				MarkdownDescription: "The VPC ID. Either vpc_id or vpc_name must be specified.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"vpc_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the VPC. If set, it is resolved to vpc_id. Either vpc_id or vpc_name must be specified.",
+				Optional:            true,
 			},
 			"interval": schema.Int64Attribute{
 				MarkdownDescription: "The health check interval in seconds.",
@@ -136,17 +147,21 @@ func (r *LBVirtualServerResource) Schema(ctx context.Context, req resource.Schem
 				Required:            true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"compute_id": schema.Int64Attribute{
-							MarkdownDescription: "The compute instance ID. Either compute_id or compute_name must be specified for each node.",
+						"compute_id": schema.StringAttribute{
+							MarkdownDescription: "The backend instance ID (UUID). Either compute_id or compute_name must be specified for each node.",
 							Optional:            true,
 						},
 						"compute_name": schema.StringAttribute{
-							MarkdownDescription: "The compute instance name. If set, it is resolved to compute_id. Either compute_id or compute_name must be specified for each node.",
+							MarkdownDescription: "The backend instance name. If set, it is resolved to its ID. Either compute_id or compute_name must be specified for each node.",
 							Optional:            true,
 						},
 						"compute_ip": schema.StringAttribute{
-							MarkdownDescription: "The compute instance IP address.",
+							MarkdownDescription: "The backend instance IP address (sent as resource_ip).",
 							Required:            true,
+						},
+						"resource_type": schema.StringAttribute{
+							MarkdownDescription: "The backend member kind: \"compute\" (a VM, the default) or \"bm\" (a baremetal server).",
+							Optional:            true,
 						},
 						"port": schema.Int64Attribute{
 							MarkdownDescription: "The backend port number.",
@@ -193,12 +208,24 @@ func (r *LBVirtualServerResource) Schema(ctx context.Context, req resource.Schem
 				MarkdownDescription: "The health check monitor protocol (HTTP, HTTPS, TCP, UDP).",
 				Optional:            true,
 			},
+			"monitor_port": schema.Int64Attribute{
+				MarkdownDescription: "The health check monitor port.",
+				Optional:            true,
+			},
+			"pool_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the backend pool.",
+				Optional:            true,
+			},
+			"monitor_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the health check monitor.",
+				Optional:            true,
+			},
+			"timeout": schema.Int64Attribute{
+				MarkdownDescription: "The health check timeout in seconds.",
+				Optional:            true,
+			},
 			"status": schema.StringAttribute{
 				MarkdownDescription: "The current status of the virtual server.",
-				Computed:            true,
-			},
-			"vip": schema.StringAttribute{
-				MarkdownDescription: "The virtual IP address.",
 				Computed:            true,
 			},
 		},
@@ -228,6 +255,44 @@ func (r *LBVirtualServerResource) Configure(ctx context.Context, req resource.Co
 	r.client = c
 }
 
+// ValidateConfig enforces that exactly one of lb_service_id/lb_service_name and
+// exactly one of vpc_id/vpc_name is set.
+func (r *LBVirtualServerResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data LBVirtualServerResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.LBServiceID.IsNull() && !data.LBServiceName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of lb_service_id or lb_service_name may be specified, not both.")
+	}
+	if data.LBServiceID.IsNull() && data.LBServiceName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of lb_service_id or lb_service_name must be specified.")
+	}
+
+	if !data.VPCID.IsNull() && !data.VPCName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of vpc_id or vpc_name may be specified, not both.")
+	}
+	if data.VPCID.IsNull() && data.VPCName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of vpc_id or vpc_name must be specified.")
+	}
+
+	// The API requires monitor_name whenever redirect_https is not enabled.
+	// Surface this at plan time instead of as a 422 at apply time.
+	redirectHTTPS := !data.RedirectHTTPS.IsNull() && data.RedirectHTTPS.ValueBool()
+	monitorNameSet := !data.MonitorName.IsNull() && data.MonitorName.ValueString() != ""
+	if !redirectHTTPS && !monitorNameSet {
+		resp.Diagnostics.AddAttributeError(path.Root("monitor_name"),
+			"Invalid Configuration",
+			"monitor_name is required when redirect_https is not enabled.")
+	}
+}
+
 func (r *LBVirtualServerResource) extractNodes(ctx context.Context, data *LBVirtualServerResourceModel) ([]models.VirtualServerNode, error) {
 	var nodeObjects []types.Object
 	diags := data.Nodes.ElementsAs(ctx, &nodeObjects, false)
@@ -239,13 +304,12 @@ func (r *LBVirtualServerResource) extractNodes(ctx context.Context, data *LBVirt
 	for i, obj := range nodeObjects {
 		attrs := obj.Attributes()
 
-		computeIDAttr := attrs["compute_id"].(types.Int64)
+		computeIDAttr := attrs["compute_id"].(types.String)
 		computeNameAttr := attrs["compute_name"].(types.String)
+		computeIP := attrs["compute_ip"].(types.String).ValueString()
 
-		// Resolve the node's compute reference: exactly one of compute_id or
-		// compute_name must be set per node. When configured by name, resolve to the
-		// numeric compute ID the API expects.
-		idSet := !computeIDAttr.IsNull()
+		// Exactly one of compute_id or compute_name must be set per node.
+		idSet := !computeIDAttr.IsNull() && computeIDAttr.ValueString() != ""
 		nameSet := !computeNameAttr.IsNull() && computeNameAttr.ValueString() != ""
 		if idSet && nameSet {
 			return nil, fmt.Errorf("node %d: only one of compute_id or compute_name may be specified, not both", i)
@@ -254,29 +318,56 @@ func (r *LBVirtualServerResource) extractNodes(ctx context.Context, data *LBVirt
 			return nil, fmt.Errorf("node %d: one of compute_id or compute_name must be specified", i)
 		}
 
-		computeID := int(computeIDAttr.ValueInt64())
-		if nameSet {
-			resolved, err := r.client.ResolveComputeID(ctx, computeNameAttr.ValueString())
-			if err != nil {
-				return nil, fmt.Errorf("node %d: unable to resolve compute name %q: %w", i, computeNameAttr.ValueString(), err)
-			}
-			computeID, err = strconv.Atoi(resolved)
-			if err != nil {
-				return nil, fmt.Errorf("node %d: compute %q resolved to non-numeric id %q, which the load balancer node requires as an integer: %w", i, computeNameAttr.ValueString(), resolved, err)
-			}
+		// resource_type selects the backend member kind: "compute" (a VM, the
+		// default) or "bm" (a baremetal server).
+		resourceType := "compute"
+		if rt, ok := attrs["resource_type"].(types.String); ok && !rt.IsNull() && rt.ValueString() != "" {
+			resourceType = rt.ValueString()
 		}
 
-		nodes[i] = models.VirtualServerNode{
-			ComputeID: computeID,
-			ComputeIP: attrs["compute_ip"].(types.String).ValueString(),
-			Port:      int(attrs["port"].(types.Int64).ValueInt64()),
+		node := models.VirtualServerNode{
+			ResourceIP: computeIP,
+			Port:       int(attrs["port"].(types.Int64).ValueInt64()),
 		}
+
+		switch resourceType {
+		case "compute", "vm", "":
+			compute, err := r.client.ResolveComputeNode(ctx, computeIDAttr.ValueString(), computeNameAttr.ValueString())
+			if err != nil {
+				return nil, fmt.Errorf("node %d: unable to resolve compute: %w", i, err)
+			}
+			portID, err := client.BackendPortIDForIP(compute.Ports, computeIP)
+			if err != nil {
+				return nil, fmt.Errorf("node %d: unable to determine backend port for compute %q (ip %s): %w", i, compute.InstanceName, computeIP, err)
+			}
+			node.SourceType = "vm"
+			node.ResourceType = "compute"
+			node.ResourceID = compute.ID
+			node.InstanceName = compute.InstanceName
+			node.ResourceName = compute.InstanceName
+			node.BackendPortID = portID
+		case "bm":
+			bm, err := r.client.ResolveBaremetalNode(ctx, computeIDAttr.ValueString(), computeNameAttr.ValueString())
+			if err != nil {
+				return nil, fmt.Errorf("node %d: unable to resolve baremetal server: %w", i, err)
+			}
+			node.SourceType = "bm"
+			node.ResourceType = "baremetal"
+			node.ResourceID = bm.UUID
+			node.InstanceName = bm.Name
+			node.ResourceName = bm.Name
+			node.BackendPortID = bm.PortID
+		default:
+			return nil, fmt.Errorf("node %d: invalid resource_type %q, must be \"compute\" or \"bm\"", i, resourceType)
+		}
+
 		if w, ok := attrs["weight"].(types.Int64); ok && !w.IsNull() {
-			nodes[i].Weight = int(w.ValueInt64())
+			node.Weight = int(w.ValueInt64())
 		}
 		if mc, ok := attrs["max_conn"].(types.Int64); ok && !mc.IsNull() {
-			nodes[i].MaxConn = int(mc.ValueInt64())
+			node.MaxConn = int(mc.ValueInt64())
 		}
+		nodes[i] = node
 	}
 	return nodes, nil
 }
@@ -295,44 +386,90 @@ func (r *LBVirtualServerResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 
+	// Resolve lb_service_name -> lb_service_id and vpc_name -> vpc_id, persisting
+	// the resolved values into their Computed attributes.
+	lbServiceID := data.LBServiceID.ValueString()
+	if lbServiceID == "" && !data.LBServiceName.IsNull() {
+		resolved, err := r.client.ResolveLBServiceID(ctx, data.LBServiceName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("LB Service Resolution Error", err.Error())
+			return
+		}
+		lbServiceID = resolved
+	}
+	data.LBServiceID = types.StringValue(lbServiceID)
+
+	vpcID := data.VPCID.ValueString()
+	if vpcID == "" && !data.VPCName.IsNull() {
+		resolved, err := r.client.ResolveVPCID(ctx, data.VPCName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("VPC Resolution Error", err.Error())
+			return
+		}
+		vpcID = resolved
+	}
+	data.VPCID = types.StringValue(vpcID)
+
+	// Resolve the vip fixed IP to its VIP port id. ListLBVips requires the LB
+	// service's network scope (subnet-id header), so scope the client first.
+	lbService, err := r.client.GetLBService(ctx, data.LBServiceID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read LB service: %s", err))
+		return
+	}
+	scopedClient := r.client.WithSubnetID(lbService.NetworkID)
+	vipPortID, err := scopedClient.ResolveVipPortID(ctx, data.LBServiceID.ValueString(), data.VIP.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("VIP Resolution Error", err.Error())
+		return
+	}
+	data.VipPortID = types.Int64Value(int64(vipPortID))
+
 	nodes, err := r.extractNodes(ctx, &data)
 	if err != nil {
 		resp.Diagnostics.AddError("Configuration Error", err.Error())
 		return
 	}
 
-	// Wait for all backend compute instances to be active before creating virtual server
+	// Wait for all backend VM instances to be active before creating the virtual
+	// server. Baremetal members were already validated as "Ready" during resolution.
 	for _, node := range nodes {
-		computeID := strconv.Itoa(node.ComputeID)
+		if node.SourceType != "vm" {
+			continue
+		}
 		tflog.Info(ctx, "Waiting for backend compute instance to be active", map[string]interface{}{
-			"compute_id": computeID,
+			"resource_id": node.ResourceID,
 		})
-		_, err := r.client.WaitForComputeReady(ctx, computeID, createTimeout)
+		_, err := r.client.WaitForComputeReady(ctx, node.ResourceID, createTimeout)
 		if err != nil {
 			resp.Diagnostics.AddError("Client Error",
-				fmt.Sprintf("Backend compute instance %s is not ready: %s", computeID, err))
+				fmt.Sprintf("Backend compute instance %s is not ready: %s", node.ResourceID, err))
 			return
 		}
 	}
 
-	params := client.BuildVirtualServerParams(
-		data.Name.ValueString(),
-		data.Protocol.ValueString(),
-		data.VPCID.ValueString(),
-		data.RoutingAlgorithm.ValueString(),
-		data.MonitorProtocol.ValueString(),
-		data.CertificateID.ValueString(),
-		int(data.VipPortID.ValueInt64()),
-		int(data.Port.ValueInt64()),
-		int(data.Interval.ValueInt64()),
-		data.PersistenceEnabled.ValueBool(),
-		data.XForwardedFor.ValueBool(),
-		data.RedirectHTTPS.ValueBool(),
-		data.PersistenceType.ValueString(),
-		nodes,
-	)
+	formData := client.BuildVirtualServerFormData(client.VirtualServerCreateParams{
+		Name:               data.Name.ValueString(),
+		Protocol:           data.Protocol.ValueString(),
+		VPCID:              data.VPCID.ValueString(),
+		RoutingAlgorithm:   data.RoutingAlgorithm.ValueString(),
+		MonitorProtocol:    data.MonitorProtocol.ValueString(),
+		CertificateID:      data.CertificateID.ValueString(),
+		PoolName:           data.PoolName.ValueString(),
+		MonitorName:        data.MonitorName.ValueString(),
+		PersistenceType:    data.PersistenceType.ValueString(),
+		VipPortID:          vipPortID,
+		Port:               int(data.Port.ValueInt64()),
+		Interval:           int(data.Interval.ValueInt64()),
+		MonitorPort:        int(data.MonitorPort.ValueInt64()),
+		Timeout:            int(data.Timeout.ValueInt64()),
+		PersistenceEnabled: data.PersistenceEnabled.ValueBool(),
+		XForwardedFor:      data.XForwardedFor.ValueBool(),
+		RedirectHTTPS:      data.RedirectHTTPS.ValueBool(),
+		Nodes:              nodes,
+	})
 
-	vs, err := r.client.CreateVirtualServer(ctx, data.LBServiceID.ValueString(), params)
+	vs, err := r.client.CreateVirtualServer(ctx, data.LBServiceID.ValueString(), formData)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create virtual server, got error: %s", err))
 		return
@@ -347,9 +484,7 @@ func (r *LBVirtualServerResource) Create(ctx context.Context, req resource.Creat
 
 	data.ID = types.StringValue(readyVS.ID)
 	data.Status = types.StringValue(readyVS.Status)
-	if readyVS.VIP != "" {
-		data.VIP = types.StringValue(readyVS.VIP)
-	}
+	// data.VIP is a user-supplied input (the fixed IP); leave it as configured.
 
 	tflog.Trace(ctx, "created LB virtual server resource")
 
@@ -387,9 +522,7 @@ func (r *LBVirtualServerResource) Read(ctx context.Context, req resource.ReadReq
 	data.XForwardedFor = types.BoolValue(vs.XForwardedFor)
 	data.RedirectHTTPS = types.BoolValue(vs.RedirectHTTPS)
 	data.Status = types.StringValue(vs.Status)
-	if vs.VIP != "" {
-		data.VIP = types.StringValue(vs.VIP)
-	}
+	// data.VIP is a user-supplied input (the fixed IP); do not overwrite it.
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -402,15 +535,16 @@ func (r *LBVirtualServerResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 
-	params := url.Values{}
-	params.Set("routing_algorithm", data.RoutingAlgorithm.ValueString())
-	params.Set("persistence_enabled", strconv.FormatBool(data.PersistenceEnabled.ValueBool()))
-	if !data.PersistenceType.IsNull() {
-		params.Set("persistence_type", data.PersistenceType.ValueString())
+	formData := map[string]interface{}{
+		"routing_algorithm":   data.RoutingAlgorithm.ValueString(),
+		"persistence_enabled": strconv.FormatBool(data.PersistenceEnabled.ValueBool()),
+		"x_forwarded_for":     strconv.FormatBool(data.XForwardedFor.ValueBool()),
 	}
-	params.Set("x_forwarded_for", strconv.FormatBool(data.XForwardedFor.ValueBool()))
+	if !data.PersistenceType.IsNull() {
+		formData["persistence_type"] = data.PersistenceType.ValueString()
+	}
 
-	vs, err := r.client.UpdateVirtualServer(ctx, data.LBServiceID.ValueString(), data.ID.ValueString(), params)
+	vs, err := r.client.UpdateVirtualServer(ctx, data.LBServiceID.ValueString(), data.ID.ValueString(), formData)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update virtual server, got error: %s", err))
 		return

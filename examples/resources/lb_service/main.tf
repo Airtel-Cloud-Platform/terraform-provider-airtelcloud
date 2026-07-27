@@ -48,9 +48,9 @@ variable "resource_prefix" {
 resource "airtelcloud_lb_service" "example" {
   name        = "${var.resource_prefix}-lb-service"
   description = "Example load balancer service"
-  network_id  = "35df162d-5211-4d58-84ed-6a499626949c"
-  vpc_id      = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
-  vpc_name    = "perftest-cell1-vpc1"
+  vpc_name    = "copper-vpc01"
+  # Either subnet_id or subnet_name must be set; the name is resolved within the VPC above.
+  subnet_name = "test-subnet-3"
   ha          = false
 
   timeouts {
@@ -61,7 +61,8 @@ resource "airtelcloud_lb_service" "example" {
 
 # Allocate a VIP for the load balancer
 resource "airtelcloud_lb_vip" "example" {
-  lb_service_id = airtelcloud_lb_service.example.id
+  #lb_service_id = airtelcloud_lb_service.example.id
+  lb_service_name = airtelcloud_lb_service.example.name
 }
 
 # Upload an SSL certificate for HTTPS termination
@@ -73,32 +74,42 @@ resource "airtelcloud_lb_vip" "example" {
 #  ssl_private_key = file("${path.module}/key.pem")
 #}
 
-# Create an HTTP virtual server with two backend nodes
+# Create an HTTP virtual server with backend nodes.
+# vip_port_id is computed by resolving the vip fixed IP against the LB VIP.
 resource "airtelcloud_lb_virtual_server" "http" {
   lb_service_id     = airtelcloud_lb_service.example.id
   name              = "${var.resource_prefix}-http-vs"
-  vip_port_id       = tonumber(airtelcloud_lb_vip.example.id)
+  vip               = airtelcloud_lb_vip.example.fixed_ips
   protocol          = "HTTP"
   port              = 80
   routing_algorithm = "ROUND_ROBIN"
-  vpc_id            = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
+  vpc_name          = "copper-vpc01"
   interval          = 30
+
+  # A health monitor is required unless redirect_https is enabled.
+  pool_name        = "ppool1"
+  monitor_name     = "mmon1"
+  monitor_protocol = "TCP"
+  monitor_port     = 8080
+  timeout          = 16
 
   nodes = [
     {
-      compute_id = 101
-      compute_ip = "192.168.1.10"
-      port       = 8080
-      weight     = 50
+      # A VM member (default). Reference the backend by name or by id (UUID);
+      # compute_id and compute_name are mutually exclusive per node.
+      compute_name = "rahul-test-sg-vm"
+      compute_ip   = "10.10.49.115"
+      port         = 8080
+      weight       = 50
     },
     {
-      # Each node may reference its backend instance by name instead of id
-      # (compute_id and compute_name are mutually exclusive per node):
-      # compute_name = "my-instance"
-      compute_id = 102
-      compute_ip = "192.168.1.11"
-      port       = 8080
-      weight     = 50
+      # A baremetal member: set resource_type = "bm". Only baremetal servers in
+      # the "Ready" state can be used. The server is matched by its name.
+      resource_type = "bm"
+      compute_name  = "amd-test2"
+      compute_ip    = "10.10.49.70"
+      port          = 8080
+      weight        = 50
     },
   ]
 
