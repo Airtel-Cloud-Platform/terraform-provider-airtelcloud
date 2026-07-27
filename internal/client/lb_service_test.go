@@ -183,6 +183,70 @@ func TestListLBServices(t *testing.T) {
 	}
 }
 
+func TestResolveLBServiceID(t *testing.T) {
+	tests := []struct {
+		name    string
+		setup   func(ms *testutil.MockServer)
+		lookup  string
+		wantID  string
+		wantErr bool
+	}{
+		{
+			name:   "resolves by name",
+			lookup: "test-lb",
+			wantID: "lb-svc-1",
+		},
+		{
+			name:    "name not found",
+			lookup:  "missing-lb",
+			wantErr: true,
+		},
+		{
+			name: "empty id in response",
+			setup: func(ms *testutil.MockServer) {
+				ms.AddHandler("GET", "/api/v2.1/load-balancers/domain/test-org/project/test-project/load-balancers/lb_service/", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode([]models.LBService{{ID: "", Name: "test-lb"}})
+				})
+			},
+			lookup:  "test-lb",
+			wantErr: true,
+		},
+		{
+			name: "list error",
+			setup: func(ms *testutil.MockServer) {
+				ms.SetErrorResponse("GET", "/api/v2.1/load-balancers/domain/test-org/project/test-project/load-balancers/lb_service/", 500, "Internal server error")
+			},
+			lookup:  "test-lb",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockServer := testutil.NewMockServer()
+			defer mockServer.Close()
+
+			if tt.setup != nil {
+				tt.setup(mockServer)
+			}
+
+			baseURL := strings.TrimSuffix(mockServer.URL, "/")
+			client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+			id, err := client.ResolveLBServiceID(context.Background(), tt.lookup)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ResolveLBServiceID() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && id != tt.wantID {
+				t.Errorf("ResolveLBServiceID() id = %q, want %q", id, tt.wantID)
+			}
+		})
+	}
+}
+
 func TestDeleteLBService(t *testing.T) {
 	mockServer := testutil.NewMockServer()
 	defer mockServer.Close()

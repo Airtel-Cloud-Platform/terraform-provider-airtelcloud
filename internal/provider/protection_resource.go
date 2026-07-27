@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -92,7 +94,7 @@ func (r *ProtectionResource) Schema(ctx context.Context, req resource.SchemaRequ
 				},
 			},
 			"protection_plan": schema.StringAttribute{
-				MarkdownDescription: "The protection plan to associate with this policy.",
+				MarkdownDescription: "The UUID of the protection plan to associate with this policy. Reference the plan's `id` (e.g. `airtelcloud_protection_plan.example.id`), not its name.",
 				Required:            true,
 			},
 			"enable_scheduler": schema.StringAttribute{
@@ -102,15 +104,15 @@ func (r *ProtectionResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Default:             stringdefault.StaticString("true"),
 			},
 			"start_date": schema.StringAttribute{
-				MarkdownDescription: "The start date for the protection schedule.",
+				MarkdownDescription: "The start date for the protection schedule, in `YYYY-MM-DD` format (e.g. `2026-07-20`). Sent to the API as `MM/DD/YYYY`.",
 				Optional:            true,
 			},
 			"end_date": schema.StringAttribute{
-				MarkdownDescription: "The end date for the protection schedule.",
+				MarkdownDescription: "The end date for the protection schedule, in `YYYY-MM-DD` format. Sent to the API as `MM/DD/YYYY`.",
 				Optional:            true,
 			},
 			"start_time": schema.StringAttribute{
-				MarkdownDescription: "The start time for the protection schedule.",
+				MarkdownDescription: "The start time for the protection schedule, in 24-hour `HH:MM` format (e.g. `02:00`, `00:00`). Sent to the API as 12-hour `H:MM AM/PM`.",
 				Optional:            true,
 			},
 			"status": schema.StringAttribute{
@@ -169,6 +171,37 @@ func (r *ProtectionResource) ValidateConfig(ctx context.Context, req resource.Va
 	}
 }
 
+// formatProtectionStartDate converts a start date to the API's MM/DD/YYYY format.
+// It accepts ISO 8601 input (2026-07-20) — the Terraform-friendly form — and also
+// passes through input already in MM/DD/YYYY. Empty input stays empty (omitted).
+func formatProtectionStartDate(in string) (string, error) {
+	if in == "" {
+		return "", nil
+	}
+	for _, layout := range []string{"2006-01-02", "01/02/2006"} {
+		if t, err := time.Parse(layout, in); err == nil {
+			return t.Format("01/02/2006"), nil
+		}
+	}
+	return "", fmt.Errorf("invalid start_date %q: expected YYYY-MM-DD (e.g. 2026-07-20)", in)
+}
+
+// formatProtectionStartTime converts a start time to the API's 12-hour "3:04 PM" format
+// (e.g. "12:00 AM"). It accepts 24-hour HH:MM input (02:00) — the Terraform-friendly
+// form — and also passes through input already in 12-hour AM/PM. Empty stays empty.
+func formatProtectionStartTime(in string) (string, error) {
+	if in == "" {
+		return "", nil
+	}
+	normalized := strings.ToUpper(strings.TrimSpace(in))
+	for _, layout := range []string{"15:04", "3:04 PM", "03:04 PM", "3:04PM", "03:04PM"} {
+		if t, err := time.Parse(layout, normalized); err == nil {
+			return t.Format("3:04 PM"), nil
+		}
+	}
+	return "", fmt.Errorf("invalid start_time %q: expected 24-hour HH:MM (e.g. 02:00) or 12-hour (e.g. 2:00 AM)", in)
+}
+
 func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data ProtectionResourceModel
 
@@ -190,6 +223,23 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 	data.ComputeID = types.StringValue(computeID)
 
+	// The API expects start_date as MM/DD/YYYY and start_time as 12-hour AM/PM.
+	startDate, err := formatProtectionStartDate(data.StartDate.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+	startTime, err := formatProtectionStartTime(data.StartTime.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+	endDate, err := formatProtectionStartDate(data.EndDate.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", strings.Replace(err.Error(), "start_date", "end_date", 1))
+		return
+	}
+
 	createReq := &models.CreateProtectionRequest{
 		Name:            data.Name.ValueString(),
 		Description:     data.Description.ValueString(),
@@ -197,9 +247,9 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 		ComputeID:       computeID,
 		ProtectionPlan:  data.ProtectionPlan.ValueString(),
 		EnableScheduler: data.EnableScheduler.ValueString(),
-		StartDate:       data.StartDate.ValueString(),
-		EndDate:         data.EndDate.ValueString(),
-		StartTime:       data.StartTime.ValueString(),
+		StartDate:       startDate,
+		EndDate:         endDate,
+		StartTime:       startTime,
 	}
 
 	protection, err := r.client.CreateProtection(ctx, createReq)
@@ -292,15 +342,32 @@ func (r *ProtectionResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
+	// The API expects start_date as MM/DD/YYYY and start_time as 12-hour AM/PM.
+	startDate, err := formatProtectionStartDate(data.StartDate.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+	startTime, err := formatProtectionStartTime(data.StartTime.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+	endDate, err := formatProtectionStartDate(data.EndDate.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", strings.Replace(err.Error(), "start_date", "end_date", 1))
+		return
+	}
+
 	updateReq := &models.UpdateProtectionRequest{
 		Name:            data.Name.ValueString(),
 		Description:     data.Description.ValueString(),
 		PolicyTypeID:    data.PolicyTypeID.ValueString(),
 		ProtectionPlan:  data.ProtectionPlan.ValueString(),
 		EnableScheduler: data.EnableScheduler.ValueString(),
-		StartDate:       data.StartDate.ValueString(),
-		EndDate:         data.EndDate.ValueString(),
-		StartTime:       data.StartTime.ValueString(),
+		StartDate:       startDate,
+		EndDate:         endDate,
+		StartTime:       startTime,
 	}
 
 	protection, err := r.client.UpdateProtection(ctx, id, updateReq)

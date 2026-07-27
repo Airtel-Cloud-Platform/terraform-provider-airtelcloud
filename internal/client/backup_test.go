@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client/testutil"
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
@@ -287,6 +288,27 @@ func TestGetProtectionPlan(t *testing.T) {
 	if plan.ID != "plan-uuid-1234" {
 		t.Errorf("GetProtectionPlan() ID = %v, want plan-uuid-1234", plan.ID)
 	}
+	if plan.Status != "available" {
+		t.Errorf("GetProtectionPlan() Status = %v, want available", plan.Status)
+	}
+}
+
+// TestGetProtectionPlanNotFound verifies an unknown ID surfaces as a not-found error so
+// the resource Read can drop it from state.
+func TestGetProtectionPlanNotFound(t *testing.T) {
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	_, err := client.GetProtectionPlan(context.Background(), "does-not-exist", "test-subnet-id")
+	if err == nil {
+		t.Fatal("GetProtectionPlan() error = nil, want not-found error")
+	}
+	if !IsNotFoundError(err) {
+		t.Errorf("GetProtectionPlan() error = %v, want IsNotFoundError == true", err)
+	}
 }
 
 func TestCreateProtectionPlanFormData(t *testing.T) {
@@ -364,6 +386,8 @@ func TestCreateProtectionPlanFormData(t *testing.T) {
 }
 
 func TestListProtectionPlans(t *testing.T) {
+	fastProtectionPlanBackoff(t)
+
 	tests := []struct {
 		name      string
 		setup     func(ms *testutil.MockServer)
@@ -408,5 +432,114 @@ func TestListProtectionPlans(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+const protectionPlanListPath = "/api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plans/"
+
+// fastProtectionPlanBackoff shrinks the retry backoff for the duration of a test so
+// retry-path tests do not sleep for seconds. It restores the original on cleanup.
+func fastProtectionPlanBackoff(t *testing.T) {
+	t.Helper()
+	orig := protectionPlanRetryBaseBackoff
+	protectionPlanRetryBaseBackoff = time.Millisecond
+	t.Cleanup(func() { protectionPlanRetryBaseBackoff = orig })
+}
+
+func writeProtectionPlanList(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(models.ProtectionPlanListResponse{
+		PolicyAttributeList: []models.ProtectionPlan{{ID: "plan-uuid-1234", Name: "test-plan"}},
+	})
+}
+
+// TestListProtectionPlansRetriesTransient500 verifies the list call retries transient
+// backend 500s and succeeds once the endpoint recovers.
+func TestListProtectionPlansRetriesTransient500(t *testing.T) {
+	fastProtectionPlanBackoff(t)
+
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	var calls int
+	mockServer.AddHandler("GET", protectionPlanListPath, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{"status": 500, "message": "Read timed out."})
+			return
+		}
+		writeProtectionPlanList(w)
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	plans, err := client.ListProtectionPlans(context.Background(), "test-subnet-id")
+	if err != nil {
+		t.Fatalf("ListProtectionPlans() error = %v, want success after retries", err)
+	}
+	if len(plans) != 1 {
+		t.Errorf("ListProtectionPlans() count = %d, want 1", len(plans))
+	}
+	if calls != 3 {
+		t.Errorf("server received %d calls, want 3 (2 failures + 1 success)", calls)
+	}
+}
+
+// TestListProtectionPlansExhaustsRetries verifies a persistent 500 fails after exactly
+// the maximum number of attempts.
+func TestListProtectionPlansExhaustsRetries(t *testing.T) {
+	fastProtectionPlanBackoff(t)
+
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	var calls int
+	mockServer.AddHandler("GET", protectionPlanListPath, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": 500, "message": "Read timed out."})
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	_, err := client.ListProtectionPlans(context.Background(), "test-subnet-id")
+	if err == nil {
+		t.Fatal("ListProtectionPlans() error = nil, want error after exhausting retries")
+	}
+	if calls != protectionPlanRetryMaxAttempts {
+		t.Errorf("server received %d calls, want %d (max attempts)", calls, protectionPlanRetryMaxAttempts)
+	}
+}
+
+// TestListProtectionPlansDoesNotRetry404 verifies a 4xx client error is not retried.
+func TestListProtectionPlansDoesNotRetry404(t *testing.T) {
+	fastProtectionPlanBackoff(t)
+
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	var calls int
+	mockServer.AddHandler("GET", protectionPlanListPath, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": 404, "message": "Not Found"})
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	_, err := client.ListProtectionPlans(context.Background(), "test-subnet-id")
+	if err == nil {
+		t.Fatal("ListProtectionPlans() error = nil, want error")
+	}
+	if calls != 1 {
+		t.Errorf("server received %d calls, want 1 (404 must not be retried)", calls)
 	}
 }

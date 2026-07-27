@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // ipamBasePath returns the base path for IPAM (public IP) endpoints
@@ -81,6 +82,31 @@ func (c *Client) ListPublicIPs(ctx context.Context) (*models.PublicIPListRespons
 // DeletePublicIP deallocates a public IP by UUID
 func (c *Client) DeletePublicIP(ctx context.Context, uuid string) error {
 	return c.Delete(ctx, fmt.Sprintf("%s/%s", c.ipamBasePath(), uuid))
+}
+
+// ResolvePublicIPID resolves a public IP name (object_name) to its UUID
+func (c *Client) ResolvePublicIPID(ctx context.Context, name string) (string, error) {
+	resp, err := c.ListPublicIPs(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list public IPs: %w", err)
+	}
+	tflog.Debug(ctx, "ResolvePublicIPID: listing public IPs", map[string]interface{}{
+		"public_ip_count": len(resp.Items),
+		"searched_name":   name,
+	})
+	for _, ip := range resp.Items {
+		if ip.ObjectName == name {
+			if ip.UUID == "" {
+				return "", fmt.Errorf("public IP %q found but has empty UUID (API response field mismatch)", name)
+			}
+			tflog.Debug(ctx, "ResolvePublicIPID: resolved public IP", map[string]interface{}{
+				"name": name,
+				"uuid": ip.UUID,
+			})
+			return ip.UUID, nil
+		}
+	}
+	return "", fmt.Errorf("public IP with name %q not found", name)
 }
 
 // --- Public IP Policy Rule ---

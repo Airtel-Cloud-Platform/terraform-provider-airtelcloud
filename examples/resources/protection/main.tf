@@ -8,10 +8,10 @@ terraform {
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://south.cloud.airtel.in"
+  api_endpoint = "https://north.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "south"
+  region       = "north"
   organization = var.organization
   project_name = var.project_name
 }
@@ -52,21 +52,24 @@ resource "airtelcloud_protection_plan" "daily" {
   retention_unit = "DAYS"
   recurrence     = 86400
   selector_key   = "AZ"
-  selector_value = "S1"
-  subnet_id      = "35df162d-5211-4d58-84ed-6a499626949c"
+  selector_value = "N1"
+  subnet_id      = "5bf3e086-6984-4f2f-b77f-7883993e3060"
 }
 
 # Create a protection policy for a compute instance
 resource "airtelcloud_protection" "web_server" {
-  name             = "${var.resource_prefix}-web-backup"
-  description      = "Backup policy for web server"
-  compute_id       = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
+  name        = "${var.resource_prefix}-web-backup"
+  description = "Backup policy for web server"
+  #compute_id       = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
   # Or reference the instance by name instead of id (mutually exclusive with compute_id):
-  # compute_name   = "my-instance"
-  protection_plan  = airtelcloud_protection_plan.daily.name
+  compute_name = "lbaas-vm"
+  # protection_plan must be the plan UUID; reference the plan's id (not its name).
+  protection_plan  = airtelcloud_protection_plan.daily.id
   enable_scheduler = "true"
-  start_date       = "2026-04-01"
-  start_time       = "02:00"
+  # start_date accepts ISO (YYYY-MM-DD); start_time accepts 24-hour HH:MM.
+  # The provider converts them to the API's MM/DD/YYYY and 12-hour AM/PM formats.
+  start_date = "2026-07-20"
+  start_time = "02:00"
 }
 
 # Weekly backup plan (alternative configuration)

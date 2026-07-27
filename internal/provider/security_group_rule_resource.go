@@ -21,6 +21,7 @@ import (
 
 var _ resource.Resource = &SecurityGroupRuleResource{}
 var _ resource.ResourceWithImportState = &SecurityGroupRuleResource{}
+var _ resource.ResourceWithValidateConfig = &SecurityGroupRuleResource{}
 
 func NewSecurityGroupRuleResource() resource.Resource {
 	return &SecurityGroupRuleResource{}
@@ -34,6 +35,7 @@ type SecurityGroupRuleResourceModel struct {
 	ID                          types.Int64  `tfsdk:"id"`
 	UUID                        types.String `tfsdk:"uuid"`
 	SecurityGroupID             types.Int64  `tfsdk:"security_group_id"`
+	SecurityGroupName           types.String `tfsdk:"security_group_name"`
 	SecurityGroupUUID           types.String `tfsdk:"security_group_uuid"`
 	Direction                   types.String `tfsdk:"direction"`
 	Protocol                    types.String `tfsdk:"protocol"`
@@ -71,11 +73,16 @@ func (r *SecurityGroupRuleResource) Schema(ctx context.Context, req resource.Sch
 				},
 			},
 			"security_group_id": schema.Int64Attribute{
-				Required:            true,
-				MarkdownDescription: "The ID of the security group this rule belongs to.",
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "The ID of the security group this rule belongs to. Either security_group_id or security_group_name must be specified.",
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
+			},
+			"security_group_name": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "The name of the security group this rule belongs to. If set, it is resolved to security_group_id. Either security_group_id or security_group_name must be specified.",
 			},
 			"security_group_uuid": schema.StringAttribute{
 				Computed:            true,
@@ -169,6 +176,24 @@ func (r *SecurityGroupRuleResource) Configure(ctx context.Context, req resource.
 	r.client = c
 }
 
+// ValidateConfig enforces that exactly one of security_group_id or security_group_name is set.
+func (r *SecurityGroupRuleResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data SecurityGroupRuleResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.SecurityGroupID.IsNull() && !data.SecurityGroupName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of security_group_id or security_group_name may be specified, not both.")
+	}
+	if data.SecurityGroupID.IsNull() && data.SecurityGroupName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of security_group_id or security_group_name must be specified.")
+	}
+}
+
 // resolveSGUUID returns the security group's UUID, preferring the value already stored in
 // state and falling back to a lookup by numeric ID (e.g. for imported resources).
 func (r *SecurityGroupRuleResource) resolveSGUUID(ctx context.Context, data SecurityGroupRuleResourceModel) (string, error) {
@@ -186,7 +211,19 @@ func (r *SecurityGroupRuleResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
+	// Resolve security_group_name -> numeric security_group_id and persist into the
+	// Computed attribute.
 	sgID := int(data.SecurityGroupID.ValueInt64())
+
+	if data.SecurityGroupID.IsNull() && !data.SecurityGroupName.IsNull() {
+		resolved, err := r.client.ResolveSecurityGroupID(ctx, data.SecurityGroupName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Security Group Resolution Error", err.Error())
+			return
+		}
+		sgID = resolved
+	}
+	data.SecurityGroupID = types.Int64Value(int64(sgID))
 
 	// The v2.1 API addresses security groups by UUID, so resolve the numeric ID first.
 	sgUUID, err := r.client.ResolveSecurityGroupUUID(ctx, sgID)

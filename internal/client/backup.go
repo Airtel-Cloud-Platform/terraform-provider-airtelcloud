@@ -2,11 +2,14 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // backupBasePath returns the base path for backup/protection endpoints
@@ -95,7 +98,8 @@ func (c *Client) CreateProtectionPlan(ctx context.Context, req *models.CreatePro
 	// After successful creation, list plans and find the one matching the requested name
 	plans, err := c.ListProtectionPlans(ctx, subnetID)
 	if err != nil {
-		return nil, fmt.Errorf("protection plan created but failed to retrieve it: %w", err)
+		return nil, fmt.Errorf("protection plan %q was created on the backend but could not be retrieved after retries "+
+			"(the backend list endpoint timed out); it may need to be imported or removed manually: %w", req.Name, err)
 	}
 
 	for _, plan := range plans {
@@ -114,33 +118,97 @@ func (c *Client) CreateProtectionPlan(ctx context.Context, req *models.CreatePro
 	return nil, fmt.Errorf("protection plan created but could not find it in the list")
 }
 
-// GetProtectionPlan retrieves a protection plan by ID.
-// The single-plan GET endpoint is not available, so we list all plans and filter by ID.
+// GetProtectionPlan retrieves a single protection plan by ID via the dedicated
+// GET endpoint (.../protection_plan/{id}, singular). This avoids the expensive and
+// intermittently slow full-list call on every read. A missing plan returns HTTP 404,
+// which surfaces as a not-found *APIError.
 func (c *Client) GetProtectionPlan(ctx context.Context, id string, subnetID string) (*models.ProtectionPlan, error) {
-	plans, err := c.ListProtectionPlans(ctx, subnetID)
+	scopedClient := c.WithSubnetID(subnetID)
+	path := fmt.Sprintf("%s/protection_plan/%s", c.backupBasePath(), id)
+
+	var resp models.ProtectionPlanDetailResponse
+	err := c.doProtectionPlanRequestWithRetry(ctx, func() error {
+		return scopedClient.Get(ctx, path, &resp)
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	for _, plan := range plans {
-		if plan.ID == id {
-			return &plan, nil
-		}
-	}
-
-	return nil, &APIError{StatusCode: 404, Message: "protection plan not found"}
+	return &resp.PolicyAttribute, nil
 }
 
-// ListProtectionPlans retrieves all protection plans
+// Retry parameters for the protection plan backend endpoints, which are intermittently
+// slow and return transient 5xx/timeout responses.
+const protectionPlanRetryMaxAttempts = 3
+
+// protectionPlanRetryBaseBackoff is the initial backoff between retries. It is a var
+// (not a const) so tests can shrink it to keep retry-path tests fast.
+var protectionPlanRetryBaseBackoff = 2 * time.Second
+
+// doProtectionPlanRequestWithRetry runs fn, retrying transient backend 5xx/timeout
+// failures with exponential backoff. Non-retryable errors (4xx) and context
+// cancellation return immediately.
+func (c *Client) doProtectionPlanRequestWithRetry(ctx context.Context, fn func() error) error {
+	var lastErr error
+	for attempt := 1; attempt <= protectionPlanRetryMaxAttempts; attempt++ {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		if !isRetryableError(err) || attempt == protectionPlanRetryMaxAttempts {
+			break
+		}
+
+		// Exponential backoff: 2s, 4s, ... (first attempt is immediate).
+		backoff := protectionPlanRetryBaseBackoff * time.Duration(1<<(attempt-1))
+		tflog.Warn(ctx, "Protection plan request failed, retrying", map[string]interface{}{
+			"attempt":      attempt,
+			"max_attempts": protectionPlanRetryMaxAttempts,
+			"backoff":      backoff.String(),
+			"error":        err.Error(),
+		})
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	return lastErr
+}
+
+// ListProtectionPlans retrieves all protection plans. This is still used for
+// create-time ID recovery (the create POST returns only a success message, so the new
+// plan's ID must be discovered by name from the list). The backend list endpoint
+// intermittently times out (HTTP 500), so transient failures are retried with backoff.
 func (c *Client) ListProtectionPlans(ctx context.Context, subnetID string) ([]models.ProtectionPlan, error) {
 	scopedClient := c.WithSubnetID(subnetID)
+	path := fmt.Sprintf("%s/protection_plans/", c.backupBasePath())
 
 	var resp models.ProtectionPlanListResponse
-	err := scopedClient.Get(ctx, fmt.Sprintf("%s/protection_plans/", c.backupBasePath()), &resp)
+	err := c.doProtectionPlanRequestWithRetry(ctx, func() error {
+		return scopedClient.Get(ctx, path, &resp)
+	})
 	if err != nil {
 		return nil, err
 	}
 	return resp.PolicyAttributeList, nil
+}
+
+// isRetryableError reports whether an error from an API call is worth retrying.
+// Server errors (5xx) and transport/network failures are transient; 4xx client errors
+// (e.g. 404 not found) are not.
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= 500
+	}
+	// Non-APIError failures are transport-level (connection reset, timeout, etc.).
+	return true
 }
 
 // containsIgnoreCase checks if s contains substr (case-insensitive)

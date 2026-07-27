@@ -20,6 +20,7 @@ import (
 
 var _ resource.Resource = &LBCertificateResource{}
 var _ resource.ResourceWithImportState = &LBCertificateResource{}
+var _ resource.ResourceWithValidateConfig = &LBCertificateResource{}
 
 func NewLBCertificateResource() resource.Resource {
 	return &LBCertificateResource{}
@@ -32,6 +33,7 @@ type LBCertificateResource struct {
 type LBCertificateResourceModel struct {
 	ID            types.String `tfsdk:"id"`
 	LBServiceID   types.String `tfsdk:"lb_service_id"`
+	LBServiceName types.String `tfsdk:"lb_service_name"`
 	Name          types.String `tfsdk:"name"`
 	SSLCert       types.String `tfsdk:"ssl_cert"`
 	SSLPrivateKey types.String `tfsdk:"ssl_private_key"`
@@ -56,11 +58,16 @@ func (r *LBCertificateResource) Schema(ctx context.Context, req resource.SchemaR
 				},
 			},
 			"lb_service_id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the parent LB service.",
-				Required:            true,
+				MarkdownDescription: "The ID of the parent LB service. Either lb_service_id or lb_service_name must be specified.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"lb_service_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the parent LB service. If set, it is resolved to lb_service_id. Either lb_service_id or lb_service_name must be specified.",
+				Optional:            true,
 			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "The name of the certificate.",
@@ -118,6 +125,24 @@ func (r *LBCertificateResource) Configure(ctx context.Context, req resource.Conf
 	r.client = c
 }
 
+// ValidateConfig enforces that exactly one of lb_service_id or lb_service_name is set.
+func (r *LBCertificateResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data LBCertificateResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !data.LBServiceID.IsNull() && !data.LBServiceName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of lb_service_id or lb_service_name may be specified, not both.")
+	}
+	if data.LBServiceID.IsNull() && data.LBServiceName.IsNull() {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of lb_service_id or lb_service_name must be specified.")
+	}
+}
+
 func (r *LBCertificateResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data LBCertificateResourceModel
 
@@ -125,6 +150,18 @@ func (r *LBCertificateResource) Create(ctx context.Context, req resource.CreateR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Resolve lb_service_name -> lb_service_id and persist into the Computed attribute.
+	lbServiceID := data.LBServiceID.ValueString()
+	if lbServiceID == "" && !data.LBServiceName.IsNull() {
+		resolved, err := r.client.ResolveLBServiceID(ctx, data.LBServiceName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("LB Service Resolution Error", err.Error())
+			return
+		}
+		lbServiceID = resolved
+	}
+	data.LBServiceID = types.StringValue(lbServiceID)
 
 	createReq := &models.CreateLBCertificateRequest{
 		Name:      data.Name.ValueString(),

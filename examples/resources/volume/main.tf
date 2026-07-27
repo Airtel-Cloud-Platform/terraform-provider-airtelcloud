@@ -55,8 +55,8 @@ resource "airtelcloud_volume" "data_volume" {
   # compute_name    = "my-instance"
 
   # Networking
-  vpc_id    = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
-  subnet_id = "35df162d-5211-4d58-84ed-6a499626949c"
+  vpc_name    = "copper-vpc01"
+  subnet_name = "subnet-26jun"
 
   is_encrypted = false
   bootable     = false

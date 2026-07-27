@@ -4,19 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
 
-// CreateVirtualServer creates a virtual server on an LB service using query parameters
-func (c *Client) CreateVirtualServer(ctx context.Context, lbServiceID string, params url.Values) (*models.LBVirtualServer, error) {
+// CreateVirtualServer creates a virtual server on an LB service. The payload is
+// sent as a URL-encoded form body, with the pool-member collection carried in a
+// single "nodes" field holding a JSON array (mirroring the security-group-rules
+// bulk endpoint's "security_group_data" contract).
+func (c *Client) CreateVirtualServer(ctx context.Context, lbServiceID string, formData map[string]interface{}) (*models.LBVirtualServer, error) {
 	path := fmt.Sprintf("%s/%s/virtual-servers", c.lbBasePath(), lbServiceID)
 
 	var vs models.LBVirtualServer
-	err := c.PostWithQueryParams(ctx, path, params, &vs)
+	err := c.PostURLEncodedForm(ctx, path, formData, &vs)
 	if err != nil {
 		return nil, err
 	}
@@ -43,12 +45,12 @@ func (c *Client) ListVirtualServers(ctx context.Context, lbServiceID string) ([]
 	return servers, nil
 }
 
-// UpdateVirtualServer updates a virtual server using PATCH with query parameters
-func (c *Client) UpdateVirtualServer(ctx context.Context, lbServiceID, vsID string, params url.Values) (*models.LBVirtualServer, error) {
+// UpdateVirtualServer updates a virtual server using PATCH with a URL-encoded form body.
+func (c *Client) UpdateVirtualServer(ctx context.Context, lbServiceID, vsID string, formData map[string]interface{}) (*models.LBVirtualServer, error) {
 	path := fmt.Sprintf("%s/%s/virtual-servers/%s", c.lbBasePath(), lbServiceID, vsID)
 
 	var vs models.LBVirtualServer
-	err := c.PatchWithQueryParams(ctx, path, params, &vs)
+	err := c.PatchURLEncodedForm(ctx, path, formData, &vs)
 	if err != nil {
 		return nil, err
 	}
@@ -114,60 +116,116 @@ func (c *Client) WaitForVirtualServerDeleted(ctx context.Context, lbServiceID, v
 	return fmt.Errorf("virtual server deletion timed out after %v", timeout)
 }
 
-// BuildVirtualServerNodes serializes a slice of VirtualServerNode into url.Values
-// Each node is JSON-serialized as a separate query parameter value (collectionFormat: multi)
-func BuildVirtualServerNodes(nodes []models.VirtualServerNode) url.Values {
-	params := url.Values{}
-	for _, node := range nodes {
-		nodeJSON, _ := json.Marshal(node)
-		params.Add("nodes", string(nodeJSON))
+// ResolveComputeNode resolves a VM pool member by id (UUID) or name and returns
+// the full compute (including its Ports) needed to build the node payload.
+func (c *Client) ResolveComputeNode(ctx context.Context, computeID, computeName string) (*models.Compute, error) {
+	id := computeID
+	if id == "" {
+		resolved, err := c.ResolveComputeID(ctx, computeName)
+		if err != nil {
+			return nil, err
+		}
+		id = resolved
 	}
-	return params
+	return c.GetCompute(ctx, id)
 }
 
-// BuildVirtualServerParams builds the full url.Values for creating a virtual server
-func BuildVirtualServerParams(name, protocol, vpcID, routingAlgorithm, monitorProtocol, certificateID string,
-	vipPortID, port, interval int,
-	persistenceEnabled, xForwardedFor, redirectHTTPS bool,
-	persistenceType string,
-	nodes []models.VirtualServerNode,
-) url.Values {
-	params := url.Values{}
-
-	if name != "" {
-		params.Set("name", name)
-	}
-	params.Set("vip_port_id", strconv.Itoa(vipPortID))
-	params.Set("protocol", protocol)
-	params.Set("port", strconv.Itoa(port))
-	params.Set("routing_algorithm", routingAlgorithm)
-	params.Set("vpc_id", vpcID)
-	params.Set("interval", strconv.Itoa(interval))
-
-	if persistenceEnabled {
-		params.Set("persistence_enabled", "true")
-		if persistenceType != "" {
-			params.Set("persistence_type", persistenceType)
+// BackendPortIDForIP scans a compute's ports for the one whose fixed_ips contains
+// ip and returns its port id (used as a node's backend_port_id).
+func BackendPortIDForIP(ports []models.Port, ip string) (int, error) {
+	for _, p := range ports {
+		for _, fixedIP := range p.FixedIPs {
+			if fixedIP == ip {
+				return p.ID, nil
+			}
 		}
 	}
-	if xForwardedFor {
-		params.Set("x_forwarded_for", "true")
+	return 0, fmt.Errorf("no port found with fixed_ip matching %s", ip)
+}
+
+// VirtualServerCreateParams holds the top-level create parameters for a virtual
+// server, mirroring the API's form fields.
+type VirtualServerCreateParams struct {
+	Name               string
+	Protocol           string
+	VPCID              string
+	RoutingAlgorithm   string
+	MonitorProtocol    string
+	CertificateID      string
+	PoolName           string
+	MonitorName        string
+	PersistenceType    string
+	VipPortID          int
+	Port               int
+	Interval           int
+	MonitorPort        int
+	Timeout            int
+	PersistenceEnabled bool
+	XForwardedFor      bool
+	RedirectHTTPS      bool
+	Nodes              []models.VirtualServerNode
+}
+
+// BuildVirtualServerFormData builds the URL-encoded form body for creating a
+// virtual server. The pool-member collection is carried as repeated "nodes"
+// fields in the body, each holding a single node's JSON object (confirmed
+// against the live API: body is ...&nodes=<json-obj>&nodes=<json-obj>&...).
+func BuildVirtualServerFormData(p VirtualServerCreateParams) map[string]interface{} {
+	formData := map[string]interface{}{}
+
+	if p.Name != "" {
+		formData["name"] = p.Name
 	}
-	if redirectHTTPS {
-		params.Set("redirect_https", "true")
+	formData["vip_port_id"] = strconv.Itoa(p.VipPortID)
+	formData["protocol"] = p.Protocol
+	formData["port"] = strconv.Itoa(p.Port)
+	formData["routing_algorithm"] = p.RoutingAlgorithm
+	formData["vpc_id"] = p.VPCID
+	formData["interval"] = strconv.Itoa(p.Interval)
+
+	if p.PoolName != "" {
+		formData["pool_name"] = p.PoolName
 	}
-	if monitorProtocol != "" {
-		params.Set("monitor_protocol", monitorProtocol)
+	if p.MonitorName != "" {
+		formData["monitor_name"] = p.MonitorName
 	}
-	if certificateID != "" {
-		params.Set("certificate_id", certificateID)
+	if p.MonitorProtocol != "" {
+		formData["monitor_protocol"] = p.MonitorProtocol
+	}
+	if p.MonitorPort > 0 {
+		formData["monitor_port"] = strconv.Itoa(p.MonitorPort)
+	}
+	if p.Timeout > 0 {
+		formData["timeout"] = strconv.Itoa(p.Timeout)
 	}
 
-	// Add nodes as repeated JSON query params
-	for _, node := range nodes {
-		nodeJSON, _ := json.Marshal(node)
-		params.Add("nodes", string(nodeJSON))
+	if p.PersistenceEnabled {
+		formData["persistence_enabled"] = "true"
+		if p.PersistenceType != "" {
+			formData["persistence_type"] = p.PersistenceType
+		}
+	}
+	if p.XForwardedFor {
+		formData["x_forwarded_for"] = "true"
+	}
+	if p.RedirectHTTPS {
+		formData["redirect_https"] = "true"
+	}
+	if p.CertificateID != "" {
+		formData["certificate_id"] = p.CertificateID
 	}
 
-	return params
+	// Carry each node as its own repeated "nodes" form field. A []string value
+	// is expanded by doURLEncodedFormRequest into repeated fields, producing
+	// ...&nodes=<json-obj>&nodes=<json-obj>&... as the backend expects.
+	if len(p.Nodes) > 0 {
+		nodeJSONs := make([]string, 0, len(p.Nodes))
+		for _, node := range p.Nodes {
+			nodeJSON, _ := json.Marshal(node)
+			nodeJSONs = append(nodeJSONs, string(nodeJSON))
+		}
+		formData["nodes"] = nodeJSONs
+	}
+
+	return formData
 }

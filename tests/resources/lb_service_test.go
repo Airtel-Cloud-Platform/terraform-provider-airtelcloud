@@ -2,6 +2,7 @@ package tests
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -18,9 +19,9 @@ func TestAccLBServiceResource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("airtelcloud_lb_service.test", "id"),
 					resource.TestCheckResourceAttr("airtelcloud_lb_service.test", "name", "test-lb"),
-					resource.TestCheckResourceAttr("airtelcloud_lb_service.test", "flavor_id", "1"),
+					resource.TestCheckResourceAttrSet("airtelcloud_lb_service.test", "flavor_id"),
 					resource.TestCheckResourceAttr("airtelcloud_lb_service.test", "vpc_id", "vpc-test-123"),
-					resource.TestCheckResourceAttr("airtelcloud_lb_service.test", "vpc_name", "test-vpc"),
+					resource.TestCheckResourceAttr("airtelcloud_lb_service.test", "subnet_id", "subnet-test-456"),
 					resource.TestCheckResourceAttr("airtelcloud_lb_service.test", "ha", "false"),
 					resource.TestCheckResourceAttrSet("airtelcloud_lb_service.test", "status"),
 				),
@@ -39,15 +40,64 @@ func TestAccLBServiceResource(t *testing.T) {
 	})
 }
 
+// TestAccLBServiceResourceValidation asserts the exactly-one-of rules between
+// vpc_id/vpc_name and subnet_id/subnet_name enforced by ValidateConfig.
+func TestAccLBServiceResourceValidation(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "airtelcloud_lb_service" "test" {
+  name      = "tf-acc-lb"
+  subnet_id = "subnet-test-456"
+  vpc_id    = "vpc-test-123"
+  vpc_name  = "test-vpc"
+}
+`,
+				ExpectError: regexp.MustCompile("Only one of vpc_id or vpc_name"),
+			},
+			{
+				Config: `
+resource "airtelcloud_lb_service" "test" {
+  name      = "tf-acc-lb"
+  subnet_id = "subnet-test-456"
+}
+`,
+				ExpectError: regexp.MustCompile("One of vpc_id or vpc_name must be specified"),
+			},
+			{
+				Config: `
+resource "airtelcloud_lb_service" "test" {
+  name        = "tf-acc-lb"
+  vpc_id      = "vpc-test-123"
+  subnet_id   = "subnet-test-456"
+  subnet_name = "test-subnet"
+}
+`,
+				ExpectError: regexp.MustCompile("Only one of subnet_id or subnet_name"),
+			},
+			{
+				Config: `
+resource "airtelcloud_lb_service" "test" {
+  name   = "tf-acc-lb"
+  vpc_id = "vpc-test-123"
+}
+`,
+				ExpectError: regexp.MustCompile("One of subnet_id or subnet_name must be specified"),
+			},
+		},
+	})
+}
+
 func testAccLBServiceResourceConfig(name string) string {
 	return fmt.Sprintf(`
 resource "airtelcloud_lb_service" "test" {
   name        = %[1]q
   description = "Test LB service"
-  flavor_id   = 1
-  network_id  = "subnet-test-456"
+  subnet_id   = "subnet-test-456"
   vpc_id      = "vpc-test-123"
-  vpc_name    = "test-vpc"
   ha          = false
 
   timeouts {
@@ -79,10 +129,8 @@ func testAccLBVipResourceConfig() string {
 	return `
 resource "airtelcloud_lb_service" "test" {
   name        = "test-lb-for-vip"
-  flavor_id   = 1
-  network_id  = "subnet-test-456"
+  subnet_id   = "subnet-test-456"
   vpc_id      = "vpc-test-123"
-  vpc_name    = "test-vpc"
 
   timeouts {
     create = "15m"
@@ -117,10 +165,8 @@ func testAccLBCertificateResourceConfig(name string) string {
 	return fmt.Sprintf(`
 resource "airtelcloud_lb_service" "test" {
   name        = "test-lb-for-cert"
-  flavor_id   = 1
-  network_id  = "subnet-test-456"
+  subnet_id   = "subnet-test-456"
   vpc_id      = "vpc-test-123"
-  vpc_name    = "test-vpc"
 
   timeouts {
     create = "15m"
@@ -163,10 +209,8 @@ func testAccLBVirtualServerResourceConfig(name string) string {
 	return fmt.Sprintf(`
 resource "airtelcloud_lb_service" "test" {
   name        = "test-lb-for-vs"
-  flavor_id   = 1
-  network_id  = "subnet-test-456"
+  subnet_id   = "subnet-test-456"
   vpc_id      = "vpc-test-123"
-  vpc_name    = "test-vpc"
 
   timeouts {
     create = "15m"

@@ -203,6 +203,73 @@ func TestDeletePublicIP(t *testing.T) {
 	}
 }
 
+func TestResolvePublicIPID(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(ms *testutil.MockServer)
+		lookup   string
+		wantUUID string
+		wantErr  bool
+	}{
+		{
+			name:     "resolves by object_name",
+			lookup:   "test-public-ip",
+			wantUUID: "test-public-ip-uuid",
+		},
+		{
+			name:    "name not found",
+			lookup:  "missing-public-ip",
+			wantErr: true,
+		},
+		{
+			name: "empty uuid in response",
+			setup: func(ms *testutil.MockServer) {
+				ms.AddHandler("GET", "/api/v1/ipam/domain/test-org/project/test-project", func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					json.NewEncoder(w).Encode(models.PublicIPListResponse{
+						Items: []models.PublicIP{{UUID: "", ObjectName: "test-public-ip"}},
+						Count: 1,
+					})
+				})
+			},
+			lookup:  "test-public-ip",
+			wantErr: true,
+		},
+		{
+			name: "list error",
+			setup: func(ms *testutil.MockServer) {
+				ms.SetErrorResponse("GET", "/api/v1/ipam/domain/test-org/project/test-project", 500, "Internal server error")
+			},
+			lookup:  "test-public-ip",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockServer := testutil.NewMockServer()
+			defer mockServer.Close()
+
+			if tt.setup != nil {
+				tt.setup(mockServer)
+			}
+
+			baseURL := strings.TrimSuffix(mockServer.URL, "/")
+			client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+			uuid, err := client.ResolvePublicIPID(context.Background(), tt.lookup)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ResolvePublicIPID() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && uuid != tt.wantUUID {
+				t.Errorf("ResolvePublicIPID() uuid = %q, want %q", uuid, tt.wantUUID)
+			}
+		})
+	}
+}
+
 // --- Policy Rule Tests ---
 
 func TestListIPAMServices(t *testing.T) {

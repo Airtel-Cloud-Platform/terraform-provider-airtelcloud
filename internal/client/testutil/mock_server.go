@@ -92,7 +92,7 @@ func (ms *MockServer) setupDefaultHandlers() {
 
 	// Protection Plan handlers
 	ms.Handlers["POST /api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plans/"] = ms.createProtectionPlanHandler
-	ms.Handlers["GET /api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plan/1"] = ms.getProtectionPlanHandler
+	ms.Handlers["GET /api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plan/plan-uuid-1234"] = ms.getProtectionPlanHandler
 	ms.Handlers["GET /api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plans/"] = ms.listProtectionPlansHandler
 
 	// LB Service handlers
@@ -874,11 +874,20 @@ func (ms *MockServer) createProtectionPlanHandler(w http.ResponseWriter, r *http
 }
 
 func (ms *MockServer) getProtectionPlanHandler(w http.ResponseWriter, r *http.Request) {
-	// Single plan GET is not available in the real API (returns 404).
-	// This handler is kept for mock testing but the real code uses list + filter.
+	// Single-plan GET (.../protection_plan/{id}, singular) nests the plan under
+	// "policy_attribute". Unknown IDs fall through to routeHandler's default 404.
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotFound)
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": 404, "message": "Not Found"})
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(models.ProtectionPlanDetailResponse{
+		PolicyAttribute: models.ProtectionPlan{
+			ID:          "plan-uuid-1234",
+			Name:        "S1-TEST-ORG-TEST-PROJECT-TEST-PLAN-BKP-PP",
+			Status:      "available",
+			Description: "",
+			ProjectID:   "test-project-id",
+			CreatedAt:   "2026-04-10T14:25:52.000000",
+		},
+	})
 }
 
 func (ms *MockServer) listProtectionPlansHandler(w http.ResponseWriter, r *http.Request) {
@@ -1034,6 +1043,38 @@ func (ms *MockServer) deleteLBCertificateHandler(w http.ResponseWriter, r *http.
 
 func (ms *MockServer) createVirtualServerHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	// The backend expects pool members as repeated "nodes" form-body fields,
+	// each a single node JSON object carrying the required member fields.
+	// Validate that here so wire-format regressions (e.g. reverting to query
+	// params, or collapsing nodes into one JSON array) are caught by tests.
+	if err := r.ParseForm(); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": 400, "message": "invalid form body"})
+		return
+	}
+	nodeFields := r.PostForm["nodes"]
+	if len(nodeFields) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  400,
+			"message": "Missing required fields in pool member node: 'resource_id', 'resource_type', 'resource_ip', 'backend_port_id'.",
+		})
+		return
+	}
+	for _, raw := range nodeFields {
+		var n models.VirtualServerNode
+		if err := json.Unmarshal([]byte(raw), &n); err != nil ||
+			n.ResourceID == "" || n.ResourceType == "" || n.ResourceIP == "" || n.BackendPortID == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  400,
+				"message": "Missing required fields in pool member node: 'resource_id', 'resource_type', 'resource_ip', 'backend_port_id'.",
+			})
+			return
+		}
+	}
+
 	w.WriteHeader(http.StatusAccepted)
 
 	vs := models.LBVirtualServer{
