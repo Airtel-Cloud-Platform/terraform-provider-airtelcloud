@@ -40,10 +40,14 @@ type UpdateProtectionRequest struct {
 	StartTime       string `form:"start_time,omitempty"`
 }
 
-// ProtectionPlan represents a Veritas protection plan (API response)
+// ProtectionPlan represents a Veritas protection plan (API response).
+// The list endpoint populates a subset of fields (id, name, project_*, created_at);
+// the single-plan GET endpoint additionally returns status and description.
 type ProtectionPlan struct {
 	ID          string `json:"id"`
 	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Status      string `json:"status,omitempty"`
 	ProjectID   string `json:"project_id,omitempty"`
 	ProjectName string `json:"project_name,omitempty"`
 	Version     string `json:"version,omitempty"`
@@ -55,6 +59,12 @@ type ProtectionPlan struct {
 // ProtectionPlanListResponse wraps the list API response
 type ProtectionPlanListResponse struct {
 	PolicyAttributeList []ProtectionPlan `json:"policy_attribute_list"`
+}
+
+// ProtectionPlanDetailResponse wraps the single-plan GET response, which nests the plan
+// under a "policy_attribute" key.
+type ProtectionPlanDetailResponse struct {
+	PolicyAttribute ProtectionPlan `json:"policy_attribute"`
 }
 
 // CreateProtectionPlanRequest represents the request to create a protection plan

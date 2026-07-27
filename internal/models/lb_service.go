@@ -32,16 +32,16 @@ type CreateLBServiceRequest struct {
 
 // LBVip represents a VIP port allocated for an LB service (API response)
 type LBVip struct {
-	ID             int    `json:"id"`
-	Name           string `json:"name,omitempty"`
-	Status         string `json:"status,omitempty"`
+	ID             int      `json:"id"`
+	Name           string   `json:"name,omitempty"`
+	Status         string   `json:"status,omitempty"`
 	FixedIPs       []string `json:"fixed_ips,omitempty"`
-	PublicIP       string `json:"public_ip,omitempty"`
-	ProviderPortID string `json:"provider_port_id,omitempty"`
-	NetworkID      string `json:"network_id,omitempty"`
-	DeviceID       string `json:"device_id,omitempty"`
-	Created        string `json:"created,omitempty"`
-	Updated        string `json:"updated,omitempty"`
+	PublicIP       string   `json:"public_ip,omitempty"`
+	ProviderPortID string   `json:"provider_port_id,omitempty"`
+	NetworkID      string   `json:"network_id,omitempty"`
+	DeviceID       string   `json:"device_id,omitempty"`
+	Created        string   `json:"created,omitempty"`
+	Updated        string   `json:"updated,omitempty"`
 }
 
 // LBCertificate represents an SSL certificate attached to an LB service (API response)
