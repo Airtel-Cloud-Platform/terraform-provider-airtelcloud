@@ -60,7 +60,7 @@ make install
 
 `make install` copies the binary to both locations:
 
-- `~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.1.1/<GOOS>_<GOARCH>/`
+- `~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.1.3/<GOOS>_<GOARCH>/`
 - `$(go env GOPATH)/bin/`
 
 You can verify installation with:
@@ -97,7 +97,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.1.1"
+      version = "1.1.3"
     }
   }
 }
@@ -106,7 +106,7 @@ provider "airtelcloud" {
   api_endpoint = "https://south.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "south-1"
+  region       = "south"
   organization = var.organization
   project_name = var.project_name
 }
@@ -119,9 +119,10 @@ provider "airtelcloud" {
 | `api_endpoint` | String | No | `https://south.cloud.airtel.in` | Airtel Cloud API endpoint URL |
 | `api_key` | String | Yes | — | API key for authentication (sensitive) |
 | `api_secret` | String | Yes | — | API secret for HMAC authentication (sensitive) |
-| `region` | String | No | `south-1` | Airtel Cloud region |
+| `region` | String | No | `south` | Airtel Cloud region |
 | `organization` | String | No | — | Organization name or domain |
 | `project_name` | String | No | — | Project name for API calls |
+| `subnet_id` | String | No | — | Default subnet ID used for volume API provider lookup |
 
 ## Authentication
 
@@ -132,6 +133,13 @@ The provider authenticates using an HMAC-SHA256 scheme that requires both an `ap
 ```bash
 export AIRTEL_API_KEY="your-api-key"
 export AIRTEL_API_SECRET="your-api-secret"
+
+# Optional provider setting fallbacks
+export AIRTEL_API_ENDPOINT="https://south.cloud.airtel.in"
+export AIRTEL_REGION="south"
+export AIRTEL_ORGANIZATION="your-organization"
+export AIRTEL_PROJECT_NAME="your-project"
+export AIRTEL_SUBNET_ID="your-default-subnet-id"
 ```
 
 ### Option 2: Variable Files
@@ -294,7 +302,7 @@ terraform apply
 ### Region Mismatch
 
 - Resources may fail if the `region` or `availability_zone` in your configuration does not match a valid Airtel Cloud zone.
-- Check the default region (`south-1`) and available zones (`S1`, `S2`) for your account.
+- Check the default region (`south`) and available zones (`S1`, `S2`) for your account.
 
 ### Provider Not Found After Build
 

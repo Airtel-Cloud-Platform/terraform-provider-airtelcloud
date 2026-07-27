@@ -2,7 +2,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.1.1"
+      version = "1.1.3"
     }
   }
 }
@@ -55,7 +55,7 @@ variable "resource_prefix" {
 resource "airtelcloud_compute_snapshot" "example" {
   #compute_id = "aa8ad6fc-5400-452f-95ee-8ecb95a7f3d4"
   # Or reference the compute by name instead of compute_id:
-  compute_name = "ashok"
+  compute_name = "aakash"
   snapshot_name = "${var.resource_prefix}-snapshot"
 
   timeouts {

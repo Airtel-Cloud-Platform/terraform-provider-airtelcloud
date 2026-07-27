@@ -27,7 +27,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.1.1"
+      version = "1.1.3"
     }
   }
 }
@@ -770,6 +770,7 @@ resource "airtelcloud_lb_service" "web_lb" {
   network_id  = "862f1f29-f4d2-4bcb-afdd-3bd96c0ef66e"
   vpc_id      = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
   vpc_name    = "my-vpc"
+  subnet_name = "my-subnet"
   ha          = false
 
   timeouts {
@@ -783,9 +784,10 @@ resource "airtelcloud_lb_service" "web_lb" {
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `network_id` | String | Yes | Network (subnet) ID. Forces new resource. |
-| `vpc_id` | String | Yes | VPC ID. Forces new resource. |
-| `vpc_name` | String | Yes | VPC name. Forces new resource. |
+| `vpc_id` | String | Yes* | VPC ID. Exactly one of `vpc_id` or `vpc_name` is required. Forces new resource. |
+| `vpc_name` | String | Yes* | VPC name, resolved to `vpc_id`. Exactly one of `vpc_id` or `vpc_name` is required. Forces new resource. |
+| `subnet_id` | String | Yes* | Subnet ID the LB is created in. Exactly one of `subnet_id` or `subnet_name` is required. Forces new resource. |
+| `subnet_name` | String | Yes* | Subnet name, resolved to `subnet_id` within the VPC. Exactly one of `subnet_id` or `subnet_name` is required. Forces new resource. |
 | `name` | String | No | Service name. Forces new resource. |
 | `description` | String | No | Service description. Forces new resource. |
 | `ha` | Bool | No | Enable high availability. Default: `false`. Forces new resource. |
@@ -863,7 +865,7 @@ Manages a virtual server on a load balancer service. Defines L4/L7 load balancin
 resource "airtelcloud_lb_virtual_server" "http" {
   lb_service_id     = airtelcloud_lb_service.web_lb.id
   name              = "http-vs"
-  vip_port_id       = tonumber(airtelcloud_lb_vip.web_vip.id)
+  vip               = airtelcloud_lb_vip.web_vip.fixed_ips
   protocol          = "HTTP"
   port              = 80
   routing_algorithm = "ROUND_ROBIN"
@@ -872,16 +874,19 @@ resource "airtelcloud_lb_virtual_server" "http" {
 
   nodes = [
     {
-      compute_id = 1
-      compute_ip = airtelcloud_vm.web1.private_ip
-      port       = 8080
-      weight     = 50
+     # VM member (default). Reference by name or by id (UUID) — mutually exclusive.
+      compute_name = airtelcloud_vm.web1.instance_name
+      compute_ip   = airtelcloud_vm.web1.private_ip
+      port         = 8080
+      weight       = 50
     },
     {
-      compute_id = 2
-      compute_ip = airtelcloud_vm.web2.private_ip
-      port       = 8080
-      weight     = 50
+      # Baremetal member. Only servers in the "Ready" state are usable.
+      resource_type = "bm"
+      compute_name  = "amd-test2"
+      compute_ip    = "10.10.49.70"
+      port          = 8080
+      weight        = 50
     },
   ]
 
@@ -896,14 +901,14 @@ resource "airtelcloud_lb_virtual_server" "http" {
 }
 ```
 
--> **Note:** The `vip_port_id` expects an Int64. Since `airtelcloud_lb_vip` exports `id` as a String, use `tonumber()` to convert it.
+ **Note:** `vip_port_id` is now computed. Set `vip` to the VIP's fixed IP (e.g. `airtelcloud_lb_vip.web_vip.fixed_ips`) and the provider resolves it to the port ID.
 
 #### Argument Reference
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `lb_service_id` | String | Yes | Parent LB service ID. Forces new resource. |
-| `vip_port_id` | Int64 | Yes | VIP port ID (from `airtelcloud_lb_vip`). Forces new resource. |
+ `lb_service_id` | String | Yes | Parent LB service ID. Forces new resource. |
+| `vip` | String | Yes | VIP fixed IP to bind to (from `airtelcloud_lb_vip.<name>.fixed_ips`). Resolved to `vip_port_id`. Forces new resource. |
 | `protocol` | String | Yes | Protocol (e.g., `HTTP`, `HTTPS`, `TCP`). Forces new resource. |
 | `port` | Int64 | Yes | Listening port. Forces new resource. |
 | `routing_algorithm` | String | Yes | Algorithm (e.g., `ROUND_ROBIN`, `LEAST_CONNECTION`). Updatable. |
@@ -917,14 +922,20 @@ resource "airtelcloud_lb_virtual_server" "http" {
 | `redirect_https` | Bool | No | Redirect HTTP to HTTPS. Default: `false`. |
 | `certificate_id` | String | No | SSL certificate ID (for HTTPS). |
 | `monitor_protocol` | String | No | Health check monitor protocol. |
+| `monitor_port` | Int64 | No | Health check monitor port. |
+| `monitor_name` | String | Conditional | Health check monitor name. Required unless `redirect_https` is enabled. |
+| `pool_name` | String | No | Backend pool name. |
+| `timeout` | Int64 | No | Health check timeout in seconds. |
 
 **Node Object Attributes:**
 
-| Argument | Type | Required | Description |
+ Argument | Type | Required | Description |
 |---|---|---|---|
-| `compute_id` | Int64 | Yes | Compute instance numeric ID. |
-| `compute_ip` | String | Yes | Compute instance private IP. |
+| `compute_ip` | String | Yes | Backend member IP address (sent as `resource_ip`). |
 | `port` | Int64 | Yes | Backend port. |
+| `compute_name` | String | Conditional | Backend member name. Provide exactly one of `compute_name` or `compute_id`. Resolved to the member's ID. |
+| `compute_id` | String | Conditional | Backend member ID (UUID). Provide exactly one of `compute_name` or `compute_id`. |
+| `resource_type` | String | No | Member kind: `compute` (a VM, the default) or `bm` (a baremetal server). Baremetal servers must be in the `Ready` state. |
 | `weight` | Int64 | No | Load balancing weight. |
 | `max_conn` | Int64 | No | Maximum connections. |
 
@@ -933,8 +944,8 @@ resource "airtelcloud_lb_virtual_server" "http" {
 | Attribute | Type | Description |
 |---|---|---|
 | `id` | String | Virtual server ID. |
+| `vip_port_id` | Int64 | VIP port ID resolved from `vip`. |
 | `status` | String | Current status. |
-| `vip` | String | VIP address. |
 
 #### Timeouts
 
