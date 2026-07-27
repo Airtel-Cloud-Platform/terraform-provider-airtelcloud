@@ -20,7 +20,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "~> 1.1.1"
+      version = "~> 1.1.3"
     }
   }
 }
@@ -29,7 +29,7 @@ provider "airtelcloud" {
   api_endpoint = "https://south.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "south-1"
+  region       = "south"
   organization = var.organization
   project_name = var.project_name
 }
@@ -40,7 +40,7 @@ provider "airtelcloud" {
 The provider authenticates using an HMAC-SHA256 scheme that requires both an API key and an API secret. You can supply credentials in the following ways:
 
 1. **Provider configuration** (recommended for CI/CD)
-2. **Environment variables**: `AIRTEL_API_KEY`, `AIRTEL_API_SECRET`
+2. **Environment variables**: `AIRTEL_API_KEY`, `AIRTEL_API_SECRET` 
 3. **Terraform variable files** (see below)
 
 ### Provider Configuration
@@ -50,7 +50,7 @@ provider "airtelcloud" {
   api_endpoint = "https://south.cloud.airtel.in"
   api_key      = "your-api-key-here"
   api_secret   = "your-api-secret-here"
-  region       = "south-1"
+  region       = "south"
 }
 ```
 
@@ -59,6 +59,13 @@ provider "airtelcloud" {
 ```bash
 export AIRTEL_API_KEY="your-api-key-here"
 export AIRTEL_API_SECRET="your-api-secret-here"
+
+# Optional provider setting fallbacks
+export AIRTEL_API_ENDPOINT="https://south.cloud.airtel.in"
+export AIRTEL_REGION="south"
+export AIRTEL_ORGANIZATION="your-organization"
+export AIRTEL_PROJECT_NAME="your-project"
+export AIRTEL_SUBNET_ID="your-default-subnet-id"
 ```
 
 ### Using Variables
@@ -80,7 +87,7 @@ provider "airtelcloud" {
   api_endpoint = "https://south.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "south-1"
+  region       = "south"
 }
 ```
 
@@ -91,9 +98,10 @@ The following arguments are supported in the provider configuration:
 - `api_endpoint` (Optional) - The Airtel Cloud API endpoint URL. Defaults to `https://south.cloud.airtel.in`.
 - `api_key` (Required) - The API key for authenticating with Airtel Cloud API. Can also be set via the `AIRTEL_API_KEY` environment variable.
 - `api_secret` (Required) - The API secret for HMAC authentication. Can also be set via the `AIRTEL_API_SECRET` environment variable.
-- `region` (Optional) - The default region for resources. Defaults to `south-1`.
+- `region` (Optional) - The default region for resources. Defaults to `south`.
 - `organization` (Optional) - Organization name or domain for Airtel Cloud.
 - `project_name` (Optional) - Project name for Airtel Cloud API calls.
+- `subnet_id` (Optional) - Default subnet ID used for volume API provider lookup.
 
 ## Available Resources
 
