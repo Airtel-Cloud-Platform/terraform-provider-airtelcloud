@@ -55,6 +55,7 @@ integration_pattern() {
         nfs)              echo "TestFileStorage" ;;
         object-storage)   echo "TestObjectStorageIntegration" ;;
         security-group)   echo "TestSecurityGroupIntegration" ;;
+        protection)       echo "TestProtection" ;;
         all)              echo "Integration|TestFileStorage" ;;
         *)
             fail "Unknown integration service: $service" >&2
@@ -192,6 +193,7 @@ list_services() {
     echo "  nfs              6 tests   TestFileStorage{Volume,ExportPath}Integration_{...}"
     echo "  object-storage   4 tests   TestObjectStorageIntegration_{CreateGetDelete,List,Update,GetNonExistent}"
     echo "  security-group  13 tests   TestSecurityGroupIntegration_{CreateGetDelete,List,...}"
+    echo "  protection       4 tests   TestProtectionPlanIntegration_{CreateGetList,List}, TestProtectionIntegration_{CreateGetUpdateDelete,List}"
     echo ""
     echo -e "${BOLD}Unit Tests${NC} (./internal/client/...)"
     echo "  compute          9 tests   TestCreate/Get/Update/Delete/ListCompute(s), Flavors, Images, ..."
