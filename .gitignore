@@ -1,6 +1,25 @@
-/bin/
-/terraform-provider-airtelcloud
-*.tfstate
-*.tfstate.backup
+# Binaries
+terraform-provider-airtelcloud
+bin/
+
+# Terraform
 .terraform/
-*.tfplan
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Coverage
+coverage.out
+coverage.html
+# GoReleaser
+dist/
