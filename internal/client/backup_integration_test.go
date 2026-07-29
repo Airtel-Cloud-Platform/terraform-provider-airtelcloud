@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-//	"github.com/terraform-providers/terraform-provider-airtelcloud/internal/models"
+	//	"github.com/terraform-providers/terraform-provider-airtelcloud/internal/models"
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
 
