@@ -27,7 +27,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: go.mod
+          go-version: "1.24.9"
           cache: true
 
       - name: Download Dependencies
