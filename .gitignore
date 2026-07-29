@@ -21,3 +21,5 @@ bin/
 # Coverage
 coverage.out
 coverage.html
+# GoReleaser
+dist/

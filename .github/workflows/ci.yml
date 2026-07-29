@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -23,7 +27,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: go.mod
           cache: true
 
       - name: Download Dependencies
@@ -41,7 +45,7 @@ jobs:
         run: go vet ./...
 
       - name: Run Unit Tests
-        run: go test ./... -v
+        run: go test ./...
 
-      - name: Build Provider
+      - name: Verify Provider
         run: go build ./...
