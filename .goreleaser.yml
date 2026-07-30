@@ -1,6 +1,7 @@
 version: 2
 
 project_name: terraform-provider-airtelcloud
+
 dist: dist
 
 before:
@@ -16,11 +17,7 @@ builds:
       - CGO_ENABLED=0
 
     ldflags:
-      - >-
-        -s -w
-        -X main.version={{.Version}}
-        -X main.commit={{.Commit}}
-        -X main.date={{.Date}}    
+      - -s -w
 
     goos:
       - darwin
@@ -37,37 +34,37 @@ builds:
       - "386"
 
     ignore:
-      # Unsupported combinations
+      # Darwin
       - goos: darwin
         goarch: arm
-
       - goos: darwin
         goarch: "386"
 
+      # Solaris
       - goos: solaris
         goarch: arm64
-
       - goos: solaris
         goarch: arm
-
       - goos: solaris
         goarch: "386"
 
+      # OpenBSD
       - goos: openbsd
         goarch: arm
-
       - goos: openbsd
         goarch: arm64
 
+      # Linux
       - goos: linux
         goarch: arm64
 
+      # FreeBSD
       - goos: freebsd
         goarch: arm64
 
+      # Windows
       - goos: windows
         goarch: arm
-
       - goos: windows
         goarch: arm64
 
@@ -96,10 +93,10 @@ changelog:
       - "^chore:"
 
 release:
-
   github:
     owner: Airtel-Cloud-Platform
     name: terraform-provider-airtelcloud
+
   draft: false
   prerelease: auto
   replace_existing_draft: true

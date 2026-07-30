@@ -7,6 +7,8 @@ bin/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
+*.log
+terraform-debug.log
 
 # macOS
 .DS_Store
