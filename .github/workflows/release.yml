@@ -30,13 +30,18 @@ jobs:
           go-version: "1.24.9"
           cache: true
 
-      - name: Verify GoReleaser Config
+      - name: Import GPG Key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Verify GoReleaser Configuration
         uses: goreleaser/goreleaser-action@v6
         with:
           version: v2.17.1
           args: check
 
-      - name: Release
+      - name: Create Release
         uses: goreleaser/goreleaser-action@v6
         with:
           version: v2.17.1

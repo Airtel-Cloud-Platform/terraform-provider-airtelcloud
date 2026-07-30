@@ -37,20 +37,24 @@ builds:
       # Darwin
       - goos: darwin
         goarch: arm
+
       - goos: darwin
         goarch: "386"
 
       # Solaris
       - goos: solaris
         goarch: arm64
+
       - goos: solaris
         goarch: arm
+
       - goos: solaris
         goarch: "386"
 
       # OpenBSD
       - goos: openbsd
         goarch: arm
+
       - goos: openbsd
         goarch: arm64
 
@@ -65,6 +69,7 @@ builds:
       # Windows
       - goos: windows
         goarch: arm
+
       - goos: windows
         goarch: arm64
 
@@ -81,11 +86,28 @@ checksum:
   name_template: SHA256SUMS
   algorithm: sha256
 
+signs:
+  - artifacts: checksum
+
+    cmd: gpg
+
+    signature: "${artifact}.asc"
+
+    args:
+      - --batch
+      - --yes
+      - --armor
+      - --detach-sign
+      - --output
+      - "${signature}"
+      - "${artifact}"
+
 snapshot:
   version_template: "{{ incpatch .Version }}-dev"
 
 changelog:
   sort: asc
+
   filters:
     exclude:
       - "^docs:"
