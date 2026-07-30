@@ -33,13 +33,13 @@ jobs:
       - name: Verify GoReleaser Config
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: latest
+          version: v2.17.1
           args: check
 
       - name: Release
         uses: goreleaser/goreleaser-action@v6
         with:
-          version: latest
+          version: v2.17.1
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
