@@ -29,6 +29,10 @@ resource "airtelcloud_vm" "web_server" {
   disk_size         = 100
   admin_username    = "clouduser"
   admin_password    = var.vm_admin_password
+  enable_backup       = true
+  protection_plan     = "daily"
+  start_date          = "2025-07-15"
+  start_time          = "02:00"
 
   user_data = base64encode(<<-EOF
     #!/bin/bash

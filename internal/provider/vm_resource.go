@@ -178,7 +178,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"admin_username": schema.StringAttribute{
-				MarkdownDescription: "Login username to create on the instance. Only supported when os_type is \"linux\". " +
+				MarkdownDescription: "Login username to create on the instance. Supported only when os_type is \"linux\". " +
 					"Must be set together with admin_password. Mutually exclusive with keypair_id and keypair_name.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
@@ -186,7 +186,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"admin_password": schema.StringAttribute{
-				MarkdownDescription: "Login password for admin_username. Only supported when os_type is \"linux\". " +
+				MarkdownDescription: "Login password for admin_username. Supported only when os_type is \"linux\". " +
 					"Must be set together with admin_username. Mutually exclusive with keypair_id and keypair_name. " +
 					"Stored in plaintext in Terraform state.",
 				Optional:  true,
