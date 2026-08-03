@@ -27,6 +27,11 @@ resource "airtelcloud_subnet" "private" {
     delete = "4m"
   }
 }
+
+output "private_subnet_id" {
+  description = "ID of the private subnet"
+  value       = airtelcloud_subnet.private.id
+}
 ```
 
 ## Argument Reference
