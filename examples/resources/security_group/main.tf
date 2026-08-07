@@ -45,9 +45,24 @@ variable "resource_prefix" {
 }
 
 # Create a security group
+# resource "airtelcloud_security_group" "web" {
+#   security_group_name = "${var.resource_prefix}-sg-http-servers-2"
+#   availability_zone   = "N2"
+# }
+
 resource "airtelcloud_security_group" "web" {
   security_group_name = "${var.resource_prefix}-sg-http-servers"
-  availability_zone   = "N2"
+  availability_zone   = "N1"
+}
+
+resource "airtelcloud_security_group_rule" "http" {
+  security_group_id = airtelcloud_security_group.web.id
+  direction         = "ingress"
+  protocol          = "tcp"
+  port_range_min    = "80"
+  port_range_max    = "80"
+  remote_ip_prefix  = "0.0.0.0/0"
+  ethertype         = "IPv4"
 }
 
 # Output security group details

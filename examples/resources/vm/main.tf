@@ -75,6 +75,10 @@ resource "airtelcloud_vm" "web_server" {
   admin_username      = "clouduser"
   admin_password      = var.vm_admin_password
   description         = "Example web server instance"
+  enable_backup       = true
+  protection_plan     = "daily"
+  start_date          = "2025-07-15"
+  start_time          = "02:00"
 
   tags = {
     Environment = "example"
@@ -82,27 +86,6 @@ resource "airtelcloud_vm" "web_server" {
   }
 }
 
-# The same instance authenticated with an SSH keypair instead:
-#
-# resource "airtelcloud_vm" "web_server_keypair" {
-#   instance_name       = "${var.resource_prefix}-web-keypair"
-#   os_type             = "linux"
-#   flavor_name         = "ccd.Large"
-#   image_name          = "Ubuntu22_04_Jul2026"
-#   vpc_name            = "copper-vpc01"
-#   subnet_name         = "sub1"
-#   boot_from_volume    = true
-#   disk_size           = 100
-#   availability_zone   = "N1"
-#   security_group_name = "all-open-az1"
-#   keypair_name        = var.vm_keypair_name
-#   description         = "Example Linux VM using SSH keypair authentication"
-#
-#   tags = {
-#     Environment = "example"
-#     Role        = "web-server-keypair"
-#   }
-# }
 
 # Create a Windows VM with backup enabled (alternative configuration)
 resource "airtelcloud_vm" "windows_server" {
@@ -111,7 +94,7 @@ resource "airtelcloud_vm" "windows_server" {
   flavor_name         = "ccd.Large"
   image_name          = "WIN2K22_BYOL_Jul2026"
   vpc_name            = "copper-vpc01"
-  subnet_name         = "sub1"
+  subnet_name         = "subnet-az1"
   boot_from_volume    = true
   disk_size           = 200
   availability_zone   = "N1"
@@ -132,11 +115,11 @@ resource "airtelcloud_vm" "windows_server" {
 resource "airtelcloud_volume" "data_volume" {
   name              = "${var.resource_prefix}-storage-volume"
   size              = 50
-  type              = "n1_wkld_ntp02_1iops_backend"
+  type              = "n2_wkld_ntp02_1iops_backend"
   availability_zone = "N1"
   #compute_id = airtelcloud_vm.web_server.id
-  vpc_id       = "66f0fd26-9362-4f52-8d41-10de059e88fb"
-  subnet_id    = "5d5d6aa1-5f24-41c7-bb5b-5c12f7f41c11"
+  vpc_name       = "copper-vpc01"
+  subnet_name    = "subnet-az2"
   is_encrypted = false
   bootable     = false
   depends_on   = [airtelcloud_vm.web_server]

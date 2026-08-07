@@ -14,8 +14,14 @@ Security groups control inbound and outbound traffic for virtual machines. Attac
 ## Example Usage
 
 ```terraform
+variable "resource_prefix" {
+  description = "Prefix for resource names"
+  type        = string
+  default     = "tft"
+}
+
 resource "airtelcloud_security_group" "web" {
-  security_group_name = "web-servers"
+  security_group_name = "${var.resource_prefix}-sg-http-servers"
   availability_zone   = "S1"
 }
 

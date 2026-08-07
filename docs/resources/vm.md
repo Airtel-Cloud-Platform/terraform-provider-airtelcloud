@@ -16,6 +16,12 @@ Uses the v2.1 Compute API with domain/project URL paths. The provider's `organiz
 ### Basic Linux VM
 
 ```terraform
+variable "vm_admin_password" {
+  description = "Login password for the VM admin user"
+  type        = string
+  sensitive   = true
+}
+
 
 resource "airtelcloud_vm" "web_server" {
   instance_name     = "web-server"
@@ -29,6 +35,10 @@ resource "airtelcloud_vm" "web_server" {
   disk_size         = 100
   admin_username    = "clouduser"
   admin_password    = var.vm_admin_password
+  enable_backup       = true
+  protection_plan     = "daily"
+  start_date          = "2025-07-15"
+  start_time          = "02:00"
 
   user_data = base64encode(<<-EOF
     #!/bin/bash

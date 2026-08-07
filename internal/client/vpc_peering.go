@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
@@ -50,6 +51,10 @@ func (c *Client) CreateVPCPeeringWithTimeout(ctx context.Context, req *models.Cr
 
 	// The API returns empty response on success, so find the peering by name
 	deadline := time.Now().Add(timeout)
+	var (
+		foundPeering  bool
+		lastSeenState string
+	)
 
 	for time.Now().Before(deadline) {
 		peerings, err := c.ListVPCPeerings(ctx)
@@ -59,7 +64,18 @@ func (c *Client) CreateVPCPeeringWithTimeout(ctx context.Context, req *models.Cr
 
 		for _, p := range peerings.Items {
 			if p.Name == req.Name {
-				return &p, nil
+				foundPeering = true
+				lastSeenState = p.State
+				peeringCopy := p
+
+				if isVPCPeeringReadyState(p.State) {
+					return &peeringCopy, nil
+				}
+				if isVPCPeeringFailedState(p.State) {
+					return nil, fmt.Errorf("VPC peering %q entered failure state %q", req.Name, p.State)
+				}
+
+				break
 			}
 		}
 
@@ -70,12 +86,51 @@ func (c *Client) CreateVPCPeeringWithTimeout(ctx context.Context, req *models.Cr
 		}
 	}
 
-	return nil, fmt.Errorf("VPC peering created but not found in list after %v", timeout)
+	if foundPeering {
+		return nil, fmt.Errorf("VPC peering %q found but not ready after %v (last state: %q)", req.Name, timeout, lastSeenState)
+	}
+
+	return nil, fmt.Errorf("VPC peering %q created but not found in list after %v", req.Name, timeout)
+}
+
+func normalizeVPCPeeringState(state string) string {
+	return strings.ToLower(strings.TrimSpace(state))
+}
+
+func isVPCPeeringReadyState(state string) bool {
+	switch normalizeVPCPeeringState(state) {
+	case "active", "allocated", "ready", "established", "success", "succeeded", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
+func isVPCPeeringFailedState(state string) bool {
+	switch normalizeVPCPeeringState(state) {
+	case "failed", "error", "errored", "rejected", "terminated", "aborted", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
 }
 
 // DeleteVPCPeering deletes a VPC peering connection using the default timeout.
 func (c *Client) DeleteVPCPeering(ctx context.Context, id string) error {
 	return c.DeleteVPCPeeringWithTimeout(ctx, id, DefaultVPCPeeringTimeout)
+}
+
+// IsVPCPeeringNotFoundError checks for 404 OR the Airtel API's non-standard 500 "failed to find vpc peering"
+// response that is returned instead of 404 when a peering no longer exists.
+func IsVPCPeeringNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if IsNotFoundError(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "failed to find vpc peering")
 }
 
 // DeleteVPCPeeringWithTimeout deletes a VPC peering connection and waits for deletion
