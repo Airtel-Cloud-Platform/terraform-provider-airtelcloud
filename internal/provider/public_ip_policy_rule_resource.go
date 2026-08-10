@@ -194,62 +194,24 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 
 	az := data.AvailabilityZone.ValueString()
 
-	// Resolve service names to UUIDs
-	availableServices, err := r.client.ListIPAMServices(ctx, az)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list IPAM services: %s", err))
-		return
-	}
-
-	serviceUUIDs, err := resolveServiceNamesToUUIDs(serviceNames, availableServices)
-	if err != nil {
-		resp.Diagnostics.AddError("Configuration Error", err.Error())
-		return
-	}
-
 	createReq := &models.CreatePublicIPPolicyRuleRequest{
 		DisplayName: data.DisplayName.ValueString(),
 		Source:      data.Source.ValueString(),
-		ServiceList: serviceUUIDs,
+		ServiceList: serviceNames,
 		Action:      data.Action.ValueString(),
 		TargetVIP:   data.TargetVIP.ValueString(),
 		PublicIP:    data.PublicIP.ValueString(),
 		UUID:        data.PublicIPID.ValueString(),
 	}
 
-	err = r.client.CreatePublicIPPolicyRule(ctx, createReq, az)
+	createdPolicyID, err := r.client.CreatePublicIPPolicyRule(ctx, createReq, az)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create policy rule, got error: %s", err))
 		return
 	}
 
-	// Create response doesn't return rule ID — list rules to find the newly created one
-	rulesResp, err := r.client.ListPublicIPPolicyRules(ctx,
-		data.PublicIPID.ValueString(),
-		data.TargetVIP.ValueString(),
-		data.PublicIP.ValueString(),
-	)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to list policy rules after creation: %s", err))
-		return
-	}
-
-	// Find the rule by display_name
-	var createdRule *models.PublicIPPolicyRule
-	for i := range rulesResp.Items {
-		if rulesResp.Items[i].DisplayName == data.DisplayName.ValueString() {
-			createdRule = &rulesResp.Items[i]
-			break
-		}
-	}
-
-	if createdRule == nil {
-		resp.Diagnostics.AddError("Client Error", "Policy rule created but not found in list response")
-		return
-	}
-
-	data.ID = types.StringValue(createdRule.UUID)
-	data.State = types.StringValue(createdRule.State)
+	data.ID = types.StringValue(createdPolicyID)
+	data.State = types.StringValue("initiated")
 
 	tflog.Trace(ctx, "created public IP policy rule resource")
 
@@ -311,7 +273,11 @@ func (r *PublicIPPolicyRuleResource) Delete(ctx context.Context, req resource.De
 		return
 	}
 
-	err := r.client.DeletePublicIPPolicyRule(ctx, data.ID.ValueString())
+	tflog.Debug(ctx, "Deleting public IP policy rule resource", map[string]interface{}{
+		"public_ip_id": data.PublicIPID.ValueString(),
+		"policy_uuid":  data.ID.ValueString(),
+	})
+	err := r.client.DeletePublicIPPolicyRule(ctx, data.PublicIPID.ValueString(), data.ID.ValueString())
 	if err != nil {
 		if client.IsNotFoundError(err) {
 			return
@@ -336,29 +302,4 @@ func (r *PublicIPPolicyRuleResource) ImportState(ctx context.Context, req resour
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("target_vip"), parts[1])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("public_ip"), parts[2])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[3])...)
-}
-
-// resolveServiceNamesToUUIDs maps service names to their UUIDs
-func resolveServiceNamesToUUIDs(names []string, available []models.IPAMService) ([]string, error) {
-	nameToUUID := make(map[string]string, len(available))
-	for _, svc := range available {
-		nameToUUID[strings.ToUpper(svc.Name)] = svc.UUID
-	}
-
-	uuids := make([]string, 0, len(names))
-	var missing []string
-	for _, name := range names {
-		uuid, ok := nameToUUID[strings.ToUpper(name)]
-		if !ok {
-			missing = append(missing, name)
-			continue
-		}
-		uuids = append(uuids, uuid)
-	}
-
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("unknown services: %s", strings.Join(missing, ", "))
-	}
-
-	return uuids, nil
 }

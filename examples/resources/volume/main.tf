@@ -2,7 +2,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.1.4"
+      version = "1.1.5"
     }
   }
 }
@@ -50,7 +50,7 @@ resource "airtelcloud_volume" "data_volume" {
   size              = 50
   type              = "s1_wkld_ntp02_4iops_backend"
   availability_zone = "S1"
-  compute_id        = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
+  compute_name        = "my-instance" # Name of the compute instance to attach the volume to
   # Or attach by name instead of id (mutually exclusive with compute_id):
   # compute_name    = "my-instance"
 

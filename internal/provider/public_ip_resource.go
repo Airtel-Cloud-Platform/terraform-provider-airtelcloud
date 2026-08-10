@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -41,6 +42,38 @@ type PublicIPResourceModel struct {
 	AZName           types.String   `tfsdk:"az_name"`
 	Region           types.String   `tfsdk:"region"`
 	Timeouts         timeouts.Value `tfsdk:"timeouts"`
+}
+
+// getPublicIPAddr returns the public IP address field used by the provider.
+// It prefers the `public_ip` field returned by the API, falling back to `ip`.
+func getPublicIPAddr(p *models.PublicIP) string {
+	if p == nil {
+		return ""
+	}
+	if p.PublicIP != "" {
+		return p.PublicIP
+	}
+	return p.IP
+}
+
+func getPublicIPAllocatedTime(p *models.PublicIP) string {
+	if p == nil {
+		return ""
+	}
+	if p.AllocatedTime != "" {
+		return p.AllocatedTime
+	}
+	return p.CreatedAt
+}
+
+func getPublicIPAZName(p *models.PublicIP) string {
+	if p == nil {
+		return ""
+	}
+	if p.AZName != "" {
+		return p.AZName
+	}
+	return p.AZ
 }
 
 func (r *PublicIPResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -148,10 +181,23 @@ func (r *PublicIPResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	createReq := &models.CreatePublicIPRequest{
-		ObjectName: data.ObjectName.ValueString(),
-		VIP:        data.VIP.ValueString(),
+	portID, err := r.client.FindPortIDByVIP(ctx, data.VIP.ValueString(), data.AvailabilityZone.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to find port ID for VIP %s: %s", data.VIP.ValueString(), err))
+		return
 	}
+
+	createReq := &models.CreatePublicIPRequest{
+		Name:   data.ObjectName.ValueString(),
+		PortID: portID,
+	}
+
+	tflog.Debug(ctx, "=================Creating public IP", map[string]interface{}{
+		"name":              data.ObjectName.ValueString(),
+		"port_id":           portID,
+		"vip":               data.VIP.ValueString(),
+		"availability_zone": data.AvailabilityZone.ValueString(),
+	})
 
 	created, err := r.client.CreatePublicIP(ctx, createReq, data.AvailabilityZone.ValueString())
 	if err != nil {
@@ -167,37 +213,19 @@ func (r *PublicIPResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	// Look up port_id from compute instances
-	portID, err := r.client.FindPortIDByVIP(ctx, data.VIP.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to find port ID for VIP %s: %s", data.VIP.ValueString(), err))
-		return
-	}
-
-	// Map the public IP with the internal VIP
-	mapReq := &models.MapPublicIPRequest{
-		TargetVIP: data.VIP.ValueString(),
-		PublicIP:  readyIP.IP,
-		UUID:      readyIP.UUID,
-		PortID:    portID,
-	}
-	err = r.client.MapPublicIP(ctx, mapReq, data.AvailabilityZone.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to map public IP to VIP: %s", err))
-		return
-	}
+	publicIP := getPublicIPAddr(readyIP)
 
 	data.ID = types.StringValue(readyIP.UUID)
-	data.PublicIP = types.StringValue(readyIP.IP)
+	data.PublicIP = types.StringValue(publicIP)
 	data.Status = types.StringValue(readyIP.Status)
 	if readyIP.Domain != "" {
 		data.Domain = types.StringValue(readyIP.Domain)
 	}
-	if readyIP.AllocatedTime != "" {
-		data.AllocatedTime = types.StringValue(readyIP.AllocatedTime)
+	if allocatedTime := getPublicIPAllocatedTime(readyIP); allocatedTime != "" {
+		data.AllocatedTime = types.StringValue(allocatedTime)
 	}
-	if readyIP.AZName != "" {
-		data.AZName = types.StringValue(readyIP.AZName)
+	if azName := getPublicIPAZName(readyIP); azName != "" {
+		data.AZName = types.StringValue(azName)
 	}
 	if readyIP.Region != "" {
 		data.Region = types.StringValue(readyIP.Region)
@@ -233,18 +261,19 @@ func (r *PublicIPResource) Read(ctx context.Context, req resource.ReadRequest, r
 	if publicIP.TargetVIP != "" {
 		data.VIP = types.StringValue(publicIP.TargetVIP)
 	}
-	if publicIP.IP != "" {
-		data.PublicIP = types.StringValue(publicIP.IP)
+	publicIPAddr := getPublicIPAddr(publicIP)
+	if publicIPAddr != "" {
+		data.PublicIP = types.StringValue(publicIPAddr)
 	}
 	data.Status = types.StringValue(publicIP.Status)
 	if publicIP.Domain != "" {
 		data.Domain = types.StringValue(publicIP.Domain)
 	}
-	if publicIP.AllocatedTime != "" {
-		data.AllocatedTime = types.StringValue(publicIP.AllocatedTime)
+	if allocatedTime := getPublicIPAllocatedTime(publicIP); allocatedTime != "" {
+		data.AllocatedTime = types.StringValue(allocatedTime)
 	}
-	if publicIP.AZName != "" {
-		data.AZName = types.StringValue(publicIP.AZName)
+	if azName := getPublicIPAZName(publicIP); azName != "" {
+		data.AZName = types.StringValue(azName)
 	}
 	if publicIP.Region != "" {
 		data.Region = types.StringValue(publicIP.Region)
@@ -265,14 +294,122 @@ func (r *PublicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 		return
 	}
 
-	err := r.client.DeletePublicIP(ctx, data.ID.ValueString())
+	deleteClient := r.client
+	if az := data.AvailabilityZone.ValueString(); az != "" {
+		deleteClient = r.client.WithAvailabilityZone(az)
+	} else if azName := data.AZName.ValueString(); azName != "" {
+		// Fallback for legacy state entries where availability_zone may be absent.
+		deleteClient = r.client.WithAvailabilityZone(azName)
+	}
+
+	// Best-effort pre-cleanup for policies that may exist even when policy resources
+	// are not tracked in state (for example, interrupted applies/import gaps).
+	r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
+
+	err := deleteClient.DeletePublicIP(ctx, data.ID.ValueString())
 	if err != nil {
+		// If backend reports attached policies, perform one targeted cleanup attempt
+		// and retry the public IP delete once.
+		if isPublicIPPolicyConflictError(err) {
+			r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
+			if retryErr := deleteClient.DeletePublicIP(ctx, data.ID.ValueString()); retryErr == nil {
+				return
+			} else {
+				err = retryErr
+			}
+		}
+
 		if client.IsNotFoundError(err) {
 			return
 		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete public IP, got error: %s", err))
 		return
 	}
+}
+
+func (r *PublicIPResource) cleanupAttachedPublicIPPolicies(ctx context.Context, c *client.Client, data PublicIPResourceModel) {
+	publicIPID := strings.TrimSpace(data.ID.ValueString())
+	if publicIPID == "" {
+		return
+	}
+
+	targetVIP := strings.TrimSpace(data.VIP.ValueString())
+	publicIPAddr := strings.TrimSpace(data.PublicIP.ValueString())
+
+	if targetVIP == "" || publicIPAddr == "" {
+		current, err := c.GetPublicIP(ctx, publicIPID)
+		if err == nil && current != nil {
+			if targetVIP == "" {
+				targetVIP = strings.TrimSpace(current.TargetVIP)
+			}
+			if publicIPAddr == "" {
+				publicIPAddr = strings.TrimSpace(getPublicIPAddr(current))
+			}
+		} else if err != nil {
+			tflog.Warn(ctx, "PublicIP delete: failed to refresh public IP details for policy cleanup", map[string]interface{}{
+				"public_ip_id": publicIPID,
+				"error":        err.Error(),
+			})
+		}
+	}
+
+	if targetVIP == "" || publicIPAddr == "" {
+		tflog.Warn(ctx, "PublicIP delete: skipping policy cleanup due missing lookup keys", map[string]interface{}{
+			"public_ip_id": publicIPID,
+			"target_vip":   targetVIP,
+			"public_ip":    publicIPAddr,
+		})
+		return
+	}
+
+	rules, err := c.ListPublicIPPolicyRules(ctx, publicIPID, targetVIP, publicIPAddr)
+	if err != nil {
+		tflog.Warn(ctx, "PublicIP delete: failed to list attached policy rules", map[string]interface{}{
+			"public_ip_id": publicIPID,
+			"target_vip":   targetVIP,
+			"public_ip":    publicIPAddr,
+			"error":        err.Error(),
+		})
+		return
+	}
+
+	for _, rule := range rules.Items {
+		ruleID := strings.TrimSpace(rule.UUID)
+		if ruleID == "" {
+			continue
+		}
+
+		if err := c.DeletePublicIPPolicyRule(ctx, publicIPID, ruleID); err != nil {
+			if client.IsNotFoundError(err) {
+				continue
+			}
+			tflog.Warn(ctx, "PublicIP delete: failed to delete attached policy rule", map[string]interface{}{
+				"public_ip_id": publicIPID,
+				"policy_id":    ruleID,
+				"error":        err.Error(),
+			})
+			continue
+		}
+
+		tflog.Debug(ctx, "PublicIP delete: deleted attached policy rule", map[string]interface{}{
+			"public_ip_id": publicIPID,
+			"policy_id":    ruleID,
+		})
+	}
+}
+
+func isPublicIPPolicyConflictError(err error) bool {
+	apiErr, ok := err.(*client.APIError)
+	if !ok {
+		return false
+	}
+
+	if apiErr.StatusCode != 409 {
+		return false
+	}
+
+	msg := strings.ToLower(strings.TrimSpace(apiErr.Message))
+	return strings.Contains(msg, "polic") || strings.Contains(msg, "policy")
 }
 
 func (r *PublicIPResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

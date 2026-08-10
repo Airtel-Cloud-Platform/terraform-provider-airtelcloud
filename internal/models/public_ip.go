@@ -12,25 +12,21 @@ type PublicIP struct {
 	OrgID           string `json:"org_id,omitempty"`
 	OrgName         string `json:"org_name,omitempty"`
 	AllocatedTime   string `json:"allocated_time,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
 	DeallocatedTime string `json:"deallocated_time,omitempty"`
 	AZName          string `json:"az_name,omitempty"`
+	AZ              string `json:"az,omitempty"`
 	ProjectName     string `json:"project_name,omitempty"`
 	Region          string `json:"region,omitempty"`
 	Status          string `json:"status,omitempty"`
 }
 
 // CreatePublicIPRequest represents the request to allocate a public IP
+// using the new TCPWave flow: allocation is done by port id, and the backend
+// handles VIP object creation and static route setup.
 type CreatePublicIPRequest struct {
-	ObjectName string `json:"object_name"`
-	VIP        string `json:"vip"`
-}
-
-// MapPublicIPRequest represents the request to map a public IP with an internal VIP
-type MapPublicIPRequest struct {
-	TargetVIP string `json:"target_vip"`
-	PublicIP  string `json:"public_ip"`
-	UUID      string `json:"uuid"`
-	PortID    int    `json:"port_id"`
+	Name   string `json:"name"`
+	PortID int    `json:"port_id"`
 }
 
 // PublicIPListResponse represents the paginated list response for public IPs
@@ -81,4 +77,12 @@ type IPAMService struct {
 	AZName      string  `json:"az_name,omitempty"`
 	IsDefault   bool    `json:"is_default"`
 	CreatedAt   *string `json:"created_at"`
+}
+
+// NetworkVIPPort represents LB VIP-to-port mapping from the networks VIPs API.
+type NetworkVIPPort struct {
+	LBName           string `json:"lb_name,omitempty"`
+	VSName           string `json:"vs_name,omitempty"`
+	PortID           int    `json:"port_id"`
+	AllowedIPAddress string `json:"allowed_ip_address,omitempty"`
 }

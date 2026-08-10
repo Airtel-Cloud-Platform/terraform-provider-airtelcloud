@@ -7,7 +7,7 @@ set -euo pipefail
 # Version Update Utility
 #
 # Usage:
-#   ./scripts/update-version.sh 1.1.4
+#   ./scripts/update-version.sh 1.1.5
 #############################################
 
 if [[ $# -ne 1 ]]; then
@@ -19,7 +19,7 @@ VERSION="$1"
 
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "ERROR: Invalid version '$VERSION'"
-    echo "Expected format: X.Y.Z (example: 1.1.4)"
+    echo "Expected format: X.Y.Z (example: 1.1.5)"
     exit 1
 fi
 

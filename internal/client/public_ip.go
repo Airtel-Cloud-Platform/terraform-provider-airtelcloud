@@ -2,71 +2,291 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
+
+	"strings"
 	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
+type sourceOfTruthPublicIPPolicyService struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+}
+
+type sourceOfTruthCreatePublicIPPolicyRequest struct {
+	ResourceType string                               `json:"resource_type"`
+	RuleName     string                               `json:"rule_name"`
+	Source       []string                             `json:"source"`
+	Services     []sourceOfTruthPublicIPPolicyService `json:"services"`
+	Action       string                               `json:"action"`
+	RevisionNote string                               `json:"revision_note"`
+}
+
+type sourceOfTruthCreatePublicIPPolicyResponse struct {
+	Message string `json:"message"`
+	Data    struct {
+		UUID string `json:"uuid"`
+	} `json:"data"`
+}
+
+type sourceOfTruthPublicIPPolicyRuleDetailResponse struct {
+	Message string `json:"message"`
+	Data    struct {
+		UUID     string `json:"uuid"`
+		RuleName string `json:"rule_name"`
+		State    string `json:"state"`
+		Status   string `json:"status"`
+		Action   string `json:"action"`
+		Source   []struct {
+			All        bool   `json:"all,omitempty"`
+			IPCIDR     string `json:"ip_cidr,omitempty"`
+			Geographic any    `json:"geographic,omitempty"`
+		} `json:"source"`
+		Services []struct {
+			Name string `json:"name"`
+		} `json:"services"`
+	} `json:"data"`
+}
+
+type sourceOfTruthDeletePublicIPPolicyRequest struct {
+	PolicyIDs []string `json:"policy_ids"`
+}
+
 // ipamBasePath returns the base path for IPAM (public IP) endpoints
 func (c *Client) ipamBasePath() string {
-	return fmt.Sprintf("/v1/ipam/domain/%s/project/%s", c.Organization, c.ProjectName)
+	return fmt.Sprintf("/ext/api/v1/domain/%s/project/%s/public-ip", c.Organization, c.ProjectName)
 }
 
 // CreatePublicIP allocates a new public IP in the specified availability zone
 func (c *Client) CreatePublicIP(ctx context.Context, req *models.CreatePublicIPRequest, availabilityZone string) (*models.PublicIP, error) {
 	scopedClient := c.WithAvailabilityZone(availabilityZone)
 
-	var publicIP models.PublicIP
-	err := scopedClient.Post(ctx, scopedClient.ipamBasePath(), req, &publicIP)
+	tflog.Debug(ctx, "CreatePublicIP request", map[string]interface{}{
+		"availability_zone": availabilityZone,
+		"request_body":      fmt.Sprintf("%+v", req),
+	})
+
+	// The IPAM create endpoint wraps the actual payload under "data".
+	// Decode the wrapper so created.UUID is correctly populated.
+	var createResp struct {
+		Message string          `json:"message"`
+		Data    models.PublicIP `json:"data"`
+	}
+	err := scopedClient.Post(ctx, scopedClient.ipamBasePath(), req, &createResp)
 	if err != nil {
 		return nil, err
 	}
-	return &publicIP, nil
+	return &createResp.Data, nil
 }
 
 // FindPortIDByVIP lists all compute instances and returns the port ID
 // whose fixed_ips contain the given VIP address.
-func (c *Client) FindPortIDByVIP(ctx context.Context, vip string) (int, error) {
-	computes, err := c.ListComputes(ctx)
+func (c *Client) FindPortIDByVIP(ctx context.Context, vip, availabilityZone string) (int, error) {
+	scopedClient := c.WithAvailabilityZone(availabilityZone)
+
+	normalizedVIP := net.ParseIP(strings.TrimSpace(vip))
+	if normalizedVIP == nil {
+		return 0, fmt.Errorf("invalid VIP address %q", vip)
+	}
+
+	// Preferred LB lookup path: networks VIPs API exposes allowed_ip_address to port_id
+	// mappings directly and is reliable for load-balancer VIPs.
+	if lbPortID, lbFound, err := scopedClient.findNetworkVipPortIDByVIP(ctx, normalizedVIP); err != nil {
+		tflog.Warn(ctx, "FindPortIDByVIP: networks VIP lookup failed; falling back", map[string]interface{}{
+			"availability_zone": availabilityZone,
+			"vip":               normalizedVIP.String(),
+			"error":             err.Error(),
+		})
+	} else if lbFound {
+		return lbPortID, nil
+	}
+
+	// LB VIPs are not always represented in compute port listings. Try the
+	// LB VIP API first and return immediately when a matching VIP is found.
+	if lbPortID, lbFound, err := scopedClient.findLBVipPortIDByVIP(ctx, normalizedVIP, availabilityZone); err != nil {
+		tflog.Warn(ctx, "FindPortIDByVIP: LB VIP lookup failed; falling back to compute scan", map[string]interface{}{
+			"availability_zone": availabilityZone,
+			"vip":               normalizedVIP.String(),
+			"error":             err.Error(),
+		})
+	} else if lbFound {
+		return lbPortID, nil
+	}
+
+	computes, err := scopedClient.ListComputes(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("failed to list computes to find port for VIP %s: %w", vip, err)
+		return 0, fmt.Errorf("failed to list computes to find port for VIP %s in availability zone %s: %w", vip, availabilityZone, err)
+	}
+
+	tflog.Debug(ctx, "FindPortIDByVIP: listing computes", map[string]interface{}{
+		"availability_zone": availabilityZone,
+		"compute_count":     len(computes),
+		"searched_vip":      normalizedVIP.String(),
+	})
+
+	matchInPorts := func(ports []models.Port) (int, bool) {
+		for _, port := range ports {
+			for _, fixedIP := range port.FixedIPs {
+				parsedFixedIP := net.ParseIP(strings.TrimSpace(fixedIP))
+				if parsedFixedIP == nil {
+					continue
+				}
+
+				tflog.Debug(ctx, "FindPortIDByVIP: checking fixed IP", map[string]interface{}{
+					"port_id":  port.ID,
+					"fixed_ip": parsedFixedIP.String(),
+					"vip":      normalizedVIP.String(),
+				})
+
+				if parsedFixedIP.Equal(normalizedVIP) {
+					return port.ID, true
+				}
+			}
+		}
+
+		return 0, false
 	}
 
 	for _, compute := range computes {
-		for _, port := range compute.Ports {
-			for _, fixedIP := range port.FixedIPs {
-				if fixedIP == vip {
-					return port.ID, nil
+		if portID, ok := matchInPorts(compute.Ports); ok {
+			return portID, nil
+		}
+
+		if len(compute.Ports) == 0 && compute.ID != "" {
+			fullCompute, err := scopedClient.GetCompute(ctx, compute.ID)
+			if err != nil {
+				tflog.Warn(ctx, "FindPortIDByVIP: failed to fetch full compute details", map[string]interface{}{
+					"compute_id": compute.ID,
+					"error":      err.Error(),
+				})
+				continue
+			}
+
+			tflog.Debug(ctx, "FindPortIDByVIP: fetched full compute details", map[string]interface{}{
+				"compute_id":  compute.ID,
+				"ports_count": len(fullCompute.Ports),
+			})
+
+			if portID, ok := matchInPorts(fullCompute.Ports); ok {
+				return portID, nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("no port found with fixed_ip matching VIP %s in availability zone %s", normalizedVIP.String(), availabilityZone)
+}
+
+func (c *Client) networkPortsVipsBasePath() string {
+	return fmt.Sprintf("/api/v2.1/networks/domain/%s/project/%s/networks/ports/vips", c.Organization, c.ProjectName)
+}
+
+func (c *Client) findNetworkVipPortIDByVIP(ctx context.Context, vip net.IP) (int, bool, error) {
+	var mappings []models.NetworkVIPPort
+	if err := c.Get(ctx, c.networkPortsVipsBasePath(), &mappings); err != nil {
+		return 0, false, fmt.Errorf("failed to list network VIP ports for VIP %s: %w", vip.String(), err)
+	}
+
+	tflog.Debug(ctx, "FindPortIDByVIP: listing network VIP ports", map[string]interface{}{
+		"mapping_count": len(mappings),
+		"searched_vip":  vip.String(),
+	})
+
+	for _, item := range mappings {
+		parsedAllowedIP := net.ParseIP(strings.TrimSpace(item.AllowedIPAddress))
+		if parsedAllowedIP == nil {
+			continue
+		}
+
+		tflog.Debug(ctx, "FindPortIDByVIP: checking network VIP mapping", map[string]interface{}{
+			"lb_name":              item.LBName,
+			"vs_name":              item.VSName,
+			"port_id":              item.PortID,
+			"allowed_ip_address":   parsedAllowedIP.String(),
+			"searched_vip_address": vip.String(),
+		})
+
+		if parsedAllowedIP.Equal(vip) {
+			return item.PortID, true, nil
+		}
+	}
+
+	return 0, false, nil
+}
+
+func (c *Client) findLBVipPortIDByVIP(ctx context.Context, vip net.IP, availabilityZone string) (int, bool, error) {
+	services, err := c.ListLBServices(ctx)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to list LB services for VIP %s: %w", vip.String(), err)
+	}
+
+	tflog.Debug(ctx, "FindPortIDByVIP: listing LB services", map[string]interface{}{
+		"availability_zone": availabilityZone,
+		"service_count":     len(services),
+		"searched_vip":      vip.String(),
+	})
+
+	normalizedAZ := strings.TrimSpace(availabilityZone)
+	for _, svc := range services {
+		if normalizedAZ != "" && svc.AZName != "" && !strings.EqualFold(strings.TrimSpace(svc.AZName), normalizedAZ) {
+			continue
+		}
+
+		lbScopedClient := c
+		if strings.TrimSpace(svc.NetworkID) != "" {
+			lbScopedClient = c.WithSubnetID(strings.TrimSpace(svc.NetworkID))
+		}
+
+		lbVips, err := lbScopedClient.ListLBVips(ctx, svc.ID)
+		if err != nil {
+			tflog.Warn(ctx, "FindPortIDByVIP: failed to list LB VIPs for service", map[string]interface{}{
+				"lb_service_id": svc.ID,
+				"network_id":    svc.NetworkID,
+				"error":         err.Error(),
+			})
+			continue
+		}
+
+		for _, lbVIP := range lbVips {
+			for _, fixedIP := range lbVIP.FixedIPs {
+				parsedFixedIP := net.ParseIP(strings.TrimSpace(fixedIP))
+				if parsedFixedIP == nil {
+					continue
+				}
+
+				tflog.Debug(ctx, "FindPortIDByVIP: checking LB VIP fixed IP", map[string]interface{}{
+					"lb_service_id": svc.ID,
+					"vip_port_id":   lbVIP.ID,
+					"fixed_ip":      parsedFixedIP.String(),
+					"vip":           vip.String(),
+				})
+
+				if parsedFixedIP.Equal(vip) {
+					return lbVIP.ID, true, nil
 				}
 			}
 		}
 	}
 
-	return 0, fmt.Errorf("no port found with fixed_ip matching VIP %s", vip)
-}
-
-// MapPublicIP associates a public IP with an internal VIP by creating a vip_object mapping
-func (c *Client) MapPublicIP(ctx context.Context, req *models.MapPublicIPRequest, availabilityZone string) error {
-	scopedClient := c.WithAvailabilityZone(availabilityZone)
-
-	var result map[string]interface{}
-	err := scopedClient.Post(ctx, fmt.Sprintf("%s/vip_object", scopedClient.ipamAdminBasePath()), req, &result)
-	if err != nil {
-		return fmt.Errorf("failed to map public IP: %w", err)
-	}
-	return nil
+	return 0, false, nil
 }
 
 // GetPublicIP retrieves a public IP by UUID
 func (c *Client) GetPublicIP(ctx context.Context, uuid string) (*models.PublicIP, error) {
-	var publicIP models.PublicIP
-	err := c.Get(ctx, fmt.Sprintf("%s/%s", c.ipamBasePath(), uuid), &publicIP)
+	var response struct {
+		Message string          `json:"message"`
+		Data    models.PublicIP `json:"data"`
+	}
+	err := c.Get(ctx, fmt.Sprintf("%s/%s", c.ipamBasePath(), uuid), &response)
 	if err != nil {
 		return nil, err
 	}
-	return &publicIP, nil
+	return &response.Data, nil
 }
 
 // ListPublicIPs retrieves all public IPs
@@ -116,61 +336,240 @@ func (c *Client) ipamAdminBasePath() string {
 	return "/api/v1/admin/ipam_vip"
 }
 
+func (c *Client) publicIPPolicyBasePath(publicIPUUID string) string {
+	return fmt.Sprintf("/ext/api/v1/domain/%s/project/%s/public-ip-id/%s/policy", c.Organization, c.ProjectName, publicIPUUID)
+}
+
 // ListIPAMServices retrieves available services/ports for policy rules
 func (c *Client) ListIPAMServices(ctx context.Context, availabilityZone string) ([]models.IPAMService, error) {
 	scopedClient := c.WithAvailabilityZone(availabilityZone)
 
 	var services []models.IPAMService
-	err := scopedClient.Get(ctx, fmt.Sprintf("%s/ipam_port", scopedClient.ipamAdminBasePath()), &services)
+	err := scopedClient.Get(ctx, "/api/v1/admin/ipam_vip/ipam_port?port_type=all", &services)
 	if err != nil {
 		return nil, err
 	}
 	return services, nil
 }
 
-// CreatePublicIPPolicyRule creates a NAT policy rule for a public IP
-func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.CreatePublicIPPolicyRuleRequest, availabilityZone string) error {
+// CreatePublicIPPolicyRule creates a NAT policy rule for a public IP and returns the created policy UUID.
+func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.CreatePublicIPPolicyRuleRequest, availabilityZone string) (string, error) {
 	scopedClient := c.WithAvailabilityZone(availabilityZone)
 
-	var result map[string]interface{}
-	err := scopedClient.Post(ctx, fmt.Sprintf("%s/nat_rule", scopedClient.ipamAdminBasePath()), req, &result)
-	if err != nil {
-		return err
+	policySource := []string{"all"}
+	if source := strings.TrimSpace(strings.ToLower(req.Source)); source != "" && source != "any" && source != "all" {
+		policySource = []string{source}
 	}
-	return nil
+
+	policyServices := make([]sourceOfTruthPublicIPPolicyService, 0, len(req.ServiceList))
+	for _, service := range req.ServiceList {
+		name := strings.TrimSpace(service)
+		if name == "" {
+			continue
+		}
+		policyServices = append(policyServices, sourceOfTruthPublicIPPolicyService{
+			Name:      name,
+			IsDefault: false,
+		})
+	}
+	if len(policyServices) == 0 {
+		policyServices = []sourceOfTruthPublicIPPolicyService{{Name: "ALL", IsDefault: false}}
+	}
+
+	payload := sourceOfTruthCreatePublicIPPolicyRequest{
+		ResourceType: "ipam",
+		RuleName:     req.DisplayName,
+		Source:       policySource,
+		Services:     policyServices,
+		Action:       req.Action,
+		RevisionNote: "creating Policy",
+	}
+
+	policyPath := scopedClient.publicIPPolicyBasePath(req.UUID)
+	tflog.Debug(ctx, "CreatePublicIPPolicyRule: creating policy rule via source-of-truth route", map[string]interface{}{
+		"public_ip_id":       req.UUID,
+		"availability_zone":  availabilityZone,
+		"rule_name":          req.DisplayName,
+		"source":             payload.Source,
+		"service_name_count": len(payload.Services),
+		"action":             req.Action,
+		"policy_path":        policyPath,
+	})
+
+	/*
+		Legacy create path retained for reference:
+		- Endpoint: /api/v1/admin/ipam_vip/nat_rule
+		- Payload shape: {display_name, source, service_list, action, target_vip, public_ip, uuid}
+	*/
+
+	var result sourceOfTruthCreatePublicIPPolicyResponse
+	if err := scopedClient.Post(ctx, policyPath, &payload, &result); err != nil {
+		return "", err
+	}
+
+	policyUUID := strings.TrimSpace(result.Data.UUID)
+	if policyUUID == "" {
+		return "", fmt.Errorf("policy creation succeeded but response did not contain policy UUID")
+	}
+
+	return policyUUID, nil
 }
 
 // ListPublicIPPolicyRules lists all policy rules for a public IP
 func (c *Client) ListPublicIPPolicyRules(ctx context.Context, publicIPUUID, targetVIP, publicIP string) (*models.PublicIPPolicyRuleListResponse, error) {
+	tflog.Debug(ctx, "ListPublicIPPolicyRules: requesting policy list via admin ipam route", map[string]interface{}{
+		"public_ip_id": publicIPUUID,
+		"target_vip":   targetVIP,
+		"public_ip":    publicIP,
+	})
+
 	var response models.PublicIPPolicyRuleListResponse
-	path := fmt.Sprintf("%s/%s/rules?offset=0&limit=1000&target_vip=%s&public_ip=%s",
-		c.ipamAdminBasePath(), publicIPUUID, targetVIP, publicIP)
+
+	q := url.Values{}
+	q.Set("offset", "0")
+	q.Set("limit", "1000")
+	q.Set("target_vip", targetVIP)
+	q.Set("public_ip", publicIP)
+
+	path := fmt.Sprintf("%s/%s/rules?%s", c.ipamAdminBasePath(), publicIPUUID, q.Encode())
 	err := c.Get(ctx, path, &response)
 	if err != nil {
 		return nil, err
 	}
+	tflog.Debug(ctx, "ListPublicIPPolicyRules: admin ipam response received", map[string]interface{}{
+		"public_ip_id": publicIPUUID,
+		"count":        len(response.Items),
+	})
+
 	return &response, nil
 }
 
-// GetPublicIPPolicyRule retrieves a specific policy rule by listing and filtering by rule UUID
+// GetPublicIPPolicyRule retrieves a specific policy rule by UUID.
 func (c *Client) GetPublicIPPolicyRule(ctx context.Context, publicIPUUID, targetVIP, publicIP, ruleUUID string) (*models.PublicIPPolicyRule, error) {
-	response, err := c.ListPublicIPPolicyRules(ctx, publicIPUUID, targetVIP, publicIP)
+	tflog.Debug(ctx, "GetPublicIPPolicyRule: requesting policy via source-of-truth route", map[string]interface{}{
+		"public_ip_id": publicIPUUID,
+		"policy_uuid":  ruleUUID,
+		"target_vip":   targetVIP,
+		"public_ip":    publicIP,
+		"policy_path":  fmt.Sprintf("%s/%s", c.publicIPPolicyBasePath(publicIPUUID), ruleUUID),
+	})
+
+	path := fmt.Sprintf("%s/%s", c.publicIPPolicyBasePath(publicIPUUID), ruleUUID)
+
+	var response sourceOfTruthPublicIPPolicyRuleDetailResponse
+	err := c.Get(ctx, path, &response)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, rule := range response.Items {
-		if rule.UUID == ruleUUID {
-			return &rule, nil
-		}
+	if strings.TrimSpace(response.Data.UUID) == "" {
+		return nil, &APIError{StatusCode: 404, Message: "policy rule not found"}
 	}
 
-	return nil, &APIError{StatusCode: 404, Message: "policy rule not found"}
+	rule := &models.PublicIPPolicyRule{
+		UUID:        response.Data.UUID,
+		DisplayName: response.Data.RuleName,
+		SourceIP:    extractPolicyRuleSource(response.Data.Source),
+		Services:    extractPolicyRuleServices(response.Data.Services),
+		Action:      response.Data.Action,
+		State:       extractPolicyRuleState(response.Data.State, response.Data.Status),
+	}
+
+	tflog.Debug(ctx, "GetPublicIPPolicyRule: fetched policy via source-of-truth route", map[string]interface{}{
+		"public_ip_id":  publicIPUUID,
+		"policy_uuid":   rule.UUID,
+		"state":         rule.State,
+		"service_count": len(rule.Services),
+	})
+
+	return rule, nil
 }
 
 // DeletePublicIPPolicyRule deletes a NAT policy rule
-func (c *Client) DeletePublicIPPolicyRule(ctx context.Context, ruleUUID string) error {
-	return c.Delete(ctx, fmt.Sprintf("%s/nat_rule/%s", c.ipamAdminBasePath(), ruleUUID))
+func (c *Client) DeletePublicIPPolicyRule(ctx context.Context, publicIPUUID, ruleUUID string) error {
+	path := c.publicIPPolicyBasePath(publicIPUUID)
+	payload := sourceOfTruthDeletePublicIPPolicyRequest{PolicyIDs: []string{ruleUUID}}
+
+	tflog.Debug(ctx, "DeletePublicIPPolicyRule: deleting rule via source-of-truth route", map[string]interface{}{
+		"public_ip_id": publicIPUUID,
+		"policy_uuid":  ruleUUID,
+		"policy_path":  path,
+	})
+
+	return c.DeleteWithBody(ctx, path, &payload, nil)
+}
+
+// Legacy retry settings retained for backwards-compatible unit tests.
+const publicIPPolicyRuleCreateRetryMaxAttempts = 6
+
+// Legacy retry backoff retained for backwards-compatible unit tests.
+var publicIPPolicyRuleCreateRetryBackoff = 5 * time.Second
+
+// Legacy helper retained for backwards-compatible unit tests.
+func isPublicIPPolicyRuleRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.StatusCode != 400 {
+		return false
+	}
+
+	message := strings.ToLower(apiErr.Message)
+	return strings.Contains(message, "public ip allocation") && strings.Contains(message, "in progress")
+}
+
+func isAPIErrorStatus(err error, statusCode int) bool {
+	if err == nil {
+		return false
+	}
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+
+	return apiErr.StatusCode == statusCode
+}
+
+func extractPolicyRuleSource(source []struct {
+	All        bool   `json:"all,omitempty"`
+	IPCIDR     string `json:"ip_cidr,omitempty"`
+	Geographic any    `json:"geographic,omitempty"`
+}) string {
+	for _, entry := range source {
+		if entry.All {
+			return "any"
+		}
+		if entry.IPCIDR != "" {
+			return entry.IPCIDR
+		}
+	}
+	return ""
+}
+
+func extractPolicyRuleServices(services []struct {
+	Name string `json:"name"`
+}) []string {
+	names := make([]string, 0, len(services))
+	for _, service := range services {
+		if strings.TrimSpace(service.Name) == "" {
+			continue
+		}
+		names = append(names, service.Name)
+	}
+	return names
+}
+
+func extractPolicyRuleState(state, status string) string {
+	if strings.TrimSpace(status) != "" {
+		return status
+	}
+	return state
 }
 
 // WaitForPublicIPReady polls until the public IP reaches "Created" status

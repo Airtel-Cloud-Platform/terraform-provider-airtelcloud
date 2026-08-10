@@ -68,6 +68,16 @@ func NewClient(endpoint, apiKey, apiSecret, region, organization, projectName, s
 		SubnetID:     subnetID,
 		HTTPClient: &http.Client{
 			Timeout: 120 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				// Some backend flows redirect to internal service DNS names such as
+				// ccp-extension:8000. Rewrite those redirects to the configured
+				// public API endpoint so clients outside that network can proceed.
+				if strings.EqualFold(req.URL.Hostname(), "ccp-extension") {
+					req.URL.Scheme = baseURL.Scheme
+					req.URL.Host = baseURL.Host
+				}
+				return nil
+			},
 		},
 		UserAgent: "terraform-provider-airtelcloud/0.3.0",
 	}, nil
@@ -151,9 +161,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 	req.Header.Set("Ce-Auth", c.generateHMACAuth())
 	req.Header.Set("ce-region", c.Region)
 
-	// Add organization header if specified
+	// Add organization headers if specified
 	if c.Organization != "" {
 		req.Header.Set("organisation-name", c.Organization)
+		req.Header.Set("organisation-id", c.Organization)
 	}
 
 	// Add project name header if specified
@@ -169,6 +180,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 	// Add availability zone header if specified
 	if c.AvailabilityZone != "" {
 		req.Header.Set("ce-availability-zone", c.AvailabilityZone)
+		req.Header.Set("x-az", c.AvailabilityZone)
 	}
 
 	// Log request details in debug mode
@@ -293,9 +305,10 @@ func (c *Client) doFormRequest(ctx context.Context, method, path string, formDat
 	req.Header.Set("Ce-Auth", c.generateHMACAuth())
 	req.Header.Set("ce-region", c.Region)
 
-	// Add organization header if specified
+	// Add organization headers if specified
 	if c.Organization != "" {
 		req.Header.Set("organisation-name", c.Organization)
+		req.Header.Set("organisation-id", c.Organization)
 	}
 
 	// Add project name header if specified
@@ -311,6 +324,7 @@ func (c *Client) doFormRequest(ctx context.Context, method, path string, formDat
 	// Add availability zone header if specified
 	if c.AvailabilityZone != "" {
 		req.Header.Set("ce-availability-zone", c.AvailabilityZone)
+		req.Header.Set("x-az", c.AvailabilityZone)
 	}
 
 	// Log form request details in debug mode
@@ -622,9 +636,10 @@ func (c *Client) doURLEncodedFormRequest(ctx context.Context, method, path strin
 	req.Header.Set("Ce-Auth", c.generateHMACAuth())
 	req.Header.Set("ce-region", c.Region)
 
-	// Add organization header if specified
+	// Add organization headers if specified
 	if c.Organization != "" {
 		req.Header.Set("organisation-name", c.Organization)
+		req.Header.Set("organisation-id", c.Organization)
 	}
 
 	// Add project name header if specified
@@ -791,6 +806,33 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 	return nil
 }
 
+// DeleteWithBody performs a DELETE request with a JSON body.
+func (c *Client) DeleteWithBody(ctx context.Context, path string, body interface{}, v interface{}) error {
+	resp, err := c.doRequest(ctx, "DELETE", path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if v != nil {
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			tflog.Error(ctx, "Failed to read DELETE response body", map[string]interface{}{
+				"error": readErr.Error(),
+			})
+			return readErr
+		}
+
+		tflog.Debug(ctx, "DELETE response body", map[string]interface{}{
+			"body": string(bodyBytes),
+		})
+
+		return json.Unmarshal(bodyBytes, v)
+	}
+
+	return nil
+}
+
 // DeleteURLEncodedForm performs a DELETE request with application/x-www-form-urlencoded encoding
 func (c *Client) DeleteURLEncodedForm(ctx context.Context, path string, formData map[string]interface{}) error {
 	resp, err := c.doURLEncodedFormRequest(ctx, "DELETE", path, formData)
@@ -875,6 +917,7 @@ func (c *Client) doQueryParamRequest(ctx context.Context, method, path string, p
 
 	if c.Organization != "" {
 		req.Header.Set("organisation-name", c.Organization)
+		req.Header.Set("organisation-id", c.Organization)
 	}
 	if c.ProjectName != "" {
 		req.Header.Set("Project-Name", c.ProjectName)

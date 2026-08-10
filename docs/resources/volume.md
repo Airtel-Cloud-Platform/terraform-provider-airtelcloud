@@ -81,7 +81,8 @@ resource "airtelcloud_volume" "data" {
 
 - `volume_name` (String) - The name of the volume.
 - `volume_size` (Number) - The size of the volume in GB.
-- `type` (String) - The type of the volume (validated against active block storage volume types).
+- `type` (String) - The type of the volume (validated against active block storage volume types). Valid types per availability zone:
+  - **S2**: `s2_wkld_ntp02_1iops_backend`, `s2_wkld_ntp02_3iops_backend`, `s2_wkld_ntp02_5iops_backend`, `s2_wkld_root_gen_backend`, `s2_wkld_ntp02_3iops_backend_active`
 - `availability_zone` (String) - The availability zone where the volume is placed.
 - `vpc_id` (String) - The VPC network ID for the volume. Forces replacement if changed.
 - `subnet_id` (String) - The subnet ID for the volume. Forces replacement if changed.
