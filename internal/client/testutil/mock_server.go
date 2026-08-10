@@ -118,11 +118,12 @@ func (ms *MockServer) setupDefaultHandlers() {
 	ms.Handlers["DELETE /ext/api/v1/domain/test-org/project/test-project/public-ip/test-public-ip-uuid"] = ms.deletePublicIPHandler
 
 	// Public IP Policy Rule handlers
+	ms.Handlers["GET /api/v1/admin/ipam_vip/ipam_port"] = ms.listIPAMServicesHandler
 	ms.Handlers["POST /api/v1/admin/ipam_vip/nat_rule"] = ms.createPublicIPPolicyRuleHandler
 	ms.Handlers["POST /api/v1/admin/ipam_vip/vip_object"] = ms.mapPublicIPHandler
 	ms.Handlers["GET /api/v1/admin/ipam_vip/test-public-ip-uuid/rules"] = ms.listPublicIPPolicyRulesHandler
 	ms.Handlers["DELETE /api/v1/admin/ipam_vip/nat_rule/test-public-ip-uuid-1"] = ms.deletePublicIPPolicyRuleHandler
-	ms.Handlers["GET /api/v1/admin/ipam_vip/ipam_port"] = ms.listIPAMServicesHandler
+	ms.Handlers["DELETE /ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy"] = ms.deletePublicIPPolicyRuleHandler
 
 	// LB Virtual Server handlers
 	ms.Handlers["POST /api/v2.1/load-balancers/domain/test-org/project/test-project/load-balancers/lb-svc-1/virtual-servers"] = ms.createVirtualServerHandler
@@ -151,6 +152,13 @@ func (ms *MockServer) routeHandler(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("%s %s", r.Method, r.URL.Path)
 
 	if handler, exists := ms.Handlers[key]; exists {
+		handler(w, r)
+		return
+	}
+
+	// Try matching without query string if exact path wasn’t registered
+	pathOnlyKey := fmt.Sprintf("%s %s", r.Method, r.URL.Path)
+	if handler, exists := ms.Handlers[pathOnlyKey]; exists {
 		handler(w, r)
 		return
 	}
@@ -1217,24 +1225,19 @@ func (ms *MockServer) mapPublicIPHandler(w http.ResponseWriter, r *http.Request)
 // Public IP Policy Rule handlers
 func (ms *MockServer) createPublicIPPolicyRuleHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": ""})
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(models.PublicIPPolicyRule{UUID: "test-public-ip-uuid-1"})
 }
 
 func (ms *MockServer) listPublicIPPolicyRulesHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
 	response := models.PublicIPPolicyRuleListResponse{
 		Items: []models.PublicIPPolicyRule{
 			{
 				DisplayName: "test-rule",
 				UUID:        "test-public-ip-uuid-1",
-				OrgID:       "test-org-id",
-				OrgName:     "test-org",
-				AZName:      "S1",
 				SourceIP:    "any",
-				TargetVIP:   "10.1.99.172",
-				State:       "create_adom_policy",
+				State:       "active",
 				Services:    []string{"HTTP", "HTTPS"},
 				Action:      "accept",
 			},

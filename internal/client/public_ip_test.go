@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -205,13 +206,12 @@ func TestCreatePublicIPPolicyRule(t *testing.T) {
 		{
 			name: "successful creation",
 			setup: func(ms *testutil.MockServer) {
-				ms.AddHandler("POST", "/api/v1/admin/ipam_vip/nat_rule", func(w http.ResponseWriter, r *http.Request) {
+				ms.AddHandler("POST", "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy", func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusCreated)
-					_ = json.NewEncoder(w).Encode(models.PublicIPPolicyRule{
-						UUID:        "test-public-ip-uuid-1",
-						DisplayName: "test-rule",
-						Action:      "accept",
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"message": "Policy Initiated successfully!!",
+						"data":    map[string]any{"uuid": "test-public-ip-uuid-1"},
 					})
 				})
 			},
@@ -228,7 +228,7 @@ func TestCreatePublicIPPolicyRule(t *testing.T) {
 		{
 			name: "server error",
 			setup: func(ms *testutil.MockServer) {
-				ms.SetErrorResponse("POST", "/api/v1/admin/ipam_vip/nat_rule", 500, "Internal server error")
+				ms.SetErrorResponse("POST", "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy", 500, "Internal server error")
 			},
 			request: &models.CreatePublicIPPolicyRuleRequest{
 				DisplayName: "test-rule",
@@ -252,9 +252,128 @@ func TestCreatePublicIPPolicyRule(t *testing.T) {
 			}
 
 			client := newTestClientForPublicIP(t, ms)
-			err := client.CreatePublicIPPolicyRule(context.Background(), tt.request, "S1")
+			_, err := client.CreatePublicIPPolicyRule(context.Background(), tt.request, "S1")
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("CreatePublicIPPolicyRule() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestCreatePublicIPPolicyRule_SourceOfTruthPayload(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	var payload map[string]any
+	ms.AddHandler("POST", "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "Policy Initiated successfully!!",
+			"data":    map[string]any{"uuid": "test-public-ip-uuid-1"},
+		})
+	})
+
+	client := newTestClientForPublicIP(t, ms)
+	createdID, err := client.CreatePublicIPPolicyRule(context.Background(), &models.CreatePublicIPPolicyRuleRequest{
+		DisplayName: "test-rule",
+		Source:      "any",
+		ServiceList: []string{"uuid-http"},
+		Action:      "accept",
+		TargetVIP:   "10.1.99.172",
+		PublicIP:    "103.239.168.100",
+		UUID:        "test-public-ip-uuid",
+	}, "S1")
+	if err != nil {
+		t.Fatalf("CreatePublicIPPolicyRule() error = %v", err)
+	}
+	if createdID != "test-public-ip-uuid-1" {
+		t.Fatalf("CreatePublicIPPolicyRule() id = %q, want %q", createdID, "test-public-ip-uuid-1")
+	}
+
+	if got, ok := payload["resource_type"].(string); !ok || got != "ipam" {
+		t.Fatalf("payload resource_type = %v, want ipam", payload["resource_type"])
+	}
+	if got, ok := payload["rule_name"].(string); !ok || got != "test-rule" {
+		t.Fatalf("payload rule_name = %v, want test-rule", payload["rule_name"])
+	}
+	if got, ok := payload["source"].([]any); !ok || len(got) != 1 || got[0] != "all" {
+		t.Fatalf("payload source = %v, want [all]", payload["source"])
+	}
+	if got, ok := payload["action"].(string); !ok || got != "accept" {
+		t.Fatalf("payload action = %v, want accept", payload["action"])
+	}
+}
+
+func TestCreatePublicIPPolicyRule_ReturnsAllocationInProgressError(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	var calls int
+	ms.AddHandler("POST", "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "Please wait, Public IP allocation is in progress",
+			"code":    0,
+		})
+	})
+
+	client := newTestClientForPublicIP(t, ms)
+	_, err := client.CreatePublicIPPolicyRule(context.Background(), &models.CreatePublicIPPolicyRuleRequest{
+		DisplayName: "test-rule",
+		Source:      "any",
+		ServiceList: []string{"uuid-http"},
+		Action:      "accept",
+		TargetVIP:   "10.1.99.172",
+		PublicIP:    "103.239.168.100",
+		UUID:        "test-public-ip-uuid",
+	}, "S1")
+	if err == nil {
+		t.Fatal("CreatePublicIPPolicyRule() expected error, got nil")
+	}
+	if calls != 1 {
+		t.Fatalf("CreatePublicIPPolicyRule() calls = %d, want 1", calls)
+	}
+	if !strings.Contains(err.Error(), "Public IP allocation is in progress") {
+		t.Fatalf("CreatePublicIPPolicyRule() error = %v, want allocation-in-progress error", err)
+	}
+}
+
+func TestIsPublicIPPolicyRuleRetryableError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "matching allocation message",
+			err:  &APIError{StatusCode: 400, Message: "Please wait, Public IP allocation is in progress", Code: 0},
+			want: true,
+		},
+		{
+			name: "different 400",
+			err:  &APIError{StatusCode: 400, Message: "invalid request", Code: 0},
+			want: false,
+		},
+		{
+			name: "server error",
+			err:  &APIError{StatusCode: 500, Message: "backend error", Code: 0},
+			want: false,
+		},
+		{
+			name: "plain error",
+			err:  fmt.Errorf("transport error"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isPublicIPPolicyRuleRetryableError(tt.err); got != tt.want {
+				t.Fatalf("isPublicIPPolicyRuleRetryableError() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -278,6 +397,21 @@ func TestGetPublicIPPolicyRule(t *testing.T) {
 	ms := testutil.NewMockServer()
 	defer ms.Close()
 
+	ms.AddHandler("GET", "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy/test-public-ip-uuid-1", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "",
+			"data": map[string]any{
+				"uuid":      "test-public-ip-uuid-1",
+				"rule_name": "test-rule",
+				"status":    "active",
+				"action":    "accept",
+				"source":    []map[string]any{{"all": true}},
+				"services":  []map[string]any{{"name": "HTTP"}, {"name": "HTTPS"}},
+			},
+		})
+	})
+
 	client := newTestClientForPublicIP(t, ms)
 
 	rule, err := client.GetPublicIPPolicyRule(context.Background(), "test-public-ip-uuid", "10.1.99.172", "103.239.168.100", "test-public-ip-uuid-1")
@@ -298,12 +432,21 @@ func TestDeletePublicIPPolicyRule(t *testing.T) {
 	ms := testutil.NewMockServer()
 	defer ms.Close()
 
-	ms.AddHandler("DELETE", "/api/v1/admin/ipam_vip/nat_rule/test-public-ip-uuid-1", func(w http.ResponseWriter, r *http.Request) {
+	ms.AddHandler("DELETE", "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy", func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			PolicyIDs []string `json:"policy_ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode delete payload: %v", err)
+		}
+		if len(payload.PolicyIDs) != 1 || payload.PolicyIDs[0] != "test-public-ip-uuid-1" {
+			t.Fatalf("unexpected policy_ids payload: %#v", payload.PolicyIDs)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 
 	client := newTestClientForPublicIP(t, ms)
-	if err := client.DeletePublicIPPolicyRule(context.Background(), "test-public-ip-uuid-1"); err != nil {
+	if err := client.DeletePublicIPPolicyRule(context.Background(), "test-public-ip-uuid", "test-public-ip-uuid-1"); err != nil {
 		t.Fatalf("DeletePublicIPPolicyRule() error = %v", err)
 	}
 }

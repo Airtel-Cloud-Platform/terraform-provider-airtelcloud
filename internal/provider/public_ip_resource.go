@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
@@ -301,14 +302,114 @@ func (r *PublicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 		deleteClient = r.client.WithAvailabilityZone(azName)
 	}
 
+	// Best-effort pre-cleanup for policies that may exist even when policy resources
+	// are not tracked in state (for example, interrupted applies/import gaps).
+	r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
+
 	err := deleteClient.DeletePublicIP(ctx, data.ID.ValueString())
 	if err != nil {
+		// If backend reports attached policies, perform one targeted cleanup attempt
+		// and retry the public IP delete once.
+		if isPublicIPPolicyConflictError(err) {
+			r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
+			if retryErr := deleteClient.DeletePublicIP(ctx, data.ID.ValueString()); retryErr == nil {
+				return
+			} else {
+				err = retryErr
+			}
+		}
+
 		if client.IsNotFoundError(err) {
 			return
 		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete public IP, got error: %s", err))
 		return
 	}
+}
+
+func (r *PublicIPResource) cleanupAttachedPublicIPPolicies(ctx context.Context, c *client.Client, data PublicIPResourceModel) {
+	publicIPID := strings.TrimSpace(data.ID.ValueString())
+	if publicIPID == "" {
+		return
+	}
+
+	targetVIP := strings.TrimSpace(data.VIP.ValueString())
+	publicIPAddr := strings.TrimSpace(data.PublicIP.ValueString())
+
+	if targetVIP == "" || publicIPAddr == "" {
+		current, err := c.GetPublicIP(ctx, publicIPID)
+		if err == nil && current != nil {
+			if targetVIP == "" {
+				targetVIP = strings.TrimSpace(current.TargetVIP)
+			}
+			if publicIPAddr == "" {
+				publicIPAddr = strings.TrimSpace(getPublicIPAddr(current))
+			}
+		} else if err != nil {
+			tflog.Warn(ctx, "PublicIP delete: failed to refresh public IP details for policy cleanup", map[string]interface{}{
+				"public_ip_id": publicIPID,
+				"error":        err.Error(),
+			})
+		}
+	}
+
+	if targetVIP == "" || publicIPAddr == "" {
+		tflog.Warn(ctx, "PublicIP delete: skipping policy cleanup due missing lookup keys", map[string]interface{}{
+			"public_ip_id": publicIPID,
+			"target_vip":   targetVIP,
+			"public_ip":    publicIPAddr,
+		})
+		return
+	}
+
+	rules, err := c.ListPublicIPPolicyRules(ctx, publicIPID, targetVIP, publicIPAddr)
+	if err != nil {
+		tflog.Warn(ctx, "PublicIP delete: failed to list attached policy rules", map[string]interface{}{
+			"public_ip_id": publicIPID,
+			"target_vip":   targetVIP,
+			"public_ip":    publicIPAddr,
+			"error":        err.Error(),
+		})
+		return
+	}
+
+	for _, rule := range rules.Items {
+		ruleID := strings.TrimSpace(rule.UUID)
+		if ruleID == "" {
+			continue
+		}
+
+		if err := c.DeletePublicIPPolicyRule(ctx, publicIPID, ruleID); err != nil {
+			if client.IsNotFoundError(err) {
+				continue
+			}
+			tflog.Warn(ctx, "PublicIP delete: failed to delete attached policy rule", map[string]interface{}{
+				"public_ip_id": publicIPID,
+				"policy_id":    ruleID,
+				"error":        err.Error(),
+			})
+			continue
+		}
+
+		tflog.Debug(ctx, "PublicIP delete: deleted attached policy rule", map[string]interface{}{
+			"public_ip_id": publicIPID,
+			"policy_id":    ruleID,
+		})
+	}
+}
+
+func isPublicIPPolicyConflictError(err error) bool {
+	apiErr, ok := err.(*client.APIError)
+	if !ok {
+		return false
+	}
+
+	if apiErr.StatusCode != 409 {
+		return false
+	}
+
+	msg := strings.ToLower(strings.TrimSpace(apiErr.Message))
+	return strings.Contains(msg, "polic") || strings.Contains(msg, "policy")
 }
 
 func (r *PublicIPResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
