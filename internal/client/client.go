@@ -68,6 +68,16 @@ func NewClient(endpoint, apiKey, apiSecret, region, organization, projectName, s
 		SubnetID:     subnetID,
 		HTTPClient: &http.Client{
 			Timeout: 120 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				// Some backend flows redirect to internal service DNS names such as
+				// ccp-extension:8000. Rewrite those redirects to the configured
+				// public API endpoint so clients outside that network can proceed.
+				if strings.EqualFold(req.URL.Hostname(), "ccp-extension") {
+					req.URL.Scheme = baseURL.Scheme
+					req.URL.Host = baseURL.Host
+				}
+				return nil
+			},
 		},
 		UserAgent: "terraform-provider-airtelcloud/0.3.0",
 	}, nil

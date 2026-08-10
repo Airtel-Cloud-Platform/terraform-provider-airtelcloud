@@ -3,6 +3,9 @@ package client
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
@@ -11,62 +14,233 @@ import (
 
 // ipamBasePath returns the base path for IPAM (public IP) endpoints
 func (c *Client) ipamBasePath() string {
-	return fmt.Sprintf("/v1/ipam/domain/%s/project/%s", c.Organization, c.ProjectName)
+	return fmt.Sprintf("/ext/api/v1/domain/%s/project/%s/public-ip", c.Organization, c.ProjectName)
 }
 
 // CreatePublicIP allocates a new public IP in the specified availability zone
 func (c *Client) CreatePublicIP(ctx context.Context, req *models.CreatePublicIPRequest, availabilityZone string) (*models.PublicIP, error) {
 	scopedClient := c.WithAvailabilityZone(availabilityZone)
 
-	var publicIP models.PublicIP
-	err := scopedClient.Post(ctx, scopedClient.ipamBasePath(), req, &publicIP)
+	tflog.Debug(ctx, "CreatePublicIP request", map[string]interface{}{
+		"availability_zone": availabilityZone,
+		"request_body":      fmt.Sprintf("%+v", req),
+	})
+
+	// The IPAM create endpoint wraps the actual payload under "data".
+	// Decode the wrapper so created.UUID is correctly populated.
+	var createResp struct {
+		Message string          `json:"message"`
+		Data    models.PublicIP `json:"data"`
+	}
+	err := scopedClient.Post(ctx, scopedClient.ipamBasePath(), req, &createResp)
 	if err != nil {
 		return nil, err
 	}
-	return &publicIP, nil
+	return &createResp.Data, nil
 }
 
 // FindPortIDByVIP lists all compute instances and returns the port ID
 // whose fixed_ips contain the given VIP address.
-func (c *Client) FindPortIDByVIP(ctx context.Context, vip string) (int, error) {
-	computes, err := c.ListComputes(ctx)
+func (c *Client) FindPortIDByVIP(ctx context.Context, vip, availabilityZone string) (int, error) {
+	scopedClient := c.WithAvailabilityZone(availabilityZone)
+
+	normalizedVIP := net.ParseIP(strings.TrimSpace(vip))
+	if normalizedVIP == nil {
+		return 0, fmt.Errorf("invalid VIP address %q", vip)
+	}
+
+	// Preferred LB lookup path: networks VIPs API exposes allowed_ip_address to port_id
+	// mappings directly and is reliable for load-balancer VIPs.
+	if lbPortID, lbFound, err := scopedClient.findNetworkVipPortIDByVIP(ctx, normalizedVIP); err != nil {
+		tflog.Warn(ctx, "FindPortIDByVIP: networks VIP lookup failed; falling back", map[string]interface{}{
+			"availability_zone": availabilityZone,
+			"vip":               normalizedVIP.String(),
+			"error":             err.Error(),
+		})
+	} else if lbFound {
+		return lbPortID, nil
+	}
+
+	// LB VIPs are not always represented in compute port listings. Try the
+	// LB VIP API first and return immediately when a matching VIP is found.
+	if lbPortID, lbFound, err := scopedClient.findLBVipPortIDByVIP(ctx, normalizedVIP, availabilityZone); err != nil {
+		tflog.Warn(ctx, "FindPortIDByVIP: LB VIP lookup failed; falling back to compute scan", map[string]interface{}{
+			"availability_zone": availabilityZone,
+			"vip":               normalizedVIP.String(),
+			"error":             err.Error(),
+		})
+	} else if lbFound {
+		return lbPortID, nil
+	}
+
+	computes, err := scopedClient.ListComputes(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("failed to list computes to find port for VIP %s: %w", vip, err)
+		return 0, fmt.Errorf("failed to list computes to find port for VIP %s in availability zone %s: %w", vip, availabilityZone, err)
+	}
+
+	tflog.Debug(ctx, "FindPortIDByVIP: listing computes", map[string]interface{}{
+		"availability_zone": availabilityZone,
+		"compute_count":     len(computes),
+		"searched_vip":      normalizedVIP.String(),
+	})
+
+	matchInPorts := func(ports []models.Port) (int, bool) {
+		for _, port := range ports {
+			for _, fixedIP := range port.FixedIPs {
+				parsedFixedIP := net.ParseIP(strings.TrimSpace(fixedIP))
+				if parsedFixedIP == nil {
+					continue
+				}
+
+				tflog.Debug(ctx, "FindPortIDByVIP: checking fixed IP", map[string]interface{}{
+					"port_id":  port.ID,
+					"fixed_ip": parsedFixedIP.String(),
+					"vip":      normalizedVIP.String(),
+				})
+
+				if parsedFixedIP.Equal(normalizedVIP) {
+					return port.ID, true
+				}
+			}
+		}
+
+		return 0, false
 	}
 
 	for _, compute := range computes {
-		for _, port := range compute.Ports {
-			for _, fixedIP := range port.FixedIPs {
-				if fixedIP == vip {
-					return port.ID, nil
+		if portID, ok := matchInPorts(compute.Ports); ok {
+			return portID, nil
+		}
+
+		if len(compute.Ports) == 0 && compute.ID != "" {
+			fullCompute, err := scopedClient.GetCompute(ctx, compute.ID)
+			if err != nil {
+				tflog.Warn(ctx, "FindPortIDByVIP: failed to fetch full compute details", map[string]interface{}{
+					"compute_id": compute.ID,
+					"error":      err.Error(),
+				})
+				continue
+			}
+
+			tflog.Debug(ctx, "FindPortIDByVIP: fetched full compute details", map[string]interface{}{
+				"compute_id":  compute.ID,
+				"ports_count": len(fullCompute.Ports),
+			})
+
+			if portID, ok := matchInPorts(fullCompute.Ports); ok {
+				return portID, nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("no port found with fixed_ip matching VIP %s in availability zone %s", normalizedVIP.String(), availabilityZone)
+}
+
+func (c *Client) networkPortsVipsBasePath() string {
+	return fmt.Sprintf("/api/v2.1/networks/domain/%s/project/%s/networks/ports/vips", c.Organization, c.ProjectName)
+}
+
+func (c *Client) findNetworkVipPortIDByVIP(ctx context.Context, vip net.IP) (int, bool, error) {
+	var mappings []models.NetworkVIPPort
+	if err := c.Get(ctx, c.networkPortsVipsBasePath(), &mappings); err != nil {
+		return 0, false, fmt.Errorf("failed to list network VIP ports for VIP %s: %w", vip.String(), err)
+	}
+
+	tflog.Debug(ctx, "FindPortIDByVIP: listing network VIP ports", map[string]interface{}{
+		"mapping_count": len(mappings),
+		"searched_vip":  vip.String(),
+	})
+
+	for _, item := range mappings {
+		parsedAllowedIP := net.ParseIP(strings.TrimSpace(item.AllowedIPAddress))
+		if parsedAllowedIP == nil {
+			continue
+		}
+
+		tflog.Debug(ctx, "FindPortIDByVIP: checking network VIP mapping", map[string]interface{}{
+			"lb_name":              item.LBName,
+			"vs_name":              item.VSName,
+			"port_id":              item.PortID,
+			"allowed_ip_address":   parsedAllowedIP.String(),
+			"searched_vip_address": vip.String(),
+		})
+
+		if parsedAllowedIP.Equal(vip) {
+			return item.PortID, true, nil
+		}
+	}
+
+	return 0, false, nil
+}
+
+func (c *Client) findLBVipPortIDByVIP(ctx context.Context, vip net.IP, availabilityZone string) (int, bool, error) {
+	services, err := c.ListLBServices(ctx)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to list LB services for VIP %s: %w", vip.String(), err)
+	}
+
+	tflog.Debug(ctx, "FindPortIDByVIP: listing LB services", map[string]interface{}{
+		"availability_zone": availabilityZone,
+		"service_count":     len(services),
+		"searched_vip":      vip.String(),
+	})
+
+	normalizedAZ := strings.TrimSpace(availabilityZone)
+	for _, svc := range services {
+		if normalizedAZ != "" && svc.AZName != "" && !strings.EqualFold(strings.TrimSpace(svc.AZName), normalizedAZ) {
+			continue
+		}
+
+		lbScopedClient := c
+		if strings.TrimSpace(svc.NetworkID) != "" {
+			lbScopedClient = c.WithSubnetID(strings.TrimSpace(svc.NetworkID))
+		}
+
+		lbVips, err := lbScopedClient.ListLBVips(ctx, svc.ID)
+		if err != nil {
+			tflog.Warn(ctx, "FindPortIDByVIP: failed to list LB VIPs for service", map[string]interface{}{
+				"lb_service_id": svc.ID,
+				"network_id":    svc.NetworkID,
+				"error":         err.Error(),
+			})
+			continue
+		}
+
+		for _, lbVIP := range lbVips {
+			for _, fixedIP := range lbVIP.FixedIPs {
+				parsedFixedIP := net.ParseIP(strings.TrimSpace(fixedIP))
+				if parsedFixedIP == nil {
+					continue
+				}
+
+				tflog.Debug(ctx, "FindPortIDByVIP: checking LB VIP fixed IP", map[string]interface{}{
+					"lb_service_id": svc.ID,
+					"vip_port_id":   lbVIP.ID,
+					"fixed_ip":      parsedFixedIP.String(),
+					"vip":           vip.String(),
+				})
+
+				if parsedFixedIP.Equal(vip) {
+					return lbVIP.ID, true, nil
 				}
 			}
 		}
 	}
 
-	return 0, fmt.Errorf("no port found with fixed_ip matching VIP %s", vip)
-}
-
-// MapPublicIP associates a public IP with an internal VIP by creating a vip_object mapping
-func (c *Client) MapPublicIP(ctx context.Context, req *models.MapPublicIPRequest, availabilityZone string) error {
-	scopedClient := c.WithAvailabilityZone(availabilityZone)
-
-	var result map[string]interface{}
-	err := scopedClient.Post(ctx, fmt.Sprintf("%s/vip_object", scopedClient.ipamAdminBasePath()), req, &result)
-	if err != nil {
-		return fmt.Errorf("failed to map public IP: %w", err)
-	}
-	return nil
+	return 0, false, nil
 }
 
 // GetPublicIP retrieves a public IP by UUID
 func (c *Client) GetPublicIP(ctx context.Context, uuid string) (*models.PublicIP, error) {
-	var publicIP models.PublicIP
-	err := c.Get(ctx, fmt.Sprintf("%s/%s", c.ipamBasePath(), uuid), &publicIP)
+	var response struct {
+		Message string          `json:"message"`
+		Data    models.PublicIP `json:"data"`
+	}
+	err := c.Get(ctx, fmt.Sprintf("%s/%s", c.ipamBasePath(), uuid), &response)
 	if err != nil {
 		return nil, err
 	}
-	return &publicIP, nil
+	return &response.Data, nil
 }
 
 // ListPublicIPs retrieves all public IPs
@@ -143,8 +317,15 @@ func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.Creat
 // ListPublicIPPolicyRules lists all policy rules for a public IP
 func (c *Client) ListPublicIPPolicyRules(ctx context.Context, publicIPUUID, targetVIP, publicIP string) (*models.PublicIPPolicyRuleListResponse, error) {
 	var response models.PublicIPPolicyRuleListResponse
-	path := fmt.Sprintf("%s/%s/rules?offset=0&limit=1000&target_vip=%s&public_ip=%s",
-		c.ipamAdminBasePath(), publicIPUUID, targetVIP, publicIP)
+
+	q := url.Values{}
+	q.Set("offset", "0")
+	q.Set("limit", "1000")
+	q.Set("target_vip", targetVIP)
+	q.Set("public_ip", publicIP)
+
+	path := fmt.Sprintf("%s/%s/rules?%s", c.ipamAdminBasePath(), publicIPUUID, q.Encode())
+
 	err := c.Get(ctx, path, &response)
 	if err != nil {
 		return nil, err

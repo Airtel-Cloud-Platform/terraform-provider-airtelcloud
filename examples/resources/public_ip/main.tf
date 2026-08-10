@@ -1,8 +1,55 @@
+terraform {
+  required_providers {
+    airtelcloud = {
+      source  = "Airtel-Cloud-Platform/airtelcloud"
+      version = "1.1.4"
+    }
+  }
+}
+
+provider "airtelcloud" {
+  api_endpoint = "https://north.cloud.airtel.in"
+  api_key      = var.airtel_api_key
+  api_secret   = var.airtel_api_secret
+  region       = "north"
+  organization = var.organization
+  project_name = var.project_name
+}
+
+variable "airtel_api_key" {
+  description = "Airtel Cloud API key"
+  type        = string
+  sensitive   = true
+}
+
+variable "airtel_api_secret" {
+  description = "Airtel Cloud API secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "organization" {
+  description = "organization for the resources"
+  type        = string
+}
+
+variable "project_name" {
+  description = "Project for the resources"
+  type        = string
+}
+
+variable "resource_prefix" {
+  description = "Prefix for resource names"
+  type        = string
+  default     = "tft"
+}
+
 # Allocate a public IP NATted against a VM's private IP
 resource "airtelcloud_public_ip" "example" {
-  object_name       = "my-vm-public-ip"
-  vip               = "10.1.99.172" # Private IP of the VM or Load Balancer
-  availability_zone = "S1"
+  object_name       = "${var.resource_prefix}-my-vm-public-ip"
+  # VIP must already exist on a VM NIC or LB VIP in this project and AZ.
+  vip               = "10.10.1.61"
+  availability_zone = "N1"
 
   timeouts {
     create = "10m"
@@ -31,5 +78,5 @@ resource "airtelcloud_public_ip_policy_rule" "web_traffic" {
   action            = "accept"
   target_vip        = airtelcloud_public_ip.example.vip
   public_ip         = airtelcloud_public_ip.example.public_ip
-  availability_zone = "S1"
+  availability_zone = "N1"
 }

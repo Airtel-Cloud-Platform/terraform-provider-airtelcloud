@@ -42,3 +42,11 @@ Optional:
 
 - `create` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours).
 - `delete` (String) A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as "30s" or "2h45m". Valid time units are "s" (seconds), "m" (minutes), "h" (hours). Setting a timeout for a Delete operation is only applicable if changes are saved into state before the destroy operation occurs.
+
+## Usage Notes
+
+- `vip` must be a private IP that already exists on a VM NIC or Load Balancer VIP in the same project.
+- `availability_zone` must match the zone where that VIP/port exists.
+- Public IP allocation is port-based under the hood. The provider resolves the VIP to a port ID before create.
+- During create, the provider polls until the backend reports a terminal status (`created`/`Created`).
+

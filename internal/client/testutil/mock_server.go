@@ -112,10 +112,10 @@ func (ms *MockServer) setupDefaultHandlers() {
 	ms.Handlers["DELETE /api/v2.1/load-balancers/domain/test-org/project/test-project/load-balancers/lb-svc-1/certificates/1/"] = ms.deleteLBCertificateHandler
 
 	// Public IP (IPAM) handlers
-	ms.Handlers["POST /api/v1/ipam/domain/test-org/project/test-project"] = ms.createPublicIPHandler
-	ms.Handlers["GET /api/v1/ipam/domain/test-org/project/test-project/test-public-ip-uuid"] = ms.getPublicIPHandler
-	ms.Handlers["GET /api/v1/ipam/domain/test-org/project/test-project"] = ms.listPublicIPsHandler
-	ms.Handlers["DELETE /api/v1/ipam/domain/test-org/project/test-project/test-public-ip-uuid"] = ms.deletePublicIPHandler
+	ms.Handlers["POST /ext/api/v1/domain/test-org/project/test-project/public-ip"] = ms.createPublicIPHandler
+	ms.Handlers["GET /ext/api/v1/domain/test-org/project/test-project/public-ip/test-public-ip-uuid"] = ms.getPublicIPHandler
+	ms.Handlers["GET /ext/api/v1/domain/test-org/project/test-project/public-ip"] = ms.listPublicIPsHandler
+	ms.Handlers["DELETE /ext/api/v1/domain/test-org/project/test-project/public-ip/test-public-ip-uuid"] = ms.deletePublicIPHandler
 
 	// Public IP Policy Rule handlers
 	ms.Handlers["POST /api/v1/admin/ipam_vip/nat_rule"] = ms.createPublicIPPolicyRuleHandler
@@ -1202,7 +1202,7 @@ func (ms *MockServer) listPublicIPsHandler(w http.ResponseWriter, r *http.Reques
 
 func (ms *MockServer) deletePublicIPHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
-	ms.Handlers["GET /api/v1/ipam/domain/test-org/project/test-project/test-public-ip-uuid"] = func(w http.ResponseWriter, r *http.Request) {
+	ms.Handlers["GET /ext/api/v1/domain/test-org/project/test-project/public-ip/test-public-ip-uuid"] = func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Not found"})
 	}
