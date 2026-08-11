@@ -52,7 +52,7 @@ make install
 `make install` places the binary at:
 
 ```
-~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.1.5/<OS_ARCH>/
+~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.1.9/<OS_ARCH>/
 ```
 
 where `<OS_ARCH>` defaults to your current Go platform (`$(go env GOOS)_$(go env GOARCH)`) and can be overridden in the Makefile.
@@ -96,7 +96,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.1.5"
+      version = "1.1.9"
     }
   }
 }
