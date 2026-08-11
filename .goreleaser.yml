@@ -110,6 +110,3 @@ release:
   draft: false
   prerelease: auto
   replace_existing_draft: true
-
-source:
-  enabled: true
