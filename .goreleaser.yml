@@ -83,31 +83,19 @@ archives:
       {{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
 checksum:
-  name_template: SHA256SUMS
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
 
 signs:
-  - artifacts: checksum
-
-    cmd: gpg
-
-    signature: "${artifact}.asc"
-
-    args:
-      - --batch
-      - --yes
-      - --armor
-      - --detach-sign
-      - --output
-      - "${signature}"
-      - "${artifact}"
+  - id: checksum
+    artifacts: checksum
+    signature: "${artifact}.sig"
 
 snapshot:
   version_template: "{{ incpatch .Version }}-dev"
 
 changelog:
   sort: asc
-
   filters:
     exclude:
       - "^docs:"
