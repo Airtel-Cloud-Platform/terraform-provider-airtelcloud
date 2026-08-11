@@ -76,6 +76,21 @@ func (c *Client) UpdateCompute(ctx context.Context, id string, req *models.Updat
 	return &compute, nil
 }
 
+// PatchComputeLabels updates compute labels using PATCH.
+func (c *Client) PatchComputeLabels(ctx context.Context, id string, labels []string) (*models.Compute, error) {
+	formData := map[string]interface{}{
+		"resource_id": id,
+		"labels":      strings.Join(labels, ","),
+	}
+
+	err := c.PatchURLEncodedForm(ctx, fmt.Sprintf("%s/labels", c.computeBasePath()), formData, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.GetCompute(ctx, id)
+}
+
 // DeleteCompute deletes a compute instance
 func (c *Client) DeleteCompute(ctx context.Context, id string) error {
 	err := c.Delete(ctx, fmt.Sprintf("%s/%s/", c.computeBasePath(), id))

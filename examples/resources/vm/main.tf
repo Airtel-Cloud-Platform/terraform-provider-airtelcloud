@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     airtelcloud = {
-      source  = "Airtel-Cloud-Platform/airtelcloud"
+      source = "Airtel-Cloud-Platform/airtelcloud"
       version = "1.1.5"
     }
   }
@@ -61,11 +61,15 @@ variable "vm_keypair_name" {
 # A linux instance needs exactly one authentication method: either
 # admin_username + admin_password, or keypair_id / keypair_name. Setting both
 # is rejected at plan time.
+#
+# Labels are applied with a follow-up PATCH after the VM is created because the
+# compute create endpoint ignores labels. To patch labels onto an already
+# created VM, change this labels list and run `terraform apply` again.
 resource "airtelcloud_vm" "web_server" {
-  instance_name       = "${var.resource_prefix}-web-server"
+  instance_name       = "${var.resource_prefix}-web-server-3"
   os_type             = "linux"
   flavor_name         = "ccd.Large"
-  image_name          = "Ubuntu22_04_Jul2026"
+  image_name          = "Ubuntu22_04_Aug2026"
   vpc_name            = "copper-vpc01"
   subnet_name         = "sub1"
   boot_from_volume    = true
@@ -80,14 +84,18 @@ resource "airtelcloud_vm" "web_server" {
   start_date          = "2025-07-15"
   start_time          = "02:00"
 
-  tags = {
-    Environment = "example"
-    Role        = "web-server"
-  }
+  labels = ["example", "web-server"]
 }
 
+# Example update for an already created VM:
+# 1. Apply once with the labels above.
+# 2. Change the labels list below into the resource block.
+# 3. Run `terraform apply` again to send the labels PATCH for the existing VM.
+#
+# labels = ["example", "web-server", "backend-app"]
 
-# Create a Windows VM with backup enabled (alternative configuration)
+
+# # Create a Windows VM with backup enabled (alternative configuration)
 resource "airtelcloud_vm" "windows_server" {
   instance_name       = "${var.resource_prefix}-win-server"
   os_type             = "windows"
@@ -106,10 +114,7 @@ resource "airtelcloud_vm" "windows_server" {
   #  start_date       = "2026-04-01"
   #  start_time       = "02:00"
   #
-  tags = {
-    Environment = "example"
-    Role        = "windows-server"
-  }
+  labels = ["backup", "example", "windows-server"]
 }
 
 resource "airtelcloud_volume" "data_volume" {
