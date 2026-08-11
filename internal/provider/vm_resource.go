@@ -75,7 +75,7 @@ type VMResourceModel struct {
 	StartDate          types.String   `tfsdk:"start_date"`
 	StartTime          types.String   `tfsdk:"start_time"`
 	VMCount            types.Int64    `tfsdk:"vm_count"`
-	Tags               types.Map      `tfsdk:"tags"`
+	Labels             types.List     `tfsdk:"labels"`
 	Timeouts           timeouts.Value `tfsdk:"timeouts"`
 }
 
@@ -289,9 +289,9 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					int64validator.Between(1, 10),
 				},
 			},
-			"tags": schema.MapAttribute{
+			"labels": schema.ListAttribute{
 				ElementType:         types.StringType,
-				MarkdownDescription: "A map of tags to assign to the instance.",
+				MarkdownDescription: "List of labels to assign to the instance. Up to 5 labels are supported, and each label must be between 3 and 15 characters long.",
 				Optional:            true,
 			},
 		},
@@ -409,6 +409,18 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 			"A linux instance requires an authentication method: set either keypair_id/keypair_name "+
 				"or admin_username and admin_password.")
 	}
+
+	if !data.Labels.IsNull() && !data.Labels.IsUnknown() {
+		var labels []string
+		resp.Diagnostics.Append(data.Labels.ElementsAs(ctx, &labels, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if err := validateVMLabelValues(labels); err != nil {
+			resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		}
+	}
 }
 
 func (r *VMResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -445,10 +457,9 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	// Convert tags map to map[string]string
-	var tags map[string]string
-	if !data.Tags.IsNull() {
-		resp.Diagnostics.Append(data.Tags.ElementsAs(ctx, &tags, false)...)
+	var labels []string
+	if !data.Labels.IsNull() {
+		resp.Diagnostics.Append(data.Labels.ElementsAs(ctx, &labels, false)...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
@@ -597,6 +608,15 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error waiting for compute instance to be ready: %s", err))
 		return
+	}
+
+	if len(labels) > 0 {
+		patchedCompute, err := computeClient.PatchComputeLabels(ctx, readyCompute.ID, labels)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to apply labels to compute instance, got error: %s", err))
+			return
+		}
+		readyCompute = patchedCompute
 	}
 
 	// Update the model with the ready compute data
@@ -766,10 +786,9 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		}
 	}
 
-	// Convert tags map to map[string]string
-	var tags map[string]string
-	if !data.Tags.IsNull() {
-		resp.Diagnostics.Append(data.Tags.ElementsAs(ctx, &tags, false)...)
+	var labels []string
+	if !data.Labels.IsNull() {
+		resp.Diagnostics.Append(data.Labels.ElementsAs(ctx, &labels, false)...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
@@ -809,6 +828,15 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
+	if !data.Labels.IsNull() {
+		patchedCompute, err := computeClient.PatchComputeLabels(ctx, data.ID.ValueString(), labels)
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to apply labels to compute instance, got error: %s", err))
+			return
+		}
+		compute = patchedCompute
+	}
+
 	// Update the model with the updated compute data
 	data.Status = types.StringValue(compute.Status)
 	data.PublicIP = types.StringValue(models.FlexString(compute.PublicIPs))
@@ -838,4 +866,22 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 
 func (r *VMResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func validateVMLabelValues(labels []string) error {
+	if len(labels) > 5 {
+		return fmt.Errorf("labels supports at most 5 labels, got %d", len(labels))
+	}
+
+	for _, label := range labels {
+		trimmedLabel := strings.TrimSpace(label)
+		if len(trimmedLabel) < 3 {
+			return fmt.Errorf("each label must be at least 3 characters long, got %q", label)
+		}
+		if len(trimmedLabel) > 15 {
+			return fmt.Errorf("each label must be at most 15 characters long, got %q", label)
+		}
+	}
+
+	return nil
 }

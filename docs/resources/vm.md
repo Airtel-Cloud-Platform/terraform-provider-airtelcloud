@@ -48,12 +48,13 @@ resource "airtelcloud_vm" "web_server" {
     EOF
   )
 
-  tags = {
-    Environment = "production"
-    Purpose     = "web-server"
-  }
+  labels = ["production", "web-server", "frontend"]
 }
 ```
+
+The provider sends VM labels in a follow-up compute labels PATCH request after
+the instance becomes ready. Use `labels` when you want the dashboard to show
+plain labels exactly as written.
 
 ### Linux VM with SSH Keypair
 
@@ -70,10 +71,7 @@ resource "airtelcloud_vm" "web_server_keypair" {
   disk_size           = 100
   keypair_name        = "my-linux-keypair"
 
-  tags = {
-    Environment = "production"
-    Purpose     = "web-server-keypair"
-  }
+  labels = ["production", "keypair", "web-server"]
 }
 ```
 
@@ -106,10 +104,7 @@ resource "airtelcloud_vm" "windows_server" {
   start_date          = "2025-07-15"
   start_time          = "02:00"
 
-  tags = {
-    Environment = "production"
-    OS          = "windows"
-  }
+  labels = ["production", "windows", "backup"]
 }
 ```
 
@@ -148,7 +143,8 @@ resource "airtelcloud_vm" "windows_server" {
 - `start_date` (String) - The start date for backup scheduling (e.g., `"2025-01-15"`).
 - `start_time` (String) - The start time for backup scheduling (e.g., `"02:00"`).
 - `vm_count` (Number) - Number of VM instances to create. Must be between 1 and 10. Default: `1`.
-- `tags` (Map of String) - A map of tags to assign to the instance.
+- `labels` (List of String) - Plain labels to assign to the instance. These are sent exactly as provided in the follow-up compute labels PATCH request. Maximum 5 labels. Each label must be between 3 and 15 characters long. Use simple label values such as `web-server`.
+
 
 ## Attribute Reference
 

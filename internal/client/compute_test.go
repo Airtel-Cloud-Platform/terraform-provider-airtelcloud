@@ -171,6 +171,62 @@ func TestUpdateCompute(t *testing.T) {
 	}
 }
 
+func TestPatchComputeLabels(t *testing.T) {
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	var capturedResourceID string
+	var capturedLabels string
+	var capturedContentType string
+	var getCalls int
+
+	mockServer.AddHandler("PATCH", "/api/v2.1/computes/domain/test-org/project/test-project/computes/labels", func(w http.ResponseWriter, r *http.Request) {
+		capturedContentType = r.Header.Get("Content-Type")
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form body: %v", err)
+		}
+		capturedResourceID = r.FormValue("resource_id")
+		capturedLabels = r.FormValue("labels")
+
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mockServer.AddHandler("GET", "/api/v2.1/computes/domain/test-org/project/test-project/computes/test-id/", func(w http.ResponseWriter, r *http.Request) {
+		getCalls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"test-id","instance_name":"test-instance","status":"ACTIVE"}`))
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	labels := []string{"Environment:production", "Purpose:web-server"}
+	compute, err := client.PatchComputeLabels(context.Background(), "test-id", labels)
+	if err != nil {
+		t.Fatalf("PatchComputeLabels() error = %v", err)
+	}
+	if compute == nil || compute.ID != "test-id" {
+		t.Fatalf("PatchComputeLabels() compute = %+v, want non-nil with ID test-id", compute)
+	}
+
+	if !strings.HasPrefix(capturedContentType, "application/x-www-form-urlencoded") {
+		t.Fatalf("content-type = %q, want application/x-www-form-urlencoded", capturedContentType)
+	}
+
+	if capturedResourceID != "test-id" {
+		t.Fatalf("patch body resource_id = %q, want test-id", capturedResourceID)
+	}
+
+	if capturedLabels != strings.Join(labels, ",") {
+		t.Fatalf("patch body labels = %q, want %q", capturedLabels, strings.Join(labels, ","))
+	}
+
+	if getCalls != 1 {
+		t.Fatalf("GET compute calls = %d, want 1", getCalls)
+	}
+}
+
 func TestDeleteCompute(t *testing.T) {
 	mockServer := testutil.NewMockServer()
 	defer mockServer.Close()
