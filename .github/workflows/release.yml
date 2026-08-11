@@ -19,29 +19,60 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ---------------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------------
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ---------------------------------------------------------
+      # Setup Go
+      # ---------------------------------------------------------
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
           go-version: "1.24.9"
           cache: true
 
-      - name: Import GPG Key
-        uses: crazy-max/ghaction-import-gpg@v6
-        with:
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+      # ---------------------------------------------------------
+      # Setup GPG
+      # ---------------------------------------------------------
+      - name: Install GPG
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg
 
-      - name: Verify GoReleaser Configuration
+      # ---------------------------------------------------------
+      # Import Terraform Provider GPG private key
+      # ---------------------------------------------------------
+      - name: Import GPG Private Key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      # ---------------------------------------------------------
+      # Verify GPG key
+      # ---------------------------------------------------------
+      - name: Verify GPG Key
+        run: |
+          gpg --list-secret-keys --keyid-format LONG
+
+      # ---------------------------------------------------------
+      # Verify GoReleaser configuration
+      # ---------------------------------------------------------
+      - name: Verify GoReleaser Config
         uses: goreleaser/goreleaser-action@v6
         with:
           version: v2.17.1
           args: check
 
-      - name: Create Release
+      # ---------------------------------------------------------
+      # Build and Release
+      # ---------------------------------------------------------
+      - name: Release
         uses: goreleaser/goreleaser-action@v6
         with:
           version: v2.17.1
