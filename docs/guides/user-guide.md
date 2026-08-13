@@ -27,7 +27,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.1.9"
+      version = "1.2.0"
     }
   }
 }
@@ -1040,9 +1040,10 @@ resource "airtelcloud_protection" "web_server" {
 | `description` | String | No | Policy description. Updatable. |
 | `policy_type_id` | String | No | Policy type ID. |
 | `enable_scheduler` | String | No | Enable scheduled backups. Default: `"true"`. Updatable. |
-| `start_date` | String | No | Schedule start date (e.g., `2026-04-01`). Updatable. |
+| `start_date` | String | No | Schedule start date (e.g., `2026-04-01`). Mutually exclusive with `weekday`. Updatable. |
 | `end_date` | String | No | Schedule end date. Updatable. |
-| `start_time` | String | No | Schedule start time (e.g., `02:00`). Updatable. |
+| `start_time` | String | No | Schedule start time in IST (`Asia/Kolkata`). Accepts `HH:MM` (e.g., `02:00`) or `H:MM AM/PM` (e.g., `1:15 AM`). Sent to API as `H:MM AM/PM`. Updatable. |
+| `weekday` | String | No | Optional weekday convenience input (`monday`..`sunday` or `mon`..`sun`). Mutually exclusive with `start_date`. Converted to the next matching date in IST (`Asia/Kolkata`). |
 
 #### Attribute Reference
 

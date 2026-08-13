@@ -298,11 +298,109 @@ func TestCreatePublicIPPolicyRule_SourceOfTruthPayload(t *testing.T) {
 	if got, ok := payload["rule_name"].(string); !ok || got != "test-rule" {
 		t.Fatalf("payload rule_name = %v, want test-rule", payload["rule_name"])
 	}
-	if got, ok := payload["source"].([]any); !ok || len(got) != 1 || got[0] != "all" {
-		t.Fatalf("payload source = %v, want [all]", payload["source"])
+	sourceRaw, ok := payload["source"].([]any)
+	if !ok || len(sourceRaw) != 1 {
+		t.Fatalf("payload source = %v, want one source object", payload["source"])
+	}
+	sourceObj, ok := sourceRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("payload source[0] = %T, want object", sourceRaw[0])
+	}
+	if got, ok := sourceObj["create_new"].(bool); !ok || !got {
+		t.Fatalf("payload source[0].create_new = %v, want true", sourceObj["create_new"])
+	}
+	if got, ok := sourceObj["source_type"].(string); !ok || got != "all" {
+		t.Fatalf("payload source[0].source_type = %v, want all", sourceObj["source_type"])
 	}
 	if got, ok := payload["action"].(string); !ok || got != "accept" {
 		t.Fatalf("payload action = %v, want accept", payload["action"])
+	}
+}
+
+func TestCreatePublicIPPolicyRule_SourceOfTruthPayload_WithDetailedConfig(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	var payload map[string]any
+	ms.AddHandler("POST", "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "Policy Initiated successfully!!",
+			"data":    map[string]any{"uuid": "test-public-ip-uuid-1"},
+		})
+	})
+
+	createNewTrue := true
+	createNewFalse := false
+	isDefaultFalse := false
+
+	client := newTestClientForPublicIP(t, ms)
+	_, err := client.CreatePublicIPPolicyRule(context.Background(), &models.CreatePublicIPPolicyRuleRequest{
+		DisplayName: "hello-rule",
+		SourceConfig: []models.PublicIPPolicyRuleSourceInput{{
+			CreateNew:  &createNewTrue,
+			IPCIDR:     "1.2.1.0/24",
+			SourceType: "ip_cidr",
+		}},
+		ServiceConfig: []models.PublicIPPolicyRuleServiceInput{{
+			CreateNew: &createNewFalse,
+			Name:      "RDP",
+			IsDefault: &isDefaultFalse,
+		}},
+		Action:       "accept",
+		ResourceType: "ipam",
+		RevisionNote: "creating Policy",
+		TargetVIP:    "10.1.99.172",
+		PublicIP:     "103.239.168.100",
+		UUID:         "test-public-ip-uuid",
+	}, "S1")
+	if err != nil {
+		t.Fatalf("CreatePublicIPPolicyRule() error = %v", err)
+	}
+
+	if got, ok := payload["resource_type"].(string); !ok || got != "ipam" {
+		t.Fatalf("payload resource_type = %v, want ipam", payload["resource_type"])
+	}
+	if got, ok := payload["revision_note"].(string); !ok || got != "creating Policy" {
+		t.Fatalf("payload revision_note = %v, want creating Policy", payload["revision_note"])
+	}
+
+	sourceRaw, ok := payload["source"].([]any)
+	if !ok || len(sourceRaw) != 1 {
+		t.Fatalf("payload source = %v, want one source object", payload["source"])
+	}
+	sourceObj, ok := sourceRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("payload source[0] = %T, want object", sourceRaw[0])
+	}
+	if got, ok := sourceObj["create_new"].(bool); !ok || !got {
+		t.Fatalf("payload source[0].create_new = %v, want true", sourceObj["create_new"])
+	}
+	if got, ok := sourceObj["source_type"].(string); !ok || got != "ip_cidr" {
+		t.Fatalf("payload source[0].source_type = %v, want ip_cidr", sourceObj["source_type"])
+	}
+	if got, ok := sourceObj["ip_cidr"].(string); !ok || got != "1.2.1.0/24" {
+		t.Fatalf("payload source[0].ip_cidr = %v, want 1.2.1.0/24", sourceObj["ip_cidr"])
+	}
+
+	servicesRaw, ok := payload["services"].([]any)
+	if !ok || len(servicesRaw) != 1 {
+		t.Fatalf("payload services = %v, want one service object", payload["services"])
+	}
+	serviceObj, ok := servicesRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("payload services[0] = %T, want object", servicesRaw[0])
+	}
+	if got, ok := serviceObj["create_new"].(bool); !ok || got {
+		t.Fatalf("payload services[0].create_new = %v, want false", serviceObj["create_new"])
+	}
+	if got, ok := serviceObj["name"].(string); !ok || got != "RDP" {
+		t.Fatalf("payload services[0].name = %v, want RDP", serviceObj["name"])
+	}
+	if got, ok := serviceObj["is_default"].(bool); !ok || got {
+		t.Fatalf("payload services[0].is_default = %v, want false", serviceObj["is_default"])
 	}
 }
 

@@ -15,14 +15,21 @@ import (
 )
 
 type sourceOfTruthPublicIPPolicyService struct {
+	CreateNew bool   `json:"create_new"`
 	Name      string `json:"name"`
 	IsDefault bool   `json:"is_default"`
+}
+
+type publicIPPolicySourceEntry struct {
+	CreateNew  bool   `json:"create_new"`
+	IPCIDR     string `json:"ip_cidr,omitempty"`
+	SourceType string `json:"source_type"`
 }
 
 type sourceOfTruthCreatePublicIPPolicyRequest struct {
 	ResourceType string                               `json:"resource_type"`
 	RuleName     string                               `json:"rule_name"`
-	Source       []string                             `json:"source"`
+	Source       []publicIPPolicySourceEntry          `json:"source"`
 	Services     []sourceOfTruthPublicIPPolicyService `json:"services"`
 	Action       string                               `json:"action"`
 	RevisionNote string                               `json:"revision_note"`
@@ -356,33 +363,113 @@ func (c *Client) ListIPAMServices(ctx context.Context, availabilityZone string) 
 func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.CreatePublicIPPolicyRuleRequest, availabilityZone string) (string, error) {
 	scopedClient := c.WithAvailabilityZone(availabilityZone)
 
-	policySource := []string{"all"}
-	if source := strings.TrimSpace(strings.ToLower(req.Source)); source != "" && source != "any" && source != "all" {
-		policySource = []string{source}
+	policySource := make([]publicIPPolicySourceEntry, 0, len(req.SourceConfig))
+	for _, source := range req.SourceConfig {
+		sourceType := strings.TrimSpace(strings.ToLower(source.SourceType))
+		ipCIDR := strings.TrimSpace(source.IPCIDR)
+
+		if sourceType == "" {
+			if ipCIDR == "" || strings.EqualFold(ipCIDR, "any") || strings.EqualFold(ipCIDR, "all") {
+				sourceType = "all"
+			} else {
+				sourceType = "ip_cidr"
+			}
+		}
+
+		if sourceType == "ip_cidr" && ipCIDR == "" {
+			continue
+		}
+
+		createNew := true
+		if source.CreateNew != nil {
+			createNew = *source.CreateNew
+		}
+
+		entry := publicIPPolicySourceEntry{
+			CreateNew:  createNew,
+			SourceType: sourceType,
+		}
+		if sourceType == "ip_cidr" {
+			entry.IPCIDR = ipCIDR
+		}
+
+		policySource = append(policySource, entry)
 	}
 
-	policyServices := make([]sourceOfTruthPublicIPPolicyService, 0, len(req.ServiceList))
-	for _, service := range req.ServiceList {
-		name := strings.TrimSpace(service)
+	if len(policySource) == 0 {
+		source := strings.TrimSpace(strings.ToLower(req.Source))
+		if source == "" || source == "any" || source == "all" {
+			policySource = []publicIPPolicySourceEntry{{
+				CreateNew:  true,
+				SourceType: "all",
+			}}
+		} else {
+			policySource = []publicIPPolicySourceEntry{{
+				CreateNew:  true,
+				SourceType: "ip_cidr",
+				IPCIDR:     strings.TrimSpace(req.Source),
+			}}
+		}
+	}
+
+	policyServices := make([]sourceOfTruthPublicIPPolicyService, 0, len(req.ServiceConfig)+len(req.ServiceList))
+	for _, service := range req.ServiceConfig {
+		name := strings.TrimSpace(service.Name)
 		if name == "" {
 			continue
 		}
+
+		createNew := false
+		if service.CreateNew != nil {
+			createNew = *service.CreateNew
+		}
+
+		isDefault := false
+		if service.IsDefault != nil {
+			isDefault = *service.IsDefault
+		}
+
 		policyServices = append(policyServices, sourceOfTruthPublicIPPolicyService{
+			CreateNew: createNew,
 			Name:      name,
-			IsDefault: false,
+			IsDefault: isDefault,
 		})
 	}
+
 	if len(policyServices) == 0 {
-		policyServices = []sourceOfTruthPublicIPPolicyService{{Name: "ALL", IsDefault: false}}
+		for _, service := range req.ServiceList {
+			name := strings.TrimSpace(service)
+			if name == "" {
+				continue
+			}
+			policyServices = append(policyServices, sourceOfTruthPublicIPPolicyService{
+				CreateNew: false,
+				Name:      name,
+				IsDefault: false,
+			})
+		}
+	}
+	if len(policyServices) == 0 {
+		policyServices = []sourceOfTruthPublicIPPolicyService{{CreateNew: false, Name: "ALL", IsDefault: false}}
+	}
+
+	resourceType := strings.TrimSpace(req.ResourceType)
+	if resourceType == "" {
+		resourceType = "ipam"
+	}
+
+	revisionNote := strings.TrimSpace(req.RevisionNote)
+	if revisionNote == "" {
+		revisionNote = "creating Policy"
 	}
 
 	payload := sourceOfTruthCreatePublicIPPolicyRequest{
-		ResourceType: "ipam",
+		ResourceType: resourceType,
 		RuleName:     req.DisplayName,
 		Source:       policySource,
 		Services:     policyServices,
 		Action:       req.Action,
-		RevisionNote: "creating Policy",
+		RevisionNote: revisionNote,
 	}
 
 	policyPath := scopedClient.publicIPPolicyBasePath(req.UUID)

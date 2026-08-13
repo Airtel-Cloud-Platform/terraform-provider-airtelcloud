@@ -116,7 +116,9 @@ func (c *Client) DeleteCompute(ctx context.Context, id string) error {
 	return fmt.Errorf("compute deletion timed out")
 }
 
-// WaitForComputeReady polls until the compute instance reaches Active status
+// WaitForComputeReady polls until the compute instance reaches Active status.
+// Network details can lag behind status transitions, so callers should not
+// require private IP assignment in this readiness gate.
 func (c *Client) WaitForComputeReady(ctx context.Context, id string, timeout time.Duration) (*models.Compute, error) {
 	deadline := time.Now().Add(timeout)
 
