@@ -20,7 +20,7 @@ type sourceOfTruthPublicIPPolicyService struct {
 	IsDefault bool   `json:"is_default"`
 }
 
-type sourceOfTruthPublicIPPolicySource struct {
+type publicIPPolicySourceEntry struct {
 	CreateNew  bool   `json:"create_new"`
 	IPCIDR     string `json:"ip_cidr,omitempty"`
 	SourceType string `json:"source_type"`
@@ -29,7 +29,7 @@ type sourceOfTruthPublicIPPolicySource struct {
 type sourceOfTruthCreatePublicIPPolicyRequest struct {
 	ResourceType string                               `json:"resource_type"`
 	RuleName     string                               `json:"rule_name"`
-	Source       []sourceOfTruthPublicIPPolicySource  `json:"source"`
+	Source       []publicIPPolicySourceEntry          `json:"source"`
 	Services     []sourceOfTruthPublicIPPolicyService `json:"services"`
 	Action       string                               `json:"action"`
 	RevisionNote string                               `json:"revision_note"`
@@ -363,7 +363,7 @@ func (c *Client) ListIPAMServices(ctx context.Context, availabilityZone string) 
 func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.CreatePublicIPPolicyRuleRequest, availabilityZone string) (string, error) {
 	scopedClient := c.WithAvailabilityZone(availabilityZone)
 
-	policySource := make([]sourceOfTruthPublicIPPolicySource, 0, len(req.SourceConfig))
+	policySource := make([]publicIPPolicySourceEntry, 0, len(req.SourceConfig))
 	for _, source := range req.SourceConfig {
 		sourceType := strings.TrimSpace(strings.ToLower(source.SourceType))
 		ipCIDR := strings.TrimSpace(source.IPCIDR)
@@ -385,7 +385,7 @@ func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.Creat
 			createNew = *source.CreateNew
 		}
 
-		entry := sourceOfTruthPublicIPPolicySource{
+		entry := publicIPPolicySourceEntry{
 			CreateNew:  createNew,
 			SourceType: sourceType,
 		}
@@ -399,12 +399,12 @@ func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.Creat
 	if len(policySource) == 0 {
 		source := strings.TrimSpace(strings.ToLower(req.Source))
 		if source == "" || source == "any" || source == "all" {
-			policySource = []sourceOfTruthPublicIPPolicySource{{
+			policySource = []publicIPPolicySourceEntry{{
 				CreateNew:  true,
 				SourceType: "all",
 			}}
 		} else {
-			policySource = []sourceOfTruthPublicIPPolicySource{{
+			policySource = []publicIPPolicySourceEntry{{
 				CreateNew:  true,
 				SourceType: "ip_cidr",
 				IPCIDR:     strings.TrimSpace(req.Source),
