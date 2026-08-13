@@ -117,6 +117,7 @@ func (c *Client) DeleteCompute(ctx context.Context, id string) error {
 }
 
 // WaitForComputeReady polls until the compute instance reaches Active status
+// and has a private IP assigned. Public IP allocation depends on this field.
 func (c *Client) WaitForComputeReady(ctx context.Context, id string, timeout time.Duration) (*models.Compute, error) {
 	deadline := time.Now().Add(timeout)
 
@@ -134,7 +135,9 @@ func (c *Client) WaitForComputeReady(ctx context.Context, id string, timeout tim
 
 		switch compute.Status {
 		case "ACTIVE", "active", "Active":
-			return compute, nil
+			if strings.TrimSpace(compute.PrivateIP()) != "" {
+				return compute, nil
+			}
 		case "ERROR", "error", "Error":
 			return nil, fmt.Errorf("compute instance entered error state")
 		}

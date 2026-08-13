@@ -49,15 +49,35 @@ type PublicIPPolicyRule struct {
 	Action      string   `json:"action,omitempty"`
 }
 
+// PublicIPPolicyRuleSourceInput represents one source selector in a
+// source-of-truth public IP policy create payload.
+type PublicIPPolicyRuleSourceInput struct {
+	CreateNew  *bool  `json:"create_new,omitempty"`
+	IPCIDR     string `json:"ip_cidr,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+}
+
+// PublicIPPolicyRuleServiceInput represents one service selector in a
+// source-of-truth public IP policy create payload.
+type PublicIPPolicyRuleServiceInput struct {
+	CreateNew *bool  `json:"create_new,omitempty"`
+	Name      string `json:"name,omitempty"`
+	IsDefault *bool  `json:"is_default,omitempty"`
+}
+
 // CreatePublicIPPolicyRuleRequest represents the request to create a NAT policy rule
 type CreatePublicIPPolicyRuleRequest struct {
-	DisplayName string   `json:"display_name"`
-	Source      string   `json:"source"`
-	ServiceList []string `json:"service_list"`
-	Action      string   `json:"action"`
-	TargetVIP   string   `json:"target_vip"`
-	PublicIP    string   `json:"public_ip"`
-	UUID        string   `json:"uuid"`
+	DisplayName   string                           `json:"display_name"`
+	Source        string                           `json:"source"`
+	SourceConfig  []PublicIPPolicyRuleSourceInput  `json:"source_config,omitempty"`
+	ServiceList   []string                         `json:"service_list"`
+	ServiceConfig []PublicIPPolicyRuleServiceInput `json:"service_config,omitempty"`
+	Action        string                           `json:"action"`
+	ResourceType  string                           `json:"resource_type,omitempty"`
+	RevisionNote  string                           `json:"revision_note,omitempty"`
+	TargetVIP     string                           `json:"target_vip"`
+	PublicIP      string                           `json:"public_ip"`
+	UUID          string                           `json:"uuid"`
 }
 
 // PublicIPPolicyRuleListResponse represents the paginated list response for policy rules

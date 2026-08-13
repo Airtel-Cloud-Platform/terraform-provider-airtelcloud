@@ -35,12 +35,28 @@ type PublicIPPolicyRuleResourceModel struct {
 	PublicIPName     types.String `tfsdk:"public_ip_name"`
 	DisplayName      types.String `tfsdk:"display_name"`
 	Source           types.String `tfsdk:"source"`
+	SourceConfig     types.List   `tfsdk:"source_config"`
 	Services         types.List   `tfsdk:"services"`
+	ServiceConfig    types.List   `tfsdk:"service_config"`
 	Action           types.String `tfsdk:"action"`
+	ResourceType     types.String `tfsdk:"resource_type"`
+	RevisionNote     types.String `tfsdk:"revision_note"`
 	TargetVIP        types.String `tfsdk:"target_vip"`
 	PublicIP         types.String `tfsdk:"public_ip"`
 	AvailabilityZone types.String `tfsdk:"availability_zone"`
 	State            types.String `tfsdk:"state"`
+}
+
+type PublicIPPolicyRuleSourceConfigModel struct {
+	CreateNew  types.Bool   `tfsdk:"create_new"`
+	IPCIDR     types.String `tfsdk:"ip_cidr"`
+	SourceType types.String `tfsdk:"source_type"`
+}
+
+type PublicIPPolicyRuleServiceConfigModel struct {
+	CreateNew types.Bool   `tfsdk:"create_new"`
+	Name      types.String `tfsdk:"name"`
+	IsDefault types.Bool   `tfsdk:"is_default"`
 }
 
 func (r *PublicIPPolicyRuleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -79,19 +95,59 @@ func (r *PublicIPPolicyRuleResource) Schema(ctx context.Context, req resource.Sc
 				},
 			},
 			"source": schema.StringAttribute{
-				MarkdownDescription: "The source IP address or `any` for all sources.",
-				Required:            true,
+				MarkdownDescription: "The source IP address/CIDR or `any` for all sources. Optional when `source_config` is used.",
+				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"source_config": schema.ListNestedAttribute{
+				MarkdownDescription: "Detailed source entries sent to the source-of-truth API. When provided, this takes precedence over `source`.",
+				Optional:            true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"create_new": schema.BoolAttribute{
+							MarkdownDescription: "Whether to create/use a new source selector. Defaults to `true` when omitted.",
+							Optional:            true,
+						},
+						"ip_cidr": schema.StringAttribute{
+							MarkdownDescription: "Source CIDR, for example `1.2.1.0/24`.",
+							Optional:            true,
+						},
+						"source_type": schema.StringAttribute{
+							MarkdownDescription: "Source type such as `ip_cidr` or `all`.",
+							Optional:            true,
+						},
+					},
+				},
+			},
 			"services": schema.ListAttribute{
-				MarkdownDescription: "List of service names to allow/deny (e.g., `HTTP`, `HTTPS`, `SSH`). Available services can be queried from the IPAM service API.",
-				Required:            true,
+				MarkdownDescription: "List of service names to allow/deny (e.g., `HTTP`, `HTTPS`, `SSH`). Optional when `service_config` is used.",
+				Optional:            true,
 				ElementType:         types.StringType,
 				PlanModifiers:       []planmodifier.List{
 					// List doesn't have RequiresReplace in the same way,
 					// but since there's no update API, changes require replacement
+				},
+			},
+			"service_config": schema.ListNestedAttribute{
+				MarkdownDescription: "Detailed service entries sent to the source-of-truth API. When provided, this takes precedence over `services`.",
+				Optional:            true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"create_new": schema.BoolAttribute{
+							MarkdownDescription: "Whether to create/use a new service selector. Defaults to `false` when omitted.",
+							Optional:            true,
+						},
+						"name": schema.StringAttribute{
+							MarkdownDescription: "Service name, for example `RDP`.",
+							Required:            true,
+						},
+						"is_default": schema.BoolAttribute{
+							MarkdownDescription: "Whether the service is marked as default. Defaults to `false` when omitted.",
+							Optional:            true,
+						},
+					},
 				},
 			},
 			"action": schema.StringAttribute{
@@ -100,6 +156,14 @@ func (r *PublicIPPolicyRuleResource) Schema(ctx context.Context, req resource.Sc
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"resource_type": schema.StringAttribute{
+				MarkdownDescription: "Resource type sent to policy API. Defaults to `ipam`.",
+				Optional:            true,
+			},
+			"revision_note": schema.StringAttribute{
+				MarkdownDescription: "Revision note sent to policy API. Defaults to `creating Policy`.",
+				Optional:            true,
 			},
 			"target_vip": schema.StringAttribute{
 				MarkdownDescription: "The target private IP (from the parent public IP resource).",
@@ -163,6 +227,20 @@ func (r *PublicIPPolicyRuleResource) ValidateConfig(ctx context.Context, req res
 		resp.Diagnostics.AddError("Invalid Configuration",
 			"One of public_ip_id or public_ip_name must be specified.")
 	}
+
+	hasSource := !data.Source.IsNull() && strings.TrimSpace(data.Source.ValueString()) != ""
+	hasSourceConfig := !data.SourceConfig.IsNull() && !data.SourceConfig.IsUnknown() && len(data.SourceConfig.Elements()) > 0
+	if !hasSource && !hasSourceConfig {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of source or source_config must be specified.")
+	}
+
+	hasServices := !data.Services.IsNull() && !data.Services.IsUnknown() && len(data.Services.Elements()) > 0
+	hasServiceConfig := !data.ServiceConfig.IsNull() && !data.ServiceConfig.IsUnknown() && len(data.ServiceConfig.Elements()) > 0
+	if !hasServices && !hasServiceConfig {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of services or service_config must be specified.")
+	}
 }
 
 func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -187,21 +265,98 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 
 	// Get service names from the plan
 	var serviceNames []string
-	resp.Diagnostics.Append(data.Services.ElementsAs(ctx, &serviceNames, false)...)
-	if resp.Diagnostics.HasError() {
-		return
+	if !data.Services.IsNull() && !data.Services.IsUnknown() {
+		resp.Diagnostics.Append(data.Services.ElementsAs(ctx, &serviceNames, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	var sourceConfigPlan []PublicIPPolicyRuleSourceConfigModel
+	if !data.SourceConfig.IsNull() && !data.SourceConfig.IsUnknown() {
+		resp.Diagnostics.Append(data.SourceConfig.ElementsAs(ctx, &sourceConfigPlan, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	var serviceConfigPlan []PublicIPPolicyRuleServiceConfigModel
+	if !data.ServiceConfig.IsNull() && !data.ServiceConfig.IsUnknown() {
+		resp.Diagnostics.Append(data.ServiceConfig.ElementsAs(ctx, &serviceConfigPlan, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	sourceConfig := make([]models.PublicIPPolicyRuleSourceInput, 0, len(sourceConfigPlan))
+	for _, item := range sourceConfigPlan {
+		entry := models.PublicIPPolicyRuleSourceInput{}
+		if !item.CreateNew.IsNull() && !item.CreateNew.IsUnknown() {
+			v := item.CreateNew.ValueBool()
+			entry.CreateNew = &v
+		}
+		if !item.IPCIDR.IsNull() && !item.IPCIDR.IsUnknown() {
+			entry.IPCIDR = item.IPCIDR.ValueString()
+		}
+		if !item.SourceType.IsNull() && !item.SourceType.IsUnknown() {
+			entry.SourceType = item.SourceType.ValueString()
+		}
+		sourceConfig = append(sourceConfig, entry)
+	}
+
+	serviceConfig := make([]models.PublicIPPolicyRuleServiceInput, 0, len(serviceConfigPlan))
+	for _, item := range serviceConfigPlan {
+		entry := models.PublicIPPolicyRuleServiceInput{}
+		if !item.CreateNew.IsNull() && !item.CreateNew.IsUnknown() {
+			v := item.CreateNew.ValueBool()
+			entry.CreateNew = &v
+		}
+		if !item.Name.IsNull() && !item.Name.IsUnknown() {
+			entry.Name = item.Name.ValueString()
+		}
+		if !item.IsDefault.IsNull() && !item.IsDefault.IsUnknown() {
+			v := item.IsDefault.ValueBool()
+			entry.IsDefault = &v
+		}
+		serviceConfig = append(serviceConfig, entry)
+	}
+
+	sourceValue := strings.TrimSpace(data.Source.ValueString())
+	if sourceValue == "" && len(sourceConfig) > 0 {
+		first := sourceConfig[0]
+		sourceType := strings.ToLower(strings.TrimSpace(first.SourceType))
+		switch sourceType {
+		case "all", "any":
+			sourceValue = "any"
+		default:
+			sourceValue = strings.TrimSpace(first.IPCIDR)
+		}
+	}
+
+	if len(serviceNames) == 0 && len(serviceConfig) > 0 {
+		for _, s := range serviceConfig {
+			name := strings.TrimSpace(s.Name)
+			if name == "" {
+				continue
+			}
+			serviceNames = append(serviceNames, name)
+		}
 	}
 
 	az := data.AvailabilityZone.ValueString()
 
 	createReq := &models.CreatePublicIPPolicyRuleRequest{
-		DisplayName: data.DisplayName.ValueString(),
-		Source:      data.Source.ValueString(),
-		ServiceList: serviceNames,
-		Action:      data.Action.ValueString(),
-		TargetVIP:   data.TargetVIP.ValueString(),
-		PublicIP:    data.PublicIP.ValueString(),
-		UUID:        data.PublicIPID.ValueString(),
+		DisplayName:   data.DisplayName.ValueString(),
+		Source:        sourceValue,
+		SourceConfig:  sourceConfig,
+		ServiceList:   serviceNames,
+		ServiceConfig: serviceConfig,
+		Action:        data.Action.ValueString(),
+		ResourceType:  strings.TrimSpace(data.ResourceType.ValueString()),
+		RevisionNote:  strings.TrimSpace(data.RevisionNote.ValueString()),
+		TargetVIP:     data.TargetVIP.ValueString(),
+		PublicIP:      data.PublicIP.ValueString(),
+		UUID:          data.PublicIPID.ValueString(),
 	}
 
 	createdPolicyID, err := r.client.CreatePublicIPPolicyRule(ctx, createReq, az)
