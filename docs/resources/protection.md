@@ -17,11 +17,13 @@ A protection policy associates a compute instance with a protection plan to sche
 resource "airtelcloud_protection" "web_server" {
   name             = "web-server-backup"
   description      = "Daily backup for web server"
-  compute_id       = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
-  protection_plan  = "daily-backup"
+  # Set either compute_id or compute_name.
+  compute_name     = "my-web-server-vm"
+  # protection_plan expects the plan UUID/id (not plan name).
+  protection_plan  = airtelcloud_protection_plan.daily.id
   enable_scheduler = "true"
-  start_date       = "2026-01-01"
-  start_time       = "02:00"
+  weekday          = "monday"
+  start_time       = "02:00 AM"
 }
 ```
 
@@ -30,18 +32,20 @@ resource "airtelcloud_protection" "web_server" {
 
 ### Required
 
-- `compute_id` (String) The ID of the compute instance to protect.
 - `name` (String) The name of the protection policy.
-- `protection_plan` (String) The protection plan to associate with this policy.
+- `protection_plan` (String) The UUID of the protection plan to associate with this policy. Reference the plan's `id` (for example, `airtelcloud_protection_plan.example.id`), not its name.
 
 ### Optional
 
+- `compute_id` (String) The ID of the compute instance to protect. Either `compute_id` or `compute_name` must be specified.
+- `compute_name` (String) The name of the compute instance to protect. If set, it is resolved to `compute_id`. Either `compute_id` or `compute_name` must be specified.
 - `description` (String) A description of the protection policy.
 - `enable_scheduler` (String) Whether to enable the backup scheduler. Defaults to `true`.
-- `end_date` (String) The end date for the protection schedule.
+- `end_date` (String) The end date for the protection schedule, in `YYYY-MM-DD` format. Sent to the API as `MM/DD/YYYY`.
 - `policy_type_id` (String) The policy type ID.
-- `start_date` (String) The start date for the protection schedule.
-- `start_time` (String) The start time for the protection schedule.
+- `start_date` (String) The start date for the protection schedule, in `YYYY-MM-DD` format (for example, `2026-07-20`). Mutually exclusive with `weekday`. Sent to the API as `MM/DD/YYYY`.
+- `start_time` (String) The start time for the protection schedule in IST (`Asia/Kolkata`), in 24-hour `HH:MM` format (for example, `02:00`, `00:00`). Sent to the API as 12-hour `H:MM AM/PM`.
+- `weekday` (String) Optional weekday convenience input (`monday`..`sunday` or `mon`..`sun`). Mutually exclusive with `start_date`. Converted internally to the next matching `start_date` in IST (`Asia/Kolkata`).
 
 ### Read-Only
 

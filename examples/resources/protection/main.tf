@@ -2,16 +2,16 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.1.9"
+      version = "1.2.0"
     }
   }
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://north.cloud.airtel.in"
+  api_endpoint = "https://south.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "north"
+  region       = "south"
   organization = var.organization
   project_name = var.project_name
 }
@@ -53,7 +53,8 @@ resource "airtelcloud_protection_plan" "daily" {
   recurrence     = 86400
   selector_key   = "AZ"
   selector_value = "N1"
-  subnet_id      = "5bf3e086-6984-4f2f-b77f-7883993e3060"
+  subnet_name      = "subnet1213"
+  vpc_name         = "copper-vpc1"
 }
 
 # Create a protection policy for a compute instance
@@ -62,26 +63,29 @@ resource "airtelcloud_protection" "web_server" {
   description = "Backup policy for web server"
   #compute_id       = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
   # Or reference the instance by name instead of id (mutually exclusive with compute_id):
-  compute_name = "lbaas-vm"
+  compute_name = "Test_VM2K22A18-2"
   # protection_plan must be the plan UUID; reference the plan's id (not its name).
-  protection_plan  = airtelcloud_protection_plan.daily.id
   enable_scheduler = "true"
+   protection_plan  = airtelcloud_protection_plan.daily.id
   # start_date accepts ISO (YYYY-MM-DD); start_time accepts 24-hour HH:MM.
   # The provider converts them to the API's MM/DD/YYYY and 12-hour AM/PM formats.
-  start_date = "2026-07-20"
-  start_time = "02:00"
+  # start_date = "2026-07-20"
+  start_time = "11:30 AM"
+  weekday = "thursday"
 }
 
 # Weekly backup plan (alternative configuration)
-#resource "airtelcloud_protection_plan" "weekly" {
-#  name           = "${var.resource_prefix}-weekly-backup"
-#  description    = "Weekly backup with 12-week retention"
-#  retention      = 12
-#  retention_unit = "WEEKS"
-#  recurrence     = 604800
-#  selector_key   = "AZ"
-#  selector_value = "S1"
-#}
+resource "airtelcloud_protection_plan" "weekly" {
+ name           = "${var.resource_prefix}-weekly-backup"
+ description    = "Weekly backup with 12-week retention"
+ retention      = 12
+ retention_unit = "WEEKS"
+ recurrence     = 604800
+ selector_key   = "AZ"
+ selector_value = "S1"
+ subnet_name      = "subnet1213"
+ vpc_name         = "copper-vpc1"
+}
 
 # Output protection details
 output "protection_plan_id" {

@@ -32,6 +32,21 @@ type ProtectionResource struct {
 	client *client.Client
 }
 
+func stringValueOrNull(v string) types.String {
+	if strings.TrimSpace(v) == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(v)
+}
+
+var istLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		return time.FixedZone("IST", 5*60*60+30*60)
+	}
+	return loc
+}()
+
 type ProtectionResourceModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
@@ -42,6 +57,7 @@ type ProtectionResourceModel struct {
 	ProtectionPlan  types.String `tfsdk:"protection_plan"`
 	EnableScheduler types.String `tfsdk:"enable_scheduler"`
 	StartDate       types.String `tfsdk:"start_date"`
+	Weekday         types.String `tfsdk:"weekday"`
 	EndDate         types.String `tfsdk:"end_date"`
 	StartTime       types.String `tfsdk:"start_time"`
 	Status          types.String `tfsdk:"status"`
@@ -104,7 +120,11 @@ func (r *ProtectionResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Default:             stringdefault.StaticString("true"),
 			},
 			"start_date": schema.StringAttribute{
-				MarkdownDescription: "The start date for the protection schedule, in `YYYY-MM-DD` format (e.g. `2026-07-20`). Sent to the API as `MM/DD/YYYY`.",
+				MarkdownDescription: "The start date for the protection schedule, in `YYYY-MM-DD` format (e.g. `2026-07-20`). Mutually exclusive with `weekday`. Sent to the API as `MM/DD/YYYY`.",
+				Optional:            true,
+			},
+			"weekday": schema.StringAttribute{
+				MarkdownDescription: "Optional weekday convenience input (`monday`..`sunday` or `mon`..`sun`). Mutually exclusive with `start_date`. Converted internally to the next matching `start_date` in IST (`Asia/Kolkata`).",
 				Optional:            true,
 			},
 			"end_date": schema.StringAttribute{
@@ -112,7 +132,7 @@ func (r *ProtectionResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Optional:            true,
 			},
 			"start_time": schema.StringAttribute{
-				MarkdownDescription: "The start time for the protection schedule, in 24-hour `HH:MM` format (e.g. `02:00`, `00:00`). Sent to the API as 12-hour `H:MM AM/PM`.",
+				MarkdownDescription: "The start time for the protection schedule in IST (`Asia/Kolkata`), in 24-hour `HH:MM` format (e.g. `02:00`, `00:00`). Sent to the API as 12-hour `H:MM AM/PM`.",
 				Optional:            true,
 			},
 			"status": schema.StringAttribute{
@@ -169,6 +189,13 @@ func (r *ProtectionResource) ValidateConfig(ctx context.Context, req resource.Va
 		resp.Diagnostics.AddError("Invalid Configuration",
 			"One of compute_id or compute_name must be specified.")
 	}
+
+	hasStartDate := !data.StartDate.IsNull() && strings.TrimSpace(data.StartDate.ValueString()) != ""
+	hasWeekday := !data.Weekday.IsNull() && strings.TrimSpace(data.Weekday.ValueString()) != ""
+	if hasStartDate && hasWeekday {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of start_date or weekday may be specified, not both.")
+	}
 }
 
 // formatProtectionStartDate converts a start date to the API's MM/DD/YYYY format.
@@ -202,6 +229,50 @@ func formatProtectionStartTime(in string) (string, error) {
 	return "", fmt.Errorf("invalid start_time %q: expected 24-hour HH:MM (e.g. 02:00) or 12-hour (e.g. 2:00 AM)", in)
 }
 
+func resolveWeekdayStartDate(in string, now time.Time) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(in))
+	if normalized == "" {
+		return "", nil
+	}
+
+	weekdayMap := map[string]time.Weekday{
+		"sun":       time.Sunday,
+		"sunday":    time.Sunday,
+		"mon":       time.Monday,
+		"monday":    time.Monday,
+		"tue":       time.Tuesday,
+		"tues":      time.Tuesday,
+		"tuesday":   time.Tuesday,
+		"wed":       time.Wednesday,
+		"wednesday": time.Wednesday,
+		"thu":       time.Thursday,
+		"thur":      time.Thursday,
+		"thurs":     time.Thursday,
+		"thursday":  time.Thursday,
+		"fri":       time.Friday,
+		"friday":    time.Friday,
+		"sat":       time.Saturday,
+		"saturday":  time.Saturday,
+	}
+
+	target, ok := weekdayMap[normalized]
+	if !ok {
+		return "", fmt.Errorf("invalid weekday %q: expected monday..sunday or mon..sun", in)
+	}
+
+	istNow := now.In(istLocation)
+	base := time.Date(istNow.Year(), istNow.Month(), istNow.Day(), 0, 0, 0, 0, istLocation)
+	delta := (int(target) - int(base.Weekday()) + 7) % 7
+	return base.AddDate(0, 0, delta).Format("2006-01-02"), nil
+}
+
+func resolveProtectionStartDateInput(startDate, weekday string, now time.Time) (string, error) {
+	if strings.TrimSpace(startDate) != "" {
+		return startDate, nil
+	}
+	return resolveWeekdayStartDate(weekday, now)
+}
+
 func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data ProtectionResourceModel
 
@@ -224,7 +295,12 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 	data.ComputeID = types.StringValue(computeID)
 
 	// The API expects start_date as MM/DD/YYYY and start_time as 12-hour AM/PM.
-	startDate, err := formatProtectionStartDate(data.StartDate.ValueString())
+	startDateInput, err := resolveProtectionStartDateInput(data.StartDate.ValueString(), data.Weekday.ValueString(), time.Now())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+	startDate, err := formatProtectionStartDate(startDateInput)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
 		return
@@ -252,6 +328,10 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 		StartTime:       startTime,
 	}
 
+	tflog.Debug(ctx, "-==----====------=---", map[string]interface{}{
+		"create": createReq,
+	})
+
 	protection, err := r.client.CreateProtection(ctx, createReq)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create protection, got error: %s", err))
@@ -261,15 +341,9 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 	data.ID = types.StringValue(strconv.Itoa(protection.ID))
 	data.Name = types.StringValue(protection.Name)
 	data.Status = types.StringValue(protection.Status)
-	if protection.Region != "" {
-		data.Region = types.StringValue(protection.Region)
-	}
-	if protection.AZName != "" {
-		data.AZName = types.StringValue(protection.AZName)
-	}
-	if protection.Created != "" {
-		data.Created = types.StringValue(protection.Created)
-	}
+	data.Region = stringValueOrNull(protection.Region)
+	data.AZName = stringValueOrNull(protection.AZName)
+	data.Created = stringValueOrNull(protection.Created)
 
 	tflog.Trace(ctx, "created protection resource")
 
@@ -315,15 +389,9 @@ func (r *ProtectionResource) Read(ctx context.Context, req resource.ReadRequest,
 		data.ProtectionPlan = types.StringValue(protection.ProtectionPlan)
 	}
 	data.Status = types.StringValue(protection.Status)
-	if protection.Region != "" {
-		data.Region = types.StringValue(protection.Region)
-	}
-	if protection.AZName != "" {
-		data.AZName = types.StringValue(protection.AZName)
-	}
-	if protection.Created != "" {
-		data.Created = types.StringValue(protection.Created)
-	}
+	data.Region = stringValueOrNull(protection.Region)
+	data.AZName = stringValueOrNull(protection.AZName)
+	data.Created = stringValueOrNull(protection.Created)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -343,7 +411,12 @@ func (r *ProtectionResource) Update(ctx context.Context, req resource.UpdateRequ
 	}
 
 	// The API expects start_date as MM/DD/YYYY and start_time as 12-hour AM/PM.
-	startDate, err := formatProtectionStartDate(data.StartDate.ValueString())
+	startDateInput, err := resolveProtectionStartDateInput(data.StartDate.ValueString(), data.Weekday.ValueString(), time.Now())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+	startDate, err := formatProtectionStartDate(startDateInput)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
 		return
@@ -378,12 +451,8 @@ func (r *ProtectionResource) Update(ctx context.Context, req resource.UpdateRequ
 
 	data.Name = types.StringValue(protection.Name)
 	data.Status = types.StringValue(protection.Status)
-	if protection.Region != "" {
-		data.Region = types.StringValue(protection.Region)
-	}
-	if protection.AZName != "" {
-		data.AZName = types.StringValue(protection.AZName)
-	}
+	data.Region = stringValueOrNull(protection.Region)
+	data.AZName = stringValueOrNull(protection.AZName)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
