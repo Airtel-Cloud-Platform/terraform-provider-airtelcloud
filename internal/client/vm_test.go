@@ -575,3 +575,61 @@ func TestWaitForComputeReady(t *testing.T) {
 		}
 	})
 }
+
+func TestWaitForComputeReadyWithPrivateIP(t *testing.T) {
+	computePath := "/api/v2.1/computes/domain/test-org/project/test-project/computes/test-id/"
+
+	t.Run("waits until private IP is available", func(t *testing.T) {
+		mockServer := testutil.NewMockServer()
+		defer mockServer.Close()
+
+		var callCount int32
+		mockServer.AddHandler("GET", computePath, func(w http.ResponseWriter, r *http.Request) {
+			count := atomic.AddInt32(&callCount, 1)
+			w.Header().Set("Content-Type", "application/json")
+			compute := models.Compute{
+				ID:     "test-id",
+				Status: "ACTIVE",
+			}
+			if count >= 2 {
+				compute.Ports = []models.Port{{FixedIPs: []string{"10.10.10.12"}}}
+			}
+			json.NewEncoder(w).Encode(compute)
+		})
+
+		baseURL := strings.TrimSuffix(mockServer.URL, "/")
+		c, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+		compute, err := c.WaitForComputeReadyWithPrivateIP(context.Background(), "test-id", 30*time.Second)
+		if err != nil {
+			t.Fatalf("WaitForComputeReadyWithPrivateIP() error = %v", err)
+		}
+		if compute.PrivateIP() != "10.10.10.12" {
+			t.Errorf("WaitForComputeReadyWithPrivateIP() privateIP = %q, want %q", compute.PrivateIP(), "10.10.10.12")
+		}
+	})
+
+	t.Run("timeout when ACTIVE but private IP missing", func(t *testing.T) {
+		mockServer := testutil.NewMockServer()
+		defer mockServer.Close()
+
+		mockServer.AddHandler("GET", computePath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(models.Compute{
+				ID:     "test-id",
+				Status: "ACTIVE",
+			})
+		})
+
+		baseURL := strings.TrimSuffix(mockServer.URL, "/")
+		c, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+		_, err := c.WaitForComputeReadyWithPrivateIP(context.Background(), "test-id", 1*time.Second)
+		if err == nil {
+			t.Fatal("WaitForComputeReadyWithPrivateIP() expected timeout error")
+		}
+		if !strings.Contains(err.Error(), "private IP") {
+			t.Errorf("WaitForComputeReadyWithPrivateIP() error = %v, want message containing 'private IP'", err)
+		}
+	})
+}

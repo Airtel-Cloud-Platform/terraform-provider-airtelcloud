@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client/testutil"
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
@@ -100,6 +101,127 @@ func TestDeletePublicIP(t *testing.T) {
 	if err := client.DeletePublicIP(context.Background(), "test-public-ip-uuid"); err != nil {
 		t.Fatalf("DeletePublicIP() error = %v", err)
 	}
+}
+
+func TestDeletePublicIPWithWait(t *testing.T) {
+	t.Run("succeeds when backend reports deleted status", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		deletePath := testPublicIPBasePath + "/test-public-ip-uuid"
+		getPath := testPublicIPBasePath + "/test-public-ip-uuid"
+
+		ms.AddHandler("DELETE", deletePath, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "Public IP deletion in progress",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid",
+					"public_ip": "103.239.168.100",
+					"status":    "deleting",
+				},
+			})
+		})
+
+		ms.AddHandler("GET", getPath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid",
+					"public_ip": "103.239.168.100",
+					"status":    "Deleted",
+				},
+			})
+		})
+
+		client := newTestClientForPublicIP(t, ms)
+		if err := client.DeletePublicIPWithWait(context.Background(), "test-public-ip-uuid", 2*time.Second); err != nil {
+			t.Fatalf("DeletePublicIPWithWait() error = %v, want nil when backend reports a deleted status", err)
+		}
+	})
+
+	t.Run("returns error when backend reports failed status", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		deletePath := testPublicIPBasePath + "/test-public-ip-uuid"
+		getPath := testPublicIPBasePath + "/test-public-ip-uuid"
+
+		ms.AddHandler("DELETE", deletePath, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "Public IP deletion in progress",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid",
+					"public_ip": "103.239.168.100",
+					"status":    "deleting",
+				},
+			})
+		})
+
+		ms.AddHandler("GET", getPath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid",
+					"public_ip": "103.239.168.100",
+					"status":    "Failed",
+				},
+			})
+		})
+
+		client := newTestClientForPublicIP(t, ms)
+		err := client.DeletePublicIPWithWait(context.Background(), "test-public-ip-uuid", 2*time.Second)
+		if err == nil {
+			t.Fatal("DeletePublicIPWithWait() expected failure on failed backend status")
+		}
+		if !strings.Contains(err.Error(), "delete failed") {
+			t.Fatalf("DeletePublicIPWithWait() error = %v, want delete failed message", err)
+		}
+	})
+
+	t.Run("returns error when backend reports timeout status", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		deletePath := testPublicIPBasePath + "/test-public-ip-uuid"
+		getPath := testPublicIPBasePath + "/test-public-ip-uuid"
+
+		ms.AddHandler("DELETE", deletePath, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "Public IP deletion in progress",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid",
+					"public_ip": "103.239.168.100",
+					"status":    "deleting",
+				},
+			})
+		})
+
+		ms.AddHandler("GET", getPath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid",
+					"public_ip": "103.239.168.100",
+					"status":    "timed_out",
+				},
+			})
+		})
+
+		client := newTestClientForPublicIP(t, ms)
+		err := client.DeletePublicIPWithWait(context.Background(), "test-public-ip-uuid", 2*time.Second)
+		if err == nil {
+			t.Fatal("DeletePublicIPWithWait() expected failure on timed_out backend status")
+		}
+		if !strings.Contains(err.Error(), "delete failed") {
+			t.Fatalf("DeletePublicIPWithWait() error = %v, want delete failed message for timeout state", err)
+		}
+	})
 }
 
 func TestResolvePublicIPID(t *testing.T) {
@@ -547,6 +669,232 @@ func TestDeletePublicIPPolicyRule(t *testing.T) {
 	if err := client.DeletePublicIPPolicyRule(context.Background(), "test-public-ip-uuid", "test-public-ip-uuid-1"); err != nil {
 		t.Fatalf("DeletePublicIPPolicyRule() error = %v", err)
 	}
+}
+
+func TestDeletePublicIPPolicyRuleWithWait(t *testing.T) {
+	t.Run("waits until rule is not found", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		rulePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy/test-public-ip-uuid-1"
+		deletePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy"
+
+		var getCount int
+		ms.AddHandler("GET", rulePath, func(w http.ResponseWriter, r *http.Request) {
+			getCount++
+			w.Header().Set("Content-Type", "application/json")
+			if getCount < 2 {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"message": "",
+					"data": map[string]any{
+						"uuid":      "test-public-ip-uuid-1",
+						"rule_name": "test-rule",
+						"status":    "active",
+						"action":    "accept",
+						"source":    []map[string]any{{"all": true}},
+						"services":  []map[string]any{{"name": "HTTP"}},
+					},
+				})
+				return
+			}
+
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":  404,
+				"message": "Not found",
+			})
+		})
+
+		ms.AddHandler("DELETE", deletePath, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		client := newTestClientForPublicIP(t, ms)
+		err := client.DeletePublicIPPolicyRuleWithWait(
+			context.Background(),
+			"test-public-ip-uuid",
+			"10.1.99.172",
+			"103.239.168.100",
+			"test-public-ip-uuid-1",
+			4*time.Second,
+		)
+		if err != nil {
+			t.Fatalf("DeletePublicIPPolicyRuleWithWait() error = %v", err)
+		}
+	})
+
+	t.Run("succeeds when backend reports deleted state", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		rulePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy/test-public-ip-uuid-1"
+		deletePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy"
+
+		ms.AddHandler("GET", rulePath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid-1",
+					"rule_name": "test-rule",
+					"status":    "Deleted",
+					"state":     "deleted",
+					"action":    "accept",
+					"source":    []map[string]any{{"all": true}},
+					"services":  []map[string]any{{"name": "HTTP"}},
+				},
+			})
+		})
+
+		ms.AddHandler("DELETE", deletePath, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		client := newTestClientForPublicIP(t, ms)
+		err := client.DeletePublicIPPolicyRuleWithWait(
+			context.Background(),
+			"test-public-ip-uuid",
+			"10.1.99.172",
+			"103.239.168.100",
+			"test-public-ip-uuid-1",
+			2*time.Second,
+		)
+		if err != nil {
+			t.Fatalf("DeletePublicIPPolicyRuleWithWait() error = %v, want nil when backend reports a deleted state", err)
+		}
+	})
+
+	t.Run("returns failure when backend reports failed state", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		rulePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy/test-public-ip-uuid-1"
+		deletePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy"
+
+		ms.AddHandler("GET", rulePath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "",
+				"data": map[string]any{
+					"uuid":          "test-public-ip-uuid-1",
+					"rule_name":     "test-rule",
+					"status":        "Failed",
+					"state":         "failed",
+					"error_message": "rule creation failed",
+					"action":        "accept",
+					"source":        []map[string]any{{"all": true}},
+					"services":      []map[string]any{{"name": "HTTP"}},
+				},
+			})
+		})
+
+		ms.AddHandler("DELETE", deletePath, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		client := newTestClientForPublicIP(t, ms)
+		err := client.DeletePublicIPPolicyRuleWithWait(
+			context.Background(),
+			"test-public-ip-uuid",
+			"10.1.99.172",
+			"103.239.168.100",
+			"test-public-ip-uuid-1",
+			2*time.Second,
+		)
+		if err == nil {
+			t.Fatal("DeletePublicIPPolicyRuleWithWait() expected failure error for failed backend state")
+		}
+		if !strings.Contains(err.Error(), "failed") {
+			t.Fatalf("DeletePublicIPPolicyRuleWithWait() error = %v, want failed-state message", err)
+		}
+	})
+
+	t.Run("returns failure when backend reports timeout state", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		rulePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy/test-public-ip-uuid-1"
+		deletePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy"
+
+		ms.AddHandler("GET", rulePath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid-1",
+					"rule_name": "test-rule",
+					"status":    "timed_out",
+					"state":     "timed_out",
+					"action":    "accept",
+					"source":    []map[string]any{{"all": true}},
+					"services":  []map[string]any{{"name": "HTTP"}},
+				},
+			})
+		})
+
+		ms.AddHandler("DELETE", deletePath, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		client := newTestClientForPublicIP(t, ms)
+		err := client.DeletePublicIPPolicyRuleWithWait(
+			context.Background(),
+			"test-public-ip-uuid",
+			"10.1.99.172",
+			"103.239.168.100",
+			"test-public-ip-uuid-1",
+			2*time.Second,
+		)
+		if err == nil {
+			t.Fatal("DeletePublicIPPolicyRuleWithWait() expected failure error for timeout backend state")
+		}
+		if !strings.Contains(err.Error(), "failed") {
+			t.Fatalf("DeletePublicIPPolicyRuleWithWait() error = %v, want failed-state message for timeout state", err)
+		}
+	})
+
+	t.Run("times out when rule remains present", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		rulePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy/test-public-ip-uuid-1"
+		deletePath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy"
+
+		ms.AddHandler("GET", rulePath, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid-1",
+					"rule_name": "test-rule",
+					"status":    "active",
+					"action":    "accept",
+					"source":    []map[string]any{{"all": true}},
+					"services":  []map[string]any{{"name": "HTTP"}},
+				},
+			})
+		})
+
+		ms.AddHandler("DELETE", deletePath, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		client := newTestClientForPublicIP(t, ms)
+		err := client.DeletePublicIPPolicyRuleWithWait(
+			context.Background(),
+			"test-public-ip-uuid",
+			"10.1.99.172",
+			"103.239.168.100",
+			"test-public-ip-uuid-1",
+			1*time.Second,
+		)
+		if err == nil {
+			t.Fatal("DeletePublicIPPolicyRuleWithWait() expected timeout error")
+		}
+		if !strings.Contains(err.Error(), "still present") {
+			t.Fatalf("DeletePublicIPPolicyRuleWithWait() error = %v, want timeout message", err)
+		}
+	})
 }
 
 func TestCreatePublicIP_DecodesWrappedResponseData(t *testing.T) {

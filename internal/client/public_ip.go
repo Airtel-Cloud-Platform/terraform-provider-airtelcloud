@@ -308,7 +308,117 @@ func (c *Client) ListPublicIPs(ctx context.Context) (*models.PublicIPListRespons
 
 // DeletePublicIP deallocates a public IP by UUID
 func (c *Client) DeletePublicIP(ctx context.Context, uuid string) error {
-	return c.Delete(ctx, fmt.Sprintf("%s/%s", c.ipamBasePath(), uuid))
+	path := fmt.Sprintf("%s/%s", c.ipamBasePath(), uuid)
+	tflog.Debug(ctx, "DeletePublicIP: issuing delete request", map[string]interface{}{
+		"public_ip_uuid": uuid,
+		"delete_path":    path,
+	})
+
+	err := c.Delete(ctx, path)
+	if err != nil {
+		tflog.Error(ctx, "DeletePublicIP: delete request failed", map[string]interface{}{
+			"public_ip_uuid": uuid,
+			"delete_path":    path,
+			"error":          err.Error(),
+		})
+		return err
+	}
+
+	tflog.Debug(ctx, "DeletePublicIP: delete request completed", map[string]interface{}{
+		"public_ip_uuid": uuid,
+		"delete_path":    path,
+	})
+	return nil
+}
+
+// DeletePublicIPWithWait deletes a public IP and waits until the backend reports
+// a final deleted state or the resource is no longer found.
+func (c *Client) DeletePublicIPWithWait(ctx context.Context, uuid string, timeout time.Duration) error {
+	err := c.DeletePublicIP(ctx, uuid)
+	if err != nil {
+		if IsNotFoundError(err) {
+			return nil
+		}
+		return err
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		ip, readErr := c.GetPublicIP(ctx, uuid)
+		if readErr != nil {
+			if IsNotFoundError(readErr) {
+				return nil
+			}
+			if isAPIErrorStatus(readErr, 500) || isAPIErrorStatus(readErr, 503) {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			return readErr
+		}
+
+		if ip != nil {
+			if isPublicIPDeleted(ip.Status) {
+				tflog.Debug(ctx, "DeletePublicIPWithWait: backend reported deleted status", map[string]interface{}{
+					"public_ip_uuid": uuid,
+					"status":         ip.Status,
+				})
+				return nil
+			}
+
+			if isPublicIPFailed(ip.Status) {
+				return fmt.Errorf("public IP %s delete failed: status=%s", uuid, ip.Status)
+			}
+
+			tflog.Debug(ctx, "DeletePublicIPWithWait: public IP still present after delete request", map[string]interface{}{
+				"public_ip_uuid": uuid,
+				"status":         ip.Status,
+				"deadline":       deadline.Format(time.RFC3339Nano),
+				"remaining":      time.Until(deadline).String(),
+			})
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	tflog.Debug(ctx, "DeletePublicIPWithWait: delete wait timeout reached; public IP still present", map[string]interface{}{
+		"public_ip_uuid": uuid,
+		"timeout":        timeout,
+	})
+	return fmt.Errorf("public IP %s is still present after delete wait timeout %v", uuid, timeout)
+}
+
+func isPublicIPDeleted(status string) bool {
+	statusNormalized := strings.ToLower(strings.TrimSpace(status))
+	if statusNormalized == "" {
+		return false
+	}
+
+	switch statusNormalized {
+	case "deleted", "delete", "soft-deleted", "removed", "not_found", "notfound":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPublicIPFailed(status string) bool {
+	statusNormalized := strings.ToLower(strings.TrimSpace(status))
+	if statusNormalized == "" {
+		return false
+	}
+
+	switch statusNormalized {
+	case "failed", "failure", "error", "timed_out", "timeout", "timedout", "cancelled", "canceled", "rollback", "deletion_failed", "deletionfailed":
+		return true
+	default:
+		return false
+	}
 }
 
 // ResolvePublicIPID resolves a public IP name (object_name) to its UUID
@@ -581,9 +691,128 @@ func (c *Client) DeletePublicIPPolicyRule(ctx context.Context, publicIPUUID, rul
 		"public_ip_id": publicIPUUID,
 		"policy_uuid":  ruleUUID,
 		"policy_path":  path,
+		"request_body": payload,
 	})
 
-	return c.DeleteWithBody(ctx, path, &payload, nil)
+	tflog.Debug(ctx, "DeletePublicIPPolicyRule: issuing delete request with policy payload", map[string]interface{}{
+		"public_ip_id": publicIPUUID,
+		"policy_uuid":  ruleUUID,
+		"policy_path":  path,
+		"payload":      payload,
+	})
+
+	err := c.DeleteWithBody(ctx, path, &payload, nil)
+	if err != nil {
+		tflog.Error(ctx, "DeletePublicIPPolicyRule: delete request failed", map[string]interface{}{
+			"public_ip_id": publicIPUUID,
+			"policy_uuid":  ruleUUID,
+			"policy_path":  path,
+			"error":        err.Error(),
+		})
+		return err
+	}
+
+	tflog.Debug(ctx, "DeletePublicIPPolicyRule: delete request completed", map[string]interface{}{
+		"public_ip_id": publicIPUUID,
+		"policy_uuid":  ruleUUID,
+		"policy_path":  path,
+	})
+	return nil
+}
+
+// DeletePublicIPPolicyRuleWithWait deletes a NAT policy rule and waits until
+// a follow-up read confirms the rule is absent in backend.
+func (c *Client) DeletePublicIPPolicyRuleWithWait(ctx context.Context, publicIPUUID, targetVIP, publicIP, ruleUUID string, timeout time.Duration) error {
+	err := c.DeletePublicIPPolicyRule(ctx, publicIPUUID, ruleUUID)
+	if err != nil {
+		if IsNotFoundError(err) {
+			return nil
+		}
+		return err
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		rule, readErr := c.GetPublicIPPolicyRule(ctx, publicIPUUID, targetVIP, publicIP, ruleUUID)
+		if readErr != nil {
+			if IsNotFoundError(readErr) {
+				return nil
+			}
+
+			if isAPIErrorStatus(readErr, 500) || isAPIErrorStatus(readErr, 503) {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+
+			return readErr
+		}
+
+		if rule != nil {
+			if isPublicIPPolicyRuleDeleted(rule.State) {
+				tflog.Debug(ctx, "DeletePublicIPPolicyRuleWithWait: backend reported deleted state", map[string]interface{}{
+					"public_ip_id": publicIPUUID,
+					"policy_uuid":  ruleUUID,
+					"state":        rule.State,
+				})
+				return nil
+			}
+
+			if isPublicIPPolicyRuleFailed(rule.State) {
+				return fmt.Errorf("public IP policy rule %s delete failed: state=%s", ruleUUID, rule.State)
+			}
+
+			tflog.Debug(ctx, "DeletePublicIPPolicyRuleWithWait: policy still present after delete request", map[string]interface{}{
+				"public_ip_id": publicIPUUID,
+				"policy_uuid":  ruleUUID,
+				"state":        rule.State,
+				"deadline":     deadline.Format(time.RFC3339Nano),
+				"remaining":    time.Until(deadline).String(),
+			})
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	tflog.Debug(ctx, "DeletePublicIPPolicyRuleWithWait: delete wait timeout reached; policy still present", map[string]interface{}{
+		"public_ip_id": publicIPUUID,
+		"policy_uuid":  ruleUUID,
+		"timeout":      timeout,
+	})
+	return fmt.Errorf("public IP policy rule %s is still present after delete wait timeout %v", ruleUUID, timeout)
+}
+
+func isPublicIPPolicyRuleDeleted(state string) bool {
+	stateNormalized := strings.ToLower(strings.TrimSpace(state))
+	if stateNormalized == "" {
+		return false
+	}
+
+	switch stateNormalized {
+	case "deleted", "delete", "soft-deleted", "removed", "not_found", "notfound":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPublicIPPolicyRuleFailed(state string) bool {
+	stateNormalized := strings.ToLower(strings.TrimSpace(state))
+	if stateNormalized == "" {
+		return false
+	}
+
+	switch stateNormalized {
+	case "failed", "failure", "error", "timed_out", "timeout", "timedout", "cancelled", "canceled", "rollback", "deletion_failed", "deletionfailed":
+		return true
+	default:
+		return false
+	}
 }
 
 // Legacy retry settings retained for backwards-compatible unit tests.

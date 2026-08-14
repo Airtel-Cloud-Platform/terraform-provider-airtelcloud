@@ -73,6 +73,7 @@ type VMResourceModel struct {
 	EnableBackup       types.Bool     `tfsdk:"enable_backup"`
 	ProtectionPlan     types.String   `tfsdk:"protection_plan"`
 	StartDate          types.String   `tfsdk:"start_date"`
+	Weekday            types.String   `tfsdk:"weekday"`
 	StartTime          types.String   `tfsdk:"start_time"`
 	VMCount            types.Int64    `tfsdk:"vm_count"`
 	Labels             types.List     `tfsdk:"labels"`
@@ -269,15 +270,19 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Default:             booldefault.StaticBool(false),
 			},
 			"protection_plan": schema.StringAttribute{
-				MarkdownDescription: "The protection plan for the instance.",
+				MarkdownDescription: "Protection plan UUID/id for the instance. Pass the protection plan id value. Name-based protection_plan input is in pipeline.",
 				Optional:            true,
 			},
 			"start_date": schema.StringAttribute{
-				MarkdownDescription: "The start date for backup scheduling.",
+				MarkdownDescription: "The start date for backup scheduling. Mutually exclusive with weekday. Accepts YYYY-MM-DD and converts to the API's MM/DD/YYYY format.",
+				Optional:            true,
+			},
+			"weekday": schema.StringAttribute{
+				MarkdownDescription: "Optional weekday convenience input for VM backup scheduling (`monday`..`sunday` or `mon`..`sun`). Mutually exclusive with start_date. Converted internally to the next matching start_date in IST (`Asia/Kolkata`).",
 				Optional:            true,
 			},
 			"start_time": schema.StringAttribute{
-				MarkdownDescription: "The start time for backup scheduling.",
+				MarkdownDescription: "The start time for backup scheduling. Accepts 24-hour HH:MM and converts to the API's 12-hour AM/PM format.",
 				Optional:            true,
 			},
 			"vm_count": schema.Int64Attribute{
@@ -363,6 +368,14 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 			"Only one of keypair_id or keypair_name may be specified, not both.")
 	}
 
+	// Validate backup schedule inputs: start_date and weekday are mutually exclusive.
+	hasStartDate := !data.StartDate.IsNull() && strings.TrimSpace(data.StartDate.ValueString()) != ""
+	hasWeekday := !data.Weekday.IsNull() && strings.TrimSpace(data.Weekday.ValueString()) != ""
+	if hasStartDate && hasWeekday {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"Only one of start_date or weekday may be specified, not both.")
+	}
+
 	// Validate VM credentials (admin_username / admin_password).
 	//
 	// Presence is tested with IsNull() alone: a value sourced from a variable or
@@ -440,6 +453,13 @@ func (r *VMResource) Configure(ctx context.Context, req resource.ConfigureReques
 	}
 
 	r.client = client
+}
+
+func resolveVMBackupStartDateInput(startDate, weekday string, now time.Time) (string, error) {
+	if strings.TrimSpace(startDate) != "" {
+		return startDate, nil
+	}
+	return resolveWeekdayStartDate(weekday, now)
 }
 
 func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -545,6 +565,22 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		keypairID = resolved
 	}
 
+	startDateInput, err := resolveVMBackupStartDateInput(data.StartDate.ValueString(), data.Weekday.ValueString(), time.Now())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+	startDate, err := formatProtectionStartDate(startDateInput)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+	startTime, err := formatProtectionStartTime(data.StartTime.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+		return
+	}
+
 	// VM credentials. Mutual exclusion with the keypair is enforced in ValidateConfig.
 	// The API's confirm field is populated from admin_password: double entry guards
 	// against typos in an interactive form, but here the config is the source of truth.
@@ -555,6 +591,8 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	if region == "" {
 		region = r.client.Region
 	}
+
+	protectionPlan := strings.TrimSpace(data.ProtectionPlan.ValueString())
 
 	// Description defaults
 	description := data.Description.ValueString()
@@ -591,9 +629,9 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		BootFromVolume:       data.BootFromVolume.ValueBool(),
 		VolumeTypeID:         volumeTypeID,
 		EnableBackup:         data.EnableBackup.ValueBool(),
-		ProtectionPlan:       data.ProtectionPlan.ValueString(),
-		StartDate:            data.StartDate.ValueString(),
-		StartTime:            data.StartTime.ValueString(),
+		ProtectionPlan:       protectionPlan,
+		StartDate:            startDate,
+		StartTime:            startTime,
 		VMCount:              int(data.VMCount.ValueInt64()),
 	}
 
@@ -603,8 +641,8 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	// Wait for compute instance to become active
-	readyCompute, err := r.client.WaitForComputeReady(ctx, compute.ID, createTimeout)
+	// Wait for compute instance to become active and report private IP.
+	readyCompute, err := r.client.WaitForComputeReadyWithPrivateIP(ctx, compute.ID, createTimeout)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error waiting for compute instance to be ready: %s", err))
 		return

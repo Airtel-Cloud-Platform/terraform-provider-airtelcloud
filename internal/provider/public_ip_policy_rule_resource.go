@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -432,7 +433,14 @@ func (r *PublicIPPolicyRuleResource) Delete(ctx context.Context, req resource.De
 		"public_ip_id": data.PublicIPID.ValueString(),
 		"policy_uuid":  data.ID.ValueString(),
 	})
-	err := r.client.DeletePublicIPPolicyRule(ctx, data.PublicIPID.ValueString(), data.ID.ValueString())
+	err := r.client.DeletePublicIPPolicyRuleWithWait(
+		ctx,
+		data.PublicIPID.ValueString(),
+		data.TargetVIP.ValueString(),
+		data.PublicIP.ValueString(),
+		data.ID.ValueString(),
+		7*time.Minute,
+	)
 	if err != nil {
 		if client.IsNotFoundError(err) {
 			return

@@ -113,6 +113,30 @@ func TestResolveProtectionStartDateInput(t *testing.T) {
 	})
 }
 
+func TestResolveVMBackupStartDateInput(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 20, 30, 0, 0, time.UTC) // Thursday in IST
+
+	t.Run("start_date takes precedence", func(t *testing.T) {
+		got, err := resolveVMBackupStartDateInput("2026-09-01", "monday", now)
+		if err != nil {
+			t.Fatalf("resolveVMBackupStartDateInput err = %v", err)
+		}
+		if got != "2026-09-01" {
+			t.Errorf("resolveVMBackupStartDateInput = %q, want %q", got, "2026-09-01")
+		}
+	})
+
+	t.Run("weekday derived", func(t *testing.T) {
+		got, err := resolveVMBackupStartDateInput("", "monday", now)
+		if err != nil {
+			t.Fatalf("resolveVMBackupStartDateInput err = %v", err)
+		}
+		if got != "2026-08-17" {
+			t.Errorf("resolveVMBackupStartDateInput = %q, want %q", got, "2026-08-17")
+		}
+	})
+}
+
 func TestStringValueOrNull(t *testing.T) {
 	t.Run("empty string becomes null", func(t *testing.T) {
 		got := stringValueOrNull("")
