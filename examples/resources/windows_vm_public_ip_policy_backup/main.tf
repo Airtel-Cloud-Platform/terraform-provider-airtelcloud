@@ -31,14 +31,14 @@ variable "region" {
 variable "airtel_api_key" {
   description = "Airtel Cloud API key"
   type        = string
-  default     = "55e0500c-4e2b-4313-9580-30cdfb3713f9"
+  default     = ""
   sensitive   = true
 }
 
 variable "airtel_api_secret" {
   description = "Airtel Cloud API secret"
   type        = string
-  default     = "RvmcpJ0mixdxpNjALLa2KYQ/x5SXK6GXKhGf47crcKb"
+  default     = ""
   sensitive   = true
 }
 
@@ -137,7 +137,7 @@ variable "create_public_ip_and_policy" {
 #}
 
 resource "airtelcloud_vm" "windows_server" {
-  instance_name       = "${var.resource_prefix}-win-server-12"
+  instance_name       = "${var.resource_prefix}-win-server-41"
   os_type             = "windows"
   flavor_name         = var.flavor_name
   image_name          = var.image_name
@@ -151,16 +151,16 @@ resource "airtelcloud_vm" "windows_server" {
 
   enable_backup = true
   # Use the protection plan UUID/id, not the plan name.
-  protection_plan = "S1-COREDEMO-COMPASS-TFW-WINDOWS-DAILY-BACKUP-BKP-PP"
-  start_date      = "2026-08-14"
-  start_time      = "11:20 AM"
+  protection_plan = "4cb5b1b6-f62f-4fea-b348-d17aa407d64d"
+  weekday      = "friday"
+  start_time      = "1:33 PM"
 
   labels = ["example", "windows", "backup"]
 }
 
 resource "airtelcloud_public_ip" "windows_vm_nat" {
   count             = var.create_public_ip_and_policy ? 1 : 0
-  object_name       = "${var.resource_prefix}-windows-public-ip-44"
+  object_name       = "${var.resource_prefix}-windows-public-ip-57"
   vip               = airtelcloud_vm.windows_server.private_ip
   availability_zone = var.availability_zone
 

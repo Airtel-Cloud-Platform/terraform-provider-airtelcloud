@@ -101,7 +101,7 @@ resource "airtelcloud_vm" "windows_server" {
   boot_from_volume    = true
   enable_backup       = true
   protection_plan     = "<protection-plan-id>"
-  start_date          = "2025-07-15"
+  weekday             = "monday"
   start_time          = "02:00"
 
   labels = ["production", "windows", "backup"]
@@ -140,7 +140,8 @@ resource "airtelcloud_vm" "windows_server" {
 - `description` (String) - A description of the compute instance.
 - `enable_backup` (Boolean) - Whether backup is enabled. Default: `false`.
 - `protection_plan` (String) - Protection plan UUID/id for the instance. Pass the `protection_plan_id` value from your backup plan. Name-based `protection_plan` input is in pipeline.
-- `start_date` (String) - The start date for backup scheduling (e.g., `"2025-01-15"`).
+- `start_date` (String) - The start date for backup scheduling (e.g., `"2025-01-15"`). Mutually exclusive with `weekday`.
+- `weekday` (String) - Optional weekday convenience input for backup scheduling (`monday`..`sunday` or `mon`..`sun`). Mutually exclusive with `start_date`. Converted internally to the next matching `start_date` in IST (`Asia/Kolkata`).
 - `start_time` (String) - The start time for backup scheduling (e.g., `"02:00"`).
 - `vm_count` (Number) - Number of VM instances to create. Must be between 1 and 10. Default: `1`.
 - `labels` (List of String) - Plain labels to assign to the instance. These are sent exactly as provided in the follow-up compute labels PATCH request. Maximum 5 labels. Each label must be between 3 and 15 characters long. Use simple label values such as `web-server`.

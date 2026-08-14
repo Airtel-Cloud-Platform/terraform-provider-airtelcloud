@@ -306,13 +306,13 @@ func (r *PublicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 	// are not tracked in state (for example, interrupted applies/import gaps).
 	r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
 
-	err := deleteClient.DeletePublicIP(ctx, data.ID.ValueString())
+	err := deleteClient.DeletePublicIPWithWait(ctx, data.ID.ValueString(), 7*time.Minute)
 	if err != nil {
 		// If backend reports attached policies, perform one targeted cleanup attempt
 		// and retry the public IP delete once.
 		if isPublicIPPolicyConflictError(err) {
 			r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
-			if retryErr := deleteClient.DeletePublicIP(ctx, data.ID.ValueString()); retryErr == nil {
+			if retryErr := deleteClient.DeletePublicIPWithWait(ctx, data.ID.ValueString(), 7*time.Minute); retryErr == nil {
 				return
 			} else {
 				err = retryErr

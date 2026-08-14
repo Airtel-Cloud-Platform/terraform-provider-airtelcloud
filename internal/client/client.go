@@ -803,6 +803,22 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		tflog.Error(ctx, "Failed to read DELETE response body", map[string]interface{}{
+			"error": readErr.Error(),
+			"path":  path,
+		})
+		return readErr
+	}
+
+	tflog.Debug(ctx, "DELETE response details", map[string]interface{}{
+		"path":        path,
+		"status_code": resp.StatusCode,
+		"status":      resp.Status,
+		"body":        string(bodyBytes),
+	})
+
 	return nil
 }
 
@@ -814,19 +830,23 @@ func (c *Client) DeleteWithBody(ctx context.Context, path string, body interface
 	}
 	defer resp.Body.Close()
 
-	if v != nil {
-		bodyBytes, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			tflog.Error(ctx, "Failed to read DELETE response body", map[string]interface{}{
-				"error": readErr.Error(),
-			})
-			return readErr
-		}
-
-		tflog.Debug(ctx, "DELETE response body", map[string]interface{}{
-			"body": string(bodyBytes),
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		tflog.Error(ctx, "Failed to read DELETE response body", map[string]interface{}{
+			"error": readErr.Error(),
+			"path":  path,
 		})
+		return readErr
+	}
 
+	tflog.Debug(ctx, "DELETE response details", map[string]interface{}{
+		"path":        path,
+		"status_code": resp.StatusCode,
+		"status":      resp.Status,
+		"body":        string(bodyBytes),
+	})
+
+	if v != nil {
 		return json.Unmarshal(bodyBytes, v)
 	}
 
