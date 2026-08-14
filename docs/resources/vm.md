@@ -36,7 +36,7 @@ resource "airtelcloud_vm" "web_server" {
   admin_username    = "clouduser"
   admin_password    = var.vm_admin_password
   enable_backup       = true
-  protection_plan     = "daily"
+  protection_plan     = "<protection-plan-id>"
   start_date          = "2025-07-15"
   start_time          = "02:00"
 
@@ -100,7 +100,7 @@ resource "airtelcloud_vm" "windows_server" {
   disk_size           = 100
   boot_from_volume    = true
   enable_backup       = true
-  protection_plan     = "daily"
+  protection_plan     = "<protection-plan-id>"
   start_date          = "2025-07-15"
   start_time          = "02:00"
 
@@ -139,7 +139,7 @@ resource "airtelcloud_vm" "windows_server" {
 - `volume_type_id` (String) - The volume type ID.
 - `description` (String) - A description of the compute instance.
 - `enable_backup` (Boolean) - Whether backup is enabled. Default: `false`.
-- `protection_plan` (String) - The protection plan for the instance.
+- `protection_plan` (String) - Protection plan UUID/id for the instance. Pass the `protection_plan_id` value from your backup plan. Name-based `protection_plan` input is in pipeline.
 - `start_date` (String) - The start date for backup scheduling (e.g., `"2025-01-15"`).
 - `start_time` (String) - The start time for backup scheduling (e.g., `"02:00"`).
 - `vm_count` (Number) - Number of VM instances to create. Must be between 1 and 10. Default: `1`.

@@ -414,7 +414,7 @@ resource "airtelcloud_vm" "web1_keypair" {
 | `volume_type_id` | String | No | Volume type ID for the boot disk. |
 | `description` | String | No | Instance description. |
 | `enable_backup` | Bool | No | Enable backup. Default: `false`. |
-| `protection_plan` | String | No | Protection plan name (if backup enabled). |
+| `protection_plan` | String | No | Protection plan UUID/id (if backup enabled). Pass `protection_plan_id`. Name-based `protection_plan` input is in pipeline. |
 | `start_date` | String | No | Backup start date. |
 | `start_time` | String | No | Backup start time. |
 | `vm_count` | Int64 | No | Number of VMs to create (1-10). Default: `1`. |

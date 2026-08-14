@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     airtelcloud = {
-      source = "Airtel-Cloud-Platform/airtelcloud"
+      source  = "Airtel-Cloud-Platform/airtelcloud"
       version = "1.2.0"
     }
   }
@@ -80,7 +80,7 @@ resource "airtelcloud_vm" "web_server" {
   admin_password      = var.vm_admin_password
   description         = "Example web server instance"
   enable_backup       = true
-  protection_plan     = "daily"
+  protection_plan     = "<protection-plan-id>"
   start_date          = "2025-07-15"
   start_time          = "02:00"
 
@@ -123,8 +123,8 @@ resource "airtelcloud_volume" "data_volume" {
   type              = "n2_wkld_ntp02_1iops_backend"
   availability_zone = "N1"
   #compute_id = airtelcloud_vm.web_server.id
-  vpc_name       = "copper-vpc01"
-  subnet_name    = "subnet-az2"
+  vpc_name     = "copper-vpc01"
+  subnet_name  = "subnet-az2"
   is_encrypted = false
   bootable     = false
   depends_on   = [airtelcloud_vm.web_server]

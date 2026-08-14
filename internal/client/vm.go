@@ -120,6 +120,16 @@ func (c *Client) DeleteCompute(ctx context.Context, id string) error {
 // Network details can lag behind status transitions, so callers should not
 // require private IP assignment in this readiness gate.
 func (c *Client) WaitForComputeReady(ctx context.Context, id string, timeout time.Duration) (*models.Compute, error) {
+	return c.waitForCompute(ctx, id, timeout, false)
+}
+
+// WaitForComputeReadyWithPrivateIP polls until the compute instance reaches
+// Active status and reports a non-empty private IP address.
+func (c *Client) WaitForComputeReadyWithPrivateIP(ctx context.Context, id string, timeout time.Duration) (*models.Compute, error) {
+	return c.waitForCompute(ctx, id, timeout, true)
+}
+
+func (c *Client) waitForCompute(ctx context.Context, id string, timeout time.Duration, requirePrivateIP bool) (*models.Compute, error) {
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
@@ -136,12 +146,21 @@ func (c *Client) WaitForComputeReady(ctx context.Context, id string, timeout tim
 
 		switch compute.Status {
 		case "ACTIVE", "active", "Active":
+			if requirePrivateIP {
+				if strings.TrimSpace(compute.PrivateIP()) == "" {
+					break
+				}
+			}
 			return compute, nil
 		case "ERROR", "error", "Error":
 			return nil, fmt.Errorf("compute instance entered error state")
 		}
 
 		time.Sleep(10 * time.Second)
+	}
+
+	if requirePrivateIP {
+		return nil, fmt.Errorf("compute instance did not become ready with private IP within %v", timeout)
 	}
 
 	return nil, fmt.Errorf("compute instance did not become ready within %v", timeout)

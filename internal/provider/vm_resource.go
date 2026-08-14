@@ -269,7 +269,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Default:             booldefault.StaticBool(false),
 			},
 			"protection_plan": schema.StringAttribute{
-				MarkdownDescription: "The protection plan for the instance.",
+				MarkdownDescription: "Protection plan UUID/id for the instance. Pass the protection plan id value. Name-based protection_plan input is in pipeline.",
 				Optional:            true,
 			},
 			"start_date": schema.StringAttribute{
@@ -556,6 +556,8 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		region = r.client.Region
 	}
 
+	protectionPlan := strings.TrimSpace(data.ProtectionPlan.ValueString())
+
 	// Description defaults
 	description := data.Description.ValueString()
 	if description == "" {
@@ -591,7 +593,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		BootFromVolume:       data.BootFromVolume.ValueBool(),
 		VolumeTypeID:         volumeTypeID,
 		EnableBackup:         data.EnableBackup.ValueBool(),
-		ProtectionPlan:       data.ProtectionPlan.ValueString(),
+		ProtectionPlan:       protectionPlan,
 		StartDate:            data.StartDate.ValueString(),
 		StartTime:            data.StartTime.ValueString(),
 		VMCount:              int(data.VMCount.ValueInt64()),
@@ -603,8 +605,8 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	// Wait for compute instance to become active
-	readyCompute, err := r.client.WaitForComputeReady(ctx, compute.ID, createTimeout)
+	// Wait for compute instance to become active and report private IP.
+	readyCompute, err := r.client.WaitForComputeReadyWithPrivateIP(ctx, compute.ID, createTimeout)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error waiting for compute instance to be ready: %s", err))
 		return
