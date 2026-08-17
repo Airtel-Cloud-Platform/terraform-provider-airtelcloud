@@ -815,6 +815,69 @@ func isPublicIPPolicyRuleFailed(state string) bool {
 	}
 }
 
+func isPublicIPPolicyRuleReady(state string) bool {
+	stateNormalized := strings.ToLower(strings.TrimSpace(state))
+	if stateNormalized == "" {
+		return false
+	}
+
+	switch stateNormalized {
+	case "active", "enabled", "ready", "created", "accepted", "applied", "succeeded", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
+// WaitForPublicIPPolicyRuleReady polls until the policy rule reaches a ready state.
+func (c *Client) WaitForPublicIPPolicyRuleReady(ctx context.Context, publicIPUUID, targetVIP, publicIP, ruleUUID string, timeout time.Duration) (*models.PublicIPPolicyRule, error) {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		rule, err := c.GetPublicIPPolicyRule(ctx, publicIPUUID, targetVIP, publicIP, ruleUUID)
+		if err != nil {
+			if IsNotFoundError(err) {
+				tflog.Debug(ctx, "WaitForPublicIPPolicyRuleReady: rule not found yet; continuing wait", map[string]interface{}{
+					"public_ip_id": publicIPUUID,
+					"policy_uuid":  ruleUUID,
+				})
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			if isAPIErrorStatus(err, 500) || isAPIErrorStatus(err, 503) {
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			return nil, err
+		}
+
+		if rule != nil {
+			if isPublicIPPolicyRuleReady(rule.State) {
+				return rule, nil
+			}
+			if isPublicIPPolicyRuleFailed(rule.State) {
+				return nil, fmt.Errorf("public IP policy rule %s failed while becoming ready: state=%s", ruleUUID, rule.State)
+			}
+			tflog.Debug(ctx, "WaitForPublicIPPolicyRuleReady: policy still pending", map[string]interface{}{
+				"public_ip_id": publicIPUUID,
+				"policy_uuid":  ruleUUID,
+				"state":        rule.State,
+				"deadline":     deadline.Format(time.RFC3339Nano),
+			})
+		}
+
+		time.Sleep(5 * time.Second)
+	}
+
+	return nil, fmt.Errorf("public IP policy rule %s did not become ready within %v", ruleUUID, timeout)
+}
+
 // Legacy retry settings retained for backwards-compatible unit tests.
 const publicIPPolicyRuleCreateRetryMaxAttempts = 6
 

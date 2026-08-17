@@ -22,6 +22,12 @@ import (
 var _ resource.Resource = &PublicIPResource{}
 var _ resource.ResourceWithImportState = &PublicIPResource{}
 
+const (
+	defaultPublicIPCreateTimeout = 20 * time.Minute
+	defaultPublicIPUpdateTimeout = 20 * time.Minute
+	defaultPublicIPDeleteTimeout = 20 * time.Minute
+)
+
 func NewPublicIPResource() resource.Resource {
 	return &PublicIPResource{}
 }
@@ -175,7 +181,7 @@ func (r *PublicIPResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	createTimeout, diags := data.Timeouts.Create(ctx, 10*time.Minute)
+	createTimeout, diags := data.Timeouts.Create(ctx, defaultPublicIPCreateTimeout)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -192,7 +198,7 @@ func (r *PublicIPResource) Create(ctx context.Context, req resource.CreateReques
 		PortID: portID,
 	}
 
-	tflog.Debug(ctx, "=================Creating public IP", map[string]interface{}{
+	tflog.Debug(ctx, "Creating public IP", map[string]interface{}{
 		"name":              data.ObjectName.ValueString(),
 		"port_id":           portID,
 		"vip":               data.VIP.ValueString(),
@@ -306,13 +312,13 @@ func (r *PublicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 	// are not tracked in state (for example, interrupted applies/import gaps).
 	r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
 
-	err := deleteClient.DeletePublicIPWithWait(ctx, data.ID.ValueString(), 7*time.Minute)
+	err := deleteClient.DeletePublicIPWithWait(ctx, data.ID.ValueString(), defaultPublicIPDeleteTimeout)
 	if err != nil {
 		// If backend reports attached policies, perform one targeted cleanup attempt
 		// and retry the public IP delete once.
 		if isPublicIPPolicyConflictError(err) {
 			r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
-			if retryErr := deleteClient.DeletePublicIPWithWait(ctx, data.ID.ValueString(), 7*time.Minute); retryErr == nil {
+			if retryErr := deleteClient.DeletePublicIPWithWait(ctx, data.ID.ValueString(), defaultPublicIPDeleteTimeout); retryErr == nil {
 				return
 			} else {
 				err = retryErr
