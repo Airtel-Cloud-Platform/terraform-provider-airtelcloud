@@ -366,8 +366,20 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
+	policyWaitTimeout := 10 * time.Minute
+	readyRule, err := r.client.WaitForPublicIPPolicyRuleReady(ctx, data.PublicIPID.ValueString(), data.TargetVIP.ValueString(), data.PublicIP.ValueString(), createdPolicyID, policyWaitTimeout)
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error waiting for public IP policy rule to be ready: %s", err))
+		return
+	}
+
 	data.ID = types.StringValue(createdPolicyID)
-	data.State = types.StringValue("initiated")
+	if readyRule != nil && readyRule.State != "" {
+		data.State = types.StringValue(readyRule.State)
+	}
+	if readyRule != nil && readyRule.DisplayName != "" {
+		data.DisplayName = types.StringValue(readyRule.DisplayName)
+	}
 
 	tflog.Trace(ctx, "created public IP policy rule resource")
 

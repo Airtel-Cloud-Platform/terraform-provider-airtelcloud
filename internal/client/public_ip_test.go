@@ -382,6 +382,57 @@ func TestCreatePublicIPPolicyRule(t *testing.T) {
 	}
 }
 
+func TestWaitForPublicIPPolicyRuleReady(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	policyPath := "/ext/api/v1/domain/test-org/project/test-project/public-ip-id/test-public-ip-uuid/policy/test-public-ip-uuid-1"
+	var calls int
+	ms.AddHandler("GET", policyPath, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls < 3 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "",
+				"data": map[string]any{
+					"uuid":      "test-public-ip-uuid-1",
+					"rule_name": "test-rule",
+					"status":    "creating",
+					"state":     "creating",
+					"action":    "accept",
+					"source":    []map[string]any{{"all": true}},
+					"services":  []map[string]any{{"name": "HTTP"}},
+				},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "",
+			"data": map[string]any{
+				"uuid":      "test-public-ip-uuid-1",
+				"rule_name": "test-rule",
+				"status":    "active",
+				"state":     "active",
+				"action":    "accept",
+				"source":    []map[string]any{{"all": true}},
+				"services":  []map[string]any{{"name": "HTTP"}},
+			},
+		})
+	})
+
+	client := newTestClientForPublicIP(t, ms)
+	rule, err := client.WaitForPublicIPPolicyRuleReady(context.Background(), "test-public-ip-uuid", "10.1.99.172", "103.239.168.100", "test-public-ip-uuid-1", 15*time.Second)
+	if err != nil {
+		t.Fatalf("WaitForPublicIPPolicyRuleReady() error = %v", err)
+	}
+	if rule == nil || rule.State != "active" {
+		t.Fatalf("WaitForPublicIPPolicyRuleReady() state = %v, want active", rule)
+	}
+	if calls < 3 {
+		t.Fatalf("WaitForPublicIPPolicyRuleReady() calls = %d, want at least 3", calls)
+	}
+}
+
 func TestCreatePublicIPPolicyRule_SourceOfTruthPayload(t *testing.T) {
 	ms := testutil.NewMockServer()
 	defer ms.Close()
