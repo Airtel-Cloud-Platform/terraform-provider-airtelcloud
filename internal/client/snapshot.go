@@ -172,6 +172,51 @@ func (c *Client) ListComputeSnapshots(ctx context.Context) ([]models.ComputeSnap
 	return snapshots, nil
 }
 
+// ResolveSnapshotImageID resolves a snapshot name to its backing image_id using
+// the project-wide snapshot list endpoint.
+func (c *Client) ResolveSnapshotImageID(ctx context.Context, snapshotName string) (string, error) {
+	name := strings.TrimSpace(snapshotName)
+	if name == "" {
+		return "", fmt.Errorf("snapshot name is empty")
+	}
+
+	snapshots, err := c.ListComputeSnapshots(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list snapshots: %w", err)
+	}
+
+	bestID := -1
+	bestImageID := ""
+	matches := 0
+	for i := range snapshots {
+		snapshot := &snapshots[i]
+		if snapshot.SnapshotName != name {
+			continue
+		}
+
+		imageID := strings.TrimSpace(snapshot.ImageIDString())
+		if imageID == "" {
+			continue
+		}
+
+		matches++
+		if snapshot.ID > bestID {
+			bestID = snapshot.ID
+			bestImageID = imageID
+		}
+	}
+
+	if bestImageID == "" {
+		return "", fmt.Errorf("snapshot with name %q not found or has no image_id", snapshotName)
+	}
+
+	if matches > 1 {
+		return "", fmt.Errorf("multiple snapshots found with name %q; use image_id/image_name for deterministic selection", snapshotName)
+	}
+
+	return bestImageID, nil
+}
+
 // ListComputeSnapshotsForCompute retrieves the snapshots of one compute. It
 // needs no subnet-id header.
 func (c *Client) ListComputeSnapshotsForCompute(ctx context.Context, computeID string) ([]models.ComputeSnapshot, error) {

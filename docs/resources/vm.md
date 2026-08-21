@@ -30,15 +30,11 @@ resource "airtelcloud_vm" "web_server" {
   os_type           = "linux"
   vpc_name          = "vpc01"
   subnet_name       = "sub1"
-  security_group_name = "all-open-az1"
+  security_group_names = ["all-open-az1"]
   availability_zone = "N1"
   disk_size         = 100
   admin_username    = "clouduser"
   admin_password    = var.vm_admin_password
-  enable_backup       = true
-  protection_plan     = "<protection-plan-id>"
-  start_date          = "2025-07-15"
-  start_time          = "02:00"
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
@@ -66,18 +62,60 @@ resource "airtelcloud_vm" "web_server_keypair" {
   os_type             = "linux"
   vpc_name            = "vpc01"
   subnet_name         = "sub1"
-  security_group_name = "all-open-az1"
-  availability_zone   = "N1"
-  disk_size           = 100
+  security_group_names = ["all-open-az1"]
+  availability_zone   = "S1"
+  boot_from_volume    = true
+  disk_size           = 120
+  volume_type_id      = "31"
   keypair_name        = "my-linux-keypair"
 
-  labels = ["production", "keypair", "web-server"]
+  labels = ["production", "keypair-auth", "api"]
 }
 ```
 
-Replace the name placeholders with real values from your environment. If these resources are managed in the same Terraform configuration, you can also use IDs via references, for example: `vpc_id = airtelcloud_vpc.main.id`, `subnet_id = airtelcloud_subnet.main.id`, and `security_group_id = airtelcloud_security_group.main.id`.
+### Linux VM Using image_name With Multiple Security Groups
 
-You can attach the security group during provisioning by setting either `security_group_id` or `security_group_name`. If the security group is managed in the same Terraform configuration, prefer `security_group_id = airtelcloud_security_group.<name>.id`.
+```terraform
+resource "airtelcloud_vm" "web_server_multi_sg" {
+  instance_name       = "web-server-multi-sg"
+  flavor_name         = "ccd.Large"
+  image_name          = "Ubuntu22_04_Jul2026"
+  os_type             = "linux"
+  vpc_name            = "vpc01"
+  subnet_name         = "sub1"
+  security_group_names = ["all-open-az1", "ssh-open", "app-allow", "db-allow"]
+  availability_zone   = "S1"
+  boot_from_volume    = true
+  disk_size           = 100
+  volume_type_id      = "31"
+  admin_username      = "clouduser"
+  admin_password      = var.vm_admin_password
+}
+```
+
+### Linux VM Using snapshot_name
+
+```terraform
+resource "airtelcloud_vm" "web_server_from_snapshot" {
+  instance_name         = "web-server-from-snapshot"
+  flavor_name           = "ccd.Large"
+  snapshot_name         = "snap-test-snap"
+  os_type               = "linux"
+  vpc_name              = "copper-vpc1"
+  subnet_name           = "proxy-test-subnet"
+  security_group_names  = ["proxy-test-security-group", "testaz-2"]
+  availability_zone     = "S1"
+  boot_from_volume      = true
+  disk_size             = 200
+  admin_username        = "clouduser"
+  admin_password        = var.vm_admin_password
+  description           = "Linux VM created from snapshot image"
+}
+```
+
+Replace the name placeholders with real values from your environment. Prefer name-based fields (`vpc_name`, `subnet_name`, `security_group_names`) for readability. If needed, you can still use IDs via references, for example: `vpc_id = airtelcloud_vpc.main.id`, `subnet_id = airtelcloud_subnet.main.id`, and `security_group_ids = [airtelcloud_security_group.main.id]`.
+
+You can attach one or more security groups during provisioning by setting either `security_group_ids` or `security_group_names`. These inputs are mutually exclusive. If security groups are managed in the same Terraform configuration, prefer IDs.
 
 For Linux VMs, configure exactly one authentication method:
 - Username/password: set both `admin_username` and `admin_password`
@@ -95,7 +133,7 @@ resource "airtelcloud_vm" "windows_server" {
   os_type             = "windows"
   vpc_name            = "vpc01"
   subnet_name         = "sub1"
-  security_group_name = "all-open-az1"
+  security_group_names = ["all-open-az1"]
   availability_zone   = "N1"
   disk_size           = 100
   boot_from_volume    = true
@@ -114,7 +152,7 @@ resource "airtelcloud_vm" "windows_server" {
 
 - `instance_name` (String) - The name of the compute instance.
 - `flavor_id` or `flavor_name` (String) - Exactly one must be specified. Use `flavor_id` to pass the platform flavor ID, or `flavor_name` to pass the flavor name shown in the catalog. Forces replacement on change.
-- `image_id` or `image_name` (String) - Exactly one must be specified. Use `image_id` to pass the platform image ID, or `image_name` to pass the image name shown in the catalog. Forces replacement on change.
+- `image_id`, `image_name`, or `snapshot_name` (String) - Exactly one must be specified. Use `image_id` to pass the platform image ID, `image_name` to pass the image name shown in the catalog, or `snapshot_name` to resolve a compute snapshot to its backing image ID. Forces replacement on change.
 - `vpc_id` or `vpc_name` (String) - Exactly one must be specified. The VPC ID or VPC name. Forces replacement on change.
 - `subnet_id` or `subnet_name` (String) - Exactly one must be specified. The subnet ID or subnet name. Forces replacement on change.
 - `os_type` (String) - The OS type: `"linux"` or `"windows"`. Forces replacement on change.
@@ -123,10 +161,11 @@ resource "airtelcloud_vm" "windows_server" {
 
 - `flavor_name` (String) - The flavor name for the compute instance. Conflicts with `flavor_id`. Forces replacement on change.
 - `image_name` (String) - The image name for the compute instance. Conflicts with `image_id`. Forces replacement on change.
+- `snapshot_name` (String) - The compute snapshot name to use for VM creation. The provider resolves this through the snapshot list API and uses the snapshot `image_id`. Conflicts with `image_id` and `image_name`. Forces replacement on change.
 - `vpc_name` (String) - The VPC name. Conflicts with `vpc_id`.
 - `subnet_name` (String) - The subnet name. Conflicts with `subnet_id`.
-- `security_group_id` (String) - The ID of the security group to attach during VM provisioning. One of `security_group_id` or `security_group_name` may be specified.
-- `security_group_name` (String) - The name of the security group to attach during VM provisioning. One of `security_group_id` or `security_group_name` may be specified.
+- `security_group_ids` (List of String) - List of security group IDs to attach during VM provisioning. Mutually exclusive with `security_group_names`.
+- `security_group_names` (List of String) - List of security group names to attach during VM provisioning. Each name is resolved to an ID. Mutually exclusive with `security_group_ids`.
 - `keypair_id` (String) - The ID of the key pair for SSH access. Forces replacement on change.
 - `keypair_name` (String) - The name of the key pair for SSH access. Conflicts with `keypair_id`. Forces replacement on change.
 - `admin_username` (String) - Login username to create on the instance. Supported only when `os_type = "linux"`. Must be set together with `admin_password`, and cannot be combined with `keypair_id` or `keypair_name`. Forces replacement on change.

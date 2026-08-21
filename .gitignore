@@ -26,4 +26,7 @@ coverage.html
 # GoReleaser
 dist/
 
+#script
+scripts/tf-local-dev.sh
+
 

@@ -77,37 +77,37 @@ func (c *Compute) PrivateIP() string {
 
 // CreateComputeRequest represents the request to create a compute instance (v2.1 API)
 type CreateComputeRequest struct {
-	VPCID                string `form:"vpc_id,omitempty"`
-	Description          string `form:"description,omitempty"`
-	Region               string `form:"region,omitempty"`
-	AZName               string `form:"az_name,omitempty"`
-	InstanceName         string `form:"instance_name"`
-	ImageID              string `form:"image_id,omitempty"`
-	FlavorID             string `form:"flavor_id,omitempty"`
-	SecurityGroupID      int    `form:"sec_group_id,omitempty"`
-	BootFromVolume       bool   `form:"boot_from_volume,omitempty"`
-	VolumeSize           int    `form:"volume_size,omitempty"`
-	VolumeTypeID         int    `form:"volume_type_id,omitempty"`
-	OSType               string `form:"os_type,omitempty"`
-	VMCount              int    `form:"vm_count,omitempty"`
-	KeypairID            string `form:"keypair_id,omitempty"`
-	VMUsername           string `form:"vm_username,omitempty"`
-	VMPassword           string `form:"vm_password,omitempty"`
-	VMConfirmPassword    string `form:"vm_confirm_password,omitempty"`
-	SubnetID             string `form:"subnetId,omitempty"`
-	NetworkID            string `form:"network_id,omitempty"`
-	UserCloudInitScripts string `form:"user_cloud_init_scripts,omitempty"`
-	ProtectionPlan       string `form:"protection_plan,omitempty"`
-	EnableBackup         bool   `form:"enable_backup,omitempty"`
-	StartDate            string `form:"start_date,omitempty"`
-	StartTime            string `form:"start_time,omitempty"`
+	VPCID                string   `form:"vpc_id,omitempty"`
+	Description          string   `form:"description,omitempty"`
+	Region               string   `form:"region,omitempty"`
+	AZName               string   `form:"az_name,omitempty"`
+	InstanceName         string   `form:"instance_name"`
+	ImageID              string   `form:"image_id,omitempty"`
+	FlavorID             string   `form:"flavor_id,omitempty"`
+	SecurityGroupIDs     []string `form:"sec_group_id,omitempty"`
+	BootFromVolume       bool     `form:"boot_from_volume,omitempty"`
+	VolumeSize           int      `form:"volume_size,omitempty"`
+	VolumeTypeID         int      `form:"volume_type_id,omitempty"`
+	OSType               string   `form:"os_type,omitempty"`
+	VMCount              int      `form:"vm_count,omitempty"`
+	KeypairID            string   `form:"keypair_id,omitempty"`
+	VMUsername           string   `form:"vm_username,omitempty"`
+	VMPassword           string   `form:"vm_password,omitempty"`
+	VMConfirmPassword    string   `form:"vm_confirm_password,omitempty"`
+	SubnetID             string   `form:"subnetId,omitempty"`
+	NetworkID            string   `form:"network_id,omitempty"`
+	UserCloudInitScripts string   `form:"user_cloud_init_scripts,omitempty"`
+	ProtectionPlan       string   `form:"protection_plan,omitempty"`
+	EnableBackup         bool     `form:"enable_backup,omitempty"`
+	StartDate            string   `form:"start_date,omitempty"`
+	StartTime            string   `form:"start_time,omitempty"`
 }
 
 // UpdateComputeRequest represents the request to update a compute instance (v2.1 API)
 type UpdateComputeRequest struct {
-	InstanceName    string `form:"instance_name,omitempty"`
-	Description     string `form:"description,omitempty"`
-	SecurityGroupID int    `form:"sec_group_id,omitempty"`
+	InstanceName     string   `form:"instance_name,omitempty"`
+	Description      string   `form:"description,omitempty"`
+	SecurityGroupIDs []string `form:"sec_group_id,omitempty"`
 }
 
 // ComputeAction represents actions that can be performed on a compute instance

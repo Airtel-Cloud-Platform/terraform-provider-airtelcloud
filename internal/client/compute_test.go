@@ -140,9 +140,9 @@ func TestUpdateCompute(t *testing.T) {
 			name: "successful compute update",
 			id:   "test-id",
 			request: &models.UpdateComputeRequest{
-				InstanceName:    "updated-instance",
-				Description:     "Updated description",
-				SecurityGroupID: 1,
+				InstanceName:     "updated-instance",
+				Description:      "Updated description",
+				SecurityGroupIDs: []string{"1"},
 			},
 			wantErr: false,
 		},

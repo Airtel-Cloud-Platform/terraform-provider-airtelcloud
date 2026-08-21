@@ -255,11 +255,19 @@ func structToFormData(s interface{}) map[string]interface{} {
 			}
 		case reflect.Slice:
 			if field.Len() > 0 || !omitEmpty {
-				slice := make([]interface{}, field.Len())
-				for j := 0; j < field.Len(); j++ {
-					slice[j] = field.Index(j).Interface()
+				if field.Type().Elem().Kind() == reflect.String {
+					slice := make([]string, field.Len())
+					for j := 0; j < field.Len(); j++ {
+						slice[j] = field.Index(j).String()
+					}
+					result[fieldName] = slice
+				} else {
+					slice := make([]interface{}, field.Len())
+					for j := 0; j < field.Len(); j++ {
+						slice[j] = field.Index(j).Interface()
+					}
+					result[fieldName] = slice
 				}
-				result[fieldName] = slice
 			}
 		default:
 			if !field.IsZero() || !omitEmpty {
