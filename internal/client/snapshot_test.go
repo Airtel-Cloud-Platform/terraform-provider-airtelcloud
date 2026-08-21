@@ -176,6 +176,39 @@ func TestListComputeSnapshots(t *testing.T) {
 	}
 }
 
+func TestResolveSnapshotImageID(t *testing.T) {
+	t.Run("resolves snapshot name", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		imageID, err := newTestClient(t, ms).ResolveSnapshotImageID(context.Background(), "test-snapshot")
+		if err != nil {
+			t.Fatalf("ResolveSnapshotImageID() error = %v", err)
+		}
+		if imageID != "1407" {
+			t.Fatalf("ResolveSnapshotImageID() = %q, want 1407", imageID)
+		}
+	})
+
+	t.Run("errors when duplicate snapshot names exist", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		ms.AddHandler("GET", "/api/v2.1/computes/domain/test-org/project/test-project/computes/snapshot/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`[
+				{"id": 1, "uuid": "snap-1", "snapshot_name": "dup-snap", "image_id": 1001},
+				{"id": 2, "uuid": "snap-2", "snapshot_name": "dup-snap", "image_id": 1002}
+			]`))
+		})
+
+		_, err := newTestClient(t, ms).ResolveSnapshotImageID(context.Background(), "dup-snap")
+		if err == nil {
+			t.Fatal("ResolveSnapshotImageID() with duplicate snapshot names = nil error, want failure")
+		}
+	})
+}
+
 func TestFindComputeSnapshotByUUID(t *testing.T) {
 	ms := testutil.NewMockServer()
 	defer ms.Close()

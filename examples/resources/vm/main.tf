@@ -8,10 +8,10 @@ terraform {
 }
 
 provider "airtelcloud" {
-  api_endpoint = "https://north.cloud.airtel.in"
+  api_endpoint = "https://south.cloud.airtel.in"
   api_key      = var.airtel_api_key
   api_secret   = var.airtel_api_secret
-  region       = "north"
+  region       = "south"
   organization = var.organization
   project_name = var.project_name
 }
@@ -75,7 +75,7 @@ resource "airtelcloud_vm" "web_server" {
   boot_from_volume    = true
   disk_size           = 100
   availability_zone   = "N1"
-  security_group_name = "all-open-az1"
+  security_group_names = ["all-open-az1"]
   admin_username      = "clouduser"
   admin_password      = var.vm_admin_password
   description         = "Example web server instance"
@@ -106,16 +106,38 @@ resource "airtelcloud_vm" "windows_server" {
   boot_from_volume    = true
   disk_size           = 200
   availability_zone   = "N1"
-  security_group_name = "all-open-az1"
+  security_group_names = ["all-open-az1"]
   description         = "Example Windows server with backup"
 
-  #  enable_backup    = true
-  #  protection_plan  = "daily-backup-plan"
-  #  start_date       = "2026-04-01"
-  #  start_time       = "02:00"
-  #
+  enable_backup       = true
+  protection_plan     = "daily-backup-plan"
+  start_date          = "2026-04-01"
+  start_time          = "02:00"
+
   labels = ["backup", "example", "windows-server"]
 }
+
+# Create a Linux VM from a compute snapshot name with multiple security groups.
+resource "airtelcloud_vm" "linux_image_multi_sg" {
+  instance_name      = "${var.resource_prefix}-linux-image-multi-sg"
+  os_type            = "linux"
+  flavor_name        = "ccd.Large"
+  snapshot_name      = "snap-test-snap"
+  vpc_name           = "copper-vpc1"
+  subnet_name        = "proxy-test-subnet"
+  security_group_names = ["proxy-test-security-group", "testsgtest"]
+  availability_zone  = "S1"
+  boot_from_volume   = true
+  disk_size          = 200
+  admin_username     = "clouduser"
+  admin_password     = var.vm_admin_password
+  description        = "Example linux server created from snapshot image name"
+
+  labels = ["example", "multi-sg", "image-id"]
+}
+
+# Alternative: use security_group_ids instead of security_group_names.
+# security_group_ids = ["2036", "1829"]
 
 resource "airtelcloud_volume" "data_volume" {
   name              = "${var.resource_prefix}-storage-volume"
@@ -133,7 +155,6 @@ resource "airtelcloud_volume" "data_volume" {
 resource "airtelcloud_compute_snapshot" "example" {
   compute_id    = airtelcloud_vm.web_server.id
   snapshot_name = "tft-snap-as"
-
   timeouts {
     create = "10m"
     delete = "10m"
@@ -159,4 +180,9 @@ output "web_vm_private_ip" {
 output "windows_vm_id" {
   description = "ID of the windows server VM"
   value       = airtelcloud_vm.windows_server.id
+}
+
+output "linux_image_multi_sg_vm_id" {
+  description = "ID of the linux image-based VM using multiple security groups"
+  value       = airtelcloud_vm.linux_image_multi_sg.id
 }

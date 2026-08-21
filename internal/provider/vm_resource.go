@@ -49,12 +49,13 @@ type VMResourceModel struct {
 	FlavorName         types.String   `tfsdk:"flavor_name"`
 	ImageID            types.String   `tfsdk:"image_id"`
 	ImageName          types.String   `tfsdk:"image_name"`
+	SnapshotName       types.String   `tfsdk:"snapshot_name"`
 	VPCID              types.String   `tfsdk:"vpc_id"`
 	VPCName            types.String   `tfsdk:"vpc_name"`
 	SubnetID           types.String   `tfsdk:"subnet_id"`
 	SubnetName         types.String   `tfsdk:"subnet_name"`
-	SecurityGroupID    types.String   `tfsdk:"security_group_id"`
-	SecurityGroupName  types.String   `tfsdk:"security_group_name"`
+	SecurityGroupIDs   types.List     `tfsdk:"security_group_ids"`
+	SecurityGroupNames types.List     `tfsdk:"security_group_names"`
 	KeypairID          types.String   `tfsdk:"keypair_id"`
 	KeypairName        types.String   `tfsdk:"keypair_name"`
 	AdminUsername      types.String   `tfsdk:"admin_username"`
@@ -117,7 +118,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Optional:            true,
 			},
 			"image_id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the image to use for the instance. Either image_id or image_name must be specified.",
+				MarkdownDescription: "The ID of the image to use for the instance. Exactly one of image_id, image_name, or snapshot_name must be specified.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
@@ -126,7 +127,14 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"image_name": schema.StringAttribute{
-				MarkdownDescription: "The name of the image to use for the instance. Either image_id or image_name must be specified.",
+				MarkdownDescription: "The name of the image to use for the instance. Exactly one of image_id, image_name, or snapshot_name must be specified.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"snapshot_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the compute snapshot to use. The provider resolves this through the snapshot list API and uses the snapshot image_id. Exactly one of image_id, image_name, or snapshot_name must be specified.",
 				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -156,12 +164,14 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "The name of the subnet. Either subnet_id or subnet_name must be specified.",
 				Optional:            true,
 			},
-			"security_group_id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the security group. Mutually exclusive with security_group_name.",
+			"security_group_ids": schema.ListAttribute{
+				ElementType:         types.StringType,
+				MarkdownDescription: "List of security group IDs. Mutually exclusive with security_group_names.",
 				Optional:            true,
 			},
-			"security_group_name": schema.StringAttribute{
-				MarkdownDescription: "The name of the security group. Mutually exclusive with security_group_id.",
+			"security_group_names": schema.ListAttribute{
+				ElementType:         types.StringType,
+				MarkdownDescription: "List of security group names. Each name is resolved to an ID. Mutually exclusive with security_group_ids.",
 				Optional:            true,
 			},
 			"keypair_id": schema.StringAttribute{
@@ -326,14 +336,29 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 			"One of flavor_id or flavor_name must be specified.")
 	}
 
-	// Validate image: exactly one of image_id or image_name must be set
-	if !data.ImageID.IsNull() && !data.ImageName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of image_id or image_name may be specified, not both.")
+	imageIDSet := !data.ImageID.IsNull() && (data.ImageID.IsUnknown() || strings.TrimSpace(data.ImageID.ValueString()) != "")
+	imageNameSet := !data.ImageName.IsNull() && (data.ImageName.IsUnknown() || strings.TrimSpace(data.ImageName.ValueString()) != "")
+	snapshotNameSet := !data.SnapshotName.IsNull() && (data.SnapshotName.IsUnknown() || strings.TrimSpace(data.SnapshotName.ValueString()) != "")
+
+	// Validate image source: exactly one of image_id, image_name, or snapshot_name must be set
+	configuredImageSources := 0
+	if imageIDSet {
+		configuredImageSources++
 	}
-	if data.ImageID.IsNull() && data.ImageName.IsNull() {
+	if imageNameSet {
+		configuredImageSources++
+	}
+	if snapshotNameSet {
+		configuredImageSources++
+	}
+
+	if configuredImageSources > 1 {
 		resp.Diagnostics.AddError("Invalid Configuration",
-			"One of image_id or image_name must be specified.")
+			"Only one of image_id, image_name, or snapshot_name may be specified.")
+	}
+	if configuredImageSources == 0 {
+		resp.Diagnostics.AddError("Invalid Configuration",
+			"One of image_id, image_name, or snapshot_name must be specified.")
 	}
 
 	// Validate VPC: exactly one of vpc_id or vpc_name must be set
@@ -356,10 +381,40 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 			"One of subnet_id or subnet_name must be specified.")
 	}
 
-	// Validate security group: mutual exclusion only (both are optional)
-	if !data.SecurityGroupID.IsNull() && !data.SecurityGroupName.IsNull() {
+	// Validate security group list input: only one input style allowed.
+	if !data.SecurityGroupIDs.IsNull() && !data.SecurityGroupNames.IsNull() {
 		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of security_group_id or security_group_name may be specified, not both.")
+			"Only one of security_group_ids or security_group_names may be specified, not both.")
+	}
+
+	if !data.SecurityGroupIDs.IsNull() && !data.SecurityGroupIDs.IsUnknown() {
+		var securityGroupIDs []string
+		resp.Diagnostics.Append(data.SecurityGroupIDs.ElementsAs(ctx, &securityGroupIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		for _, sgID := range securityGroupIDs {
+			if strings.TrimSpace(sgID) == "" {
+				resp.Diagnostics.AddError("Invalid Configuration",
+					"security_group_ids must not contain empty values.")
+				break
+			}
+		}
+	}
+
+	if !data.SecurityGroupNames.IsNull() && !data.SecurityGroupNames.IsUnknown() {
+		var securityGroupNames []string
+		resp.Diagnostics.Append(data.SecurityGroupNames.ElementsAs(ctx, &securityGroupNames, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		for _, sgName := range securityGroupNames {
+			if strings.TrimSpace(sgName) == "" {
+				resp.Diagnostics.AddError("Invalid Configuration",
+					"security_group_names must not contain empty values.")
+				break
+			}
+		}
 	}
 
 	// Validate keypair: mutual exclusion only (both are optional)
@@ -537,21 +592,39 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 			return
 		}
 		imageID = resolved
-	}
-
-	// Resolve security group
-	var secGroupID int
-	if !data.SecurityGroupID.IsNull() && data.SecurityGroupID.ValueString() != "" {
-		if sgID, err := strconv.Atoi(data.SecurityGroupID.ValueString()); err == nil {
-			secGroupID = sgID
-		}
-	} else if !data.SecurityGroupName.IsNull() {
-		resolved, err := computeClient.ResolveSecurityGroupID(ctx, data.SecurityGroupName.ValueString())
+	} else if imageID == "" && !data.SnapshotName.IsNull() {
+		resolved, err := computeClient.ResolveSnapshotImageID(ctx, data.SnapshotName.ValueString())
 		if err != nil {
-			resp.Diagnostics.AddError("Security Group Resolution Error", err.Error())
+			resp.Diagnostics.AddError("Snapshot Resolution Error", err.Error())
 			return
 		}
-		secGroupID = resolved
+		imageID = resolved
+	}
+
+	// Resolve security groups
+	var secGroupIDs []string
+	if !data.SecurityGroupNames.IsNull() {
+		var securityGroupNames []string
+		resp.Diagnostics.Append(data.SecurityGroupNames.ElementsAs(ctx, &securityGroupNames, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		for _, sgName := range securityGroupNames {
+			resolved, err := computeClient.ResolveSecurityGroupID(ctx, strings.TrimSpace(sgName))
+			if err != nil {
+				resp.Diagnostics.AddError("Security Group Resolution Error", err.Error())
+				return
+			}
+			secGroupIDs = append(secGroupIDs, strconv.Itoa(resolved))
+		}
+	} else if !data.SecurityGroupIDs.IsNull() {
+		resp.Diagnostics.Append(data.SecurityGroupIDs.ElementsAs(ctx, &secGroupIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		for i, sgID := range secGroupIDs {
+			secGroupIDs[i] = strings.TrimSpace(sgID)
+		}
 	}
 
 	// Resolve keypair
@@ -616,7 +689,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		VPCID:                vpcID,
 		SubnetID:             subnetID,
 		NetworkID:            subnetID,
-		SecurityGroupID:      secGroupID,
+		SecurityGroupIDs:     secGroupIDs,
 		KeypairID:            keypairID,
 		VMUsername:           data.AdminUsername.ValueString(),
 		VMPassword:           adminPassword,
@@ -717,14 +790,9 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	if compute.SubnetID != "" {
 		data.SubnetID = types.StringValue(compute.SubnetID)
 	}
-	// Only refresh security_group_id from the API when the practitioner configured
-	// the security group by ID. When it was configured by name, security_group_id is
-	// left null in config; writing the API's numeric ID back would read as drift and
-	// produce a perpetual diff. There is no API field for the security group name, so
-	// security_group_name cannot be refreshed and is left untouched (config-owned).
-	if compute.SecurityGroupID != 0 && data.SecurityGroupName.IsNull() {
-		data.SecurityGroupID = types.StringValue(fmt.Sprintf("%d", compute.SecurityGroupID))
-	}
+	// security_group_ids/security_group_names are configuration-owned. The compute API
+	// does not return a full SG list in a shape that can be mapped back without drift,
+	// so these fields are left unchanged during read.
 	// The compute API only ever reports the keypair by name; it returns no keypair ID.
 	// So keypair_id is left untouched here — there is nothing to refresh it from, and
 	// both keypair attributes are Optional (not Computed) with RequiresReplace, meaning
@@ -832,21 +900,30 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		}
 	}
 
-	// Resolve security group for update: honor security_group_id when set, otherwise
-	// re-resolve security_group_name so a changed name is picked up (Create resolves
-	// name the same way).
-	var secGroupID int
-	if !data.SecurityGroupID.IsNull() && data.SecurityGroupID.ValueString() != "" {
-		if sgID, err := strconv.Atoi(data.SecurityGroupID.ValueString()); err == nil {
-			secGroupID = sgID
-		}
-	} else if !data.SecurityGroupName.IsNull() {
-		resolved, err := computeClient.ResolveSecurityGroupID(ctx, data.SecurityGroupName.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Security Group Resolution Error", err.Error())
+	// Resolve security groups for update.
+	var secGroupIDs []string
+	if !data.SecurityGroupNames.IsNull() {
+		var securityGroupNames []string
+		resp.Diagnostics.Append(data.SecurityGroupNames.ElementsAs(ctx, &securityGroupNames, false)...)
+		if resp.Diagnostics.HasError() {
 			return
 		}
-		secGroupID = resolved
+		for _, sgName := range securityGroupNames {
+			resolved, err := computeClient.ResolveSecurityGroupID(ctx, strings.TrimSpace(sgName))
+			if err != nil {
+				resp.Diagnostics.AddError("Security Group Resolution Error", err.Error())
+				return
+			}
+			secGroupIDs = append(secGroupIDs, strconv.Itoa(resolved))
+		}
+	} else if !data.SecurityGroupIDs.IsNull() {
+		resp.Diagnostics.Append(data.SecurityGroupIDs.ElementsAs(ctx, &secGroupIDs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		for i, sgID := range secGroupIDs {
+			secGroupIDs[i] = strings.TrimSpace(sgID)
+		}
 	}
 
 	description := data.Description.ValueString()
@@ -855,9 +932,9 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	}
 
 	updateReq := &models.UpdateComputeRequest{
-		InstanceName:    data.InstanceName.ValueString(),
-		Description:     description,
-		SecurityGroupID: secGroupID,
+		InstanceName:     data.InstanceName.ValueString(),
+		Description:      description,
+		SecurityGroupIDs: secGroupIDs,
 	}
 
 	compute, err := r.client.UpdateCompute(ctx, data.ID.ValueString(), updateReq)

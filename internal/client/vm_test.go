@@ -233,16 +233,16 @@ func TestResolveSecurityGroupID(t *testing.T) {
 }
 
 func TestCreateComputeFormData(t *testing.T) {
-	var capturedForm map[string]string
+	var capturedForm map[string][]string
 
 	mockServer := testutil.NewMockServer()
 	defer mockServer.Close()
 
 	mockServer.AddHandler("POST", "/api/v2.1/computes/domain/test-org/project/test-project/computes/", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
-		capturedForm = make(map[string]string)
+		capturedForm = make(map[string][]string)
 		for key := range r.PostForm {
-			capturedForm[key] = r.PostFormValue(key)
+			capturedForm[key] = append([]string(nil), r.PostForm[key]...)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -266,6 +266,7 @@ func TestCreateComputeFormData(t *testing.T) {
 		VPCID:             "vpc-1",
 		SubnetID:          "subnet-1",
 		NetworkID:         "subnet-1",
+		SecurityGroupIDs:  []string{"2036", "1829", "1470", "2107"},
 		AZName:            "south-1a",
 		OSType:            "linux",
 		VolumeSize:        20,
@@ -298,10 +299,28 @@ func TestCreateComputeFormData(t *testing.T) {
 	}
 
 	for field, expected := range expectedFields {
-		if got, ok := capturedForm[field]; !ok {
+		values, ok := capturedForm[field]
+		if !ok {
 			t.Errorf("CreateCompute() form missing field %q", field)
-		} else if got != expected {
+			continue
+		}
+		if len(values) == 0 {
+			t.Errorf("CreateCompute() form field %q has no values", field)
+			continue
+		}
+		if got := values[0]; got != expected {
 			t.Errorf("CreateCompute() form field %q = %q, want %q", field, got, expected)
+		}
+	}
+
+	if got := capturedForm["sec_group_id"]; len(got) != 4 {
+		t.Errorf("CreateCompute() form field sec_group_id count = %d, want 4", len(got))
+	} else {
+		expectedSGIDs := []string{"2036", "1829", "1470", "2107"}
+		for i := range expectedSGIDs {
+			if got[i] != expectedSGIDs[i] {
+				t.Errorf("CreateCompute() sec_group_id[%d] = %q, want %q", i, got[i], expectedSGIDs[i])
+			}
 		}
 	}
 }
@@ -310,16 +329,16 @@ func TestCreateComputeFormData(t *testing.T) {
 // request with no credentials must not put the credential fields on the wire, so
 // existing keypair-based configs are unaffected.
 func TestCreateComputeFormDataWithoutCredentials(t *testing.T) {
-	var capturedForm map[string]string
+	var capturedForm map[string][]string
 
 	mockServer := testutil.NewMockServer()
 	defer mockServer.Close()
 
 	mockServer.AddHandler("POST", "/api/v2.1/computes/domain/test-org/project/test-project/computes/", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
-		capturedForm = make(map[string]string)
+		capturedForm = make(map[string][]string)
 		for key := range r.PostForm {
-			capturedForm[key] = r.PostFormValue(key)
+			capturedForm[key] = append([]string(nil), r.PostForm[key]...)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -340,7 +359,12 @@ func TestCreateComputeFormDataWithoutCredentials(t *testing.T) {
 		t.Fatalf("CreateCompute() error = %v", err)
 	}
 
-	if got, ok := capturedForm["keypair_id"]; !ok || got != "7" {
+	values, ok := capturedForm["keypair_id"]
+	if !ok || len(values) == 0 || values[0] != "7" {
+		got := ""
+		if len(values) > 0 {
+			got = values[0]
+		}
 		t.Errorf("CreateCompute() form field keypair_id = %q (present=%v), want %q", got, ok, "7")
 	}
 	for _, field := range []string{"vm_username", "vm_password", "vm_confirm_password"} {
