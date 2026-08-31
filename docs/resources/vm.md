@@ -155,7 +155,7 @@ resource "airtelcloud_vm" "windows_server" {
 - `image_id`, `image_name`, or `snapshot_name` (String) - Exactly one must be specified. Use `image_id` to pass the platform image ID, `image_name` to pass the image name shown in the catalog, or `snapshot_name` to resolve a compute snapshot to its backing image ID. Forces replacement on change.
 - `vpc_id` or `vpc_name` (String) - Exactly one must be specified. The VPC ID or VPC name. Forces replacement on change.
 - `subnet_id` or `subnet_name` (String) - Exactly one must be specified. The subnet ID or subnet name. Forces replacement on change.
-- `os_type` (String) - The OS type: `"linux"` or `"windows"`. Forces replacement on change.
+- `os_type` (String) - The OS type: `"linux"`, `"ubuntu"`, `"rhel"`, `"suse"`, `"centos"`, or `"windows"`. Forces replacement on change.
 
 ### Optional
 
@@ -168,8 +168,8 @@ resource "airtelcloud_vm" "windows_server" {
 - `security_group_names` (List of String) - List of security group names to attach during VM provisioning. Each name is resolved to an ID. Mutually exclusive with `security_group_ids`.
 - `keypair_id` (String) - The ID of the key pair for SSH access. Forces replacement on change.
 - `keypair_name` (String) - The name of the key pair for SSH access. Conflicts with `keypair_id`. Forces replacement on change.
-- `admin_username` (String) - Login username to create on the instance. Supported only when `os_type = "linux"`. Must be set together with `admin_password`, and cannot be combined with `keypair_id` or `keypair_name`. Forces replacement on change.
-- `admin_password` (String, Sensitive) - Login password for `admin_username`. Supported only when `os_type = "linux"`. Must be set together with `admin_username`, and cannot be combined with `keypair_id` or `keypair_name`. Stored in plaintext in Terraform state. Forces replacement on change.
+- `admin_username` (String) - Login username to create on the instance. Supported for `os_type`: `linux`, `ubuntu`, `rhel`, `suse`, `centos`. Must be set together with `admin_password`, and cannot be combined with `keypair_id` or `keypair_name`. Forces replacement on change.
+- `admin_password` (String, Sensitive) - Login password for `admin_username`. Supported for `os_type`: `linux`, `ubuntu`, `rhel`, `suse`, `centos`. Must be set together with `admin_username`, and cannot be combined with `keypair_id` or `keypair_name`. Minimum 8 characters with at least one uppercase letter, one lowercase letter, and one special character. Stored in plaintext in Terraform state. Forces replacement on change.
 - `user_data` (String) - Cloud-init script to run on instance initialization. Forces replacement on change.
 - `availability_zone` (String) - The availability zone (e.g., `S1`, `S2`). Forces replacement on change.
 - `region` (String) - The region for the instance. Defaults to the provider's `region`.

@@ -190,7 +190,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"admin_username": schema.StringAttribute{
-				MarkdownDescription: "Login username to create on the instance. Supported only when os_type is \"linux\". " +
+				MarkdownDescription: "Login username to create on the instance. Supported for os_type values: `linux`, `ubuntu`, `rhel`, `suse`, `centos`. " +
 					"Must be set together with admin_password. Mutually exclusive with keypair_id and keypair_name.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
@@ -198,7 +198,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"admin_password": schema.StringAttribute{
-				MarkdownDescription: "Login password for admin_username. Supported only when os_type is \"linux\". " +
+				MarkdownDescription: "Login password for admin_username. Supported for os_type values: `linux`, `ubuntu`, `rhel`, `suse`, `centos`. " +
 					"Must be set together with admin_username. Mutually exclusive with keypair_id and keypair_name. " +
 					"Minimum 8 characters, must contain at least one uppercase letter, one lowercase letter, and one special character. " +
 					"Stored in plaintext in Terraform state.",
@@ -236,8 +236,8 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"os_type": schema.StringAttribute{
-				MarkdownDescription: "The OS type of the instance (e.g., \"linux\" or \"windows\").",
+				"os_type": schema.StringAttribute{
+				MarkdownDescription: "The OS type of the instance. Accepted values: `linux`, `ubuntu`, `rhel`, `suse`, `centos`, `windows`.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -455,9 +455,9 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 					"Use either password credentials or an SSH keypair, not both.")
 		}
 
-		if !data.OSType.IsUnknown() && !strings.EqualFold(data.OSType.ValueString(), "linux") {
+		if !data.OSType.IsUnknown() && !isPasswordSupportedOS(data.OSType.ValueString()) {
 			resp.Diagnostics.AddError("Invalid Configuration",
-				"admin_username/admin_password are only supported when os_type is \"linux\".")
+				"admin_username/admin_password are only supported for os_type: linux, ubuntu, rhel, suse, centos.")
 		}
 
 		// The form encoder drops empty strings, so an explicit "" would silently
@@ -477,12 +477,12 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 		}
 	}
 
-	// A linux instance needs exactly one authentication method.
-	if !data.OSType.IsUnknown() && strings.EqualFold(data.OSType.ValueString(), "linux") &&
+	// non-Windows instances need exactly one authentication method.
+	if !data.OSType.IsUnknown() && isPasswordSupportedOS(data.OSType.ValueString()) &&
 		!credentialsSet && !keypairSet {
 		resp.Diagnostics.AddError("Invalid Configuration",
-			"A linux instance requires an authentication method: set either keypair_id/keypair_name "+
-				"or admin_username and admin_password.")
+			fmt.Sprintf("A %s instance requires an authentication method: set either keypair_id/keypair_name "+
+				"or admin_username and admin_password.", data.OSType.ValueString()))
 	}
 
 	if !data.Labels.IsNull() && !data.Labels.IsUnknown() {
@@ -996,6 +996,15 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 
 func (r *VMResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// isPasswordSupportedOS reports whether os_type supports admin_username/admin_password auth.
+func isPasswordSupportedOS(osType string) bool {
+	switch strings.ToLower(osType) {
+	case "linux", "ubuntu", "rhel", "suse", "centos":
+		return true
+	}
+	return false
 }
 
 // validateVMPassword enforces: min 8 chars, ≥1 uppercase, ≥1 lowercase, ≥1 special character.
