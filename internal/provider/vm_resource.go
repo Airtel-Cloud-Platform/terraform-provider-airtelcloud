@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -199,6 +200,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			"admin_password": schema.StringAttribute{
 				MarkdownDescription: "Login password for admin_username. Supported only when os_type is \"linux\". " +
 					"Must be set together with admin_username. Mutually exclusive with keypair_id and keypair_name. " +
+					"Minimum 8 characters, must contain at least one uppercase letter, one lowercase letter, and one special character. " +
 					"Stored in plaintext in Terraform state.",
 				Optional:  true,
 				Sensitive: true,
@@ -280,7 +282,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Default:             booldefault.StaticBool(false),
 			},
 			"protection_plan": schema.StringAttribute{
-				MarkdownDescription: "Protection plan UUID/id for the instance. Pass the protection plan id value. Name-based protection_plan input is in pipeline.",
+				MarkdownDescription: "Protection plan UUID or name for the instance. The provider accepts either the UUID (e.g. `4cb5b1b6-f62f-4fea-b348-d17aa407d64d`) or the plan name (e.g. `daily-backup`). Names are resolved to UUIDs at apply time.",
 				Optional:            true,
 			},
 			"start_date": schema.StringAttribute{
@@ -467,6 +469,11 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 		if passwordSet && !data.AdminPassword.IsUnknown() && data.AdminPassword.ValueString() == "" {
 			resp.Diagnostics.AddError("Invalid Configuration",
 				"admin_password may not be an empty string.")
+		}
+		if passwordSet && !data.AdminPassword.IsUnknown() && data.AdminPassword.ValueString() != "" {
+			if err := validateVMPassword(data.AdminPassword.ValueString()); err != nil {
+				resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+			}
 		}
 	}
 
@@ -666,6 +673,14 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	}
 
 	protectionPlan := strings.TrimSpace(data.ProtectionPlan.ValueString())
+	if protectionPlan != "" {
+		resolved, err := computeClient.ResolveProtectionPlanID(ctx, protectionPlan, subnetID)
+		if err != nil {
+			resp.Diagnostics.AddError("Protection Plan Resolution Error", err.Error())
+			return
+		}
+		protectionPlan = resolved
+	}
 
 	// Description defaults
 	description := data.Description.ValueString()
@@ -981,6 +996,23 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 
 func (r *VMResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// validateVMPassword enforces: min 8 chars, ≥1 uppercase, ≥1 lowercase, ≥1 special character.
+func validateVMPassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("admin_password must be at least 8 characters long")
+	}
+	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
+		return fmt.Errorf("admin_password must contain at least one uppercase letter")
+	}
+	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
+		return fmt.Errorf("admin_password must contain at least one lowercase letter")
+	}
+	if !regexp.MustCompile(`[^a-zA-Z0-9]`).MatchString(password) {
+		return fmt.Errorf("admin_password must contain at least one special character")
+	}
+	return nil
 }
 
 func validateVMLabelValues(labels []string) error {

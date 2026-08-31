@@ -211,6 +211,51 @@ func isRetryableError(err error) bool {
 	return true
 }
 
+// ResolveProtectionPlanID returns the UUID for the given protection plan name or UUID.
+// If nameOrID already looks like a UUID it is returned unchanged.
+// Otherwise the plans list is searched for a plan whose name matches nameOrID (exact,
+// case-insensitive first, then substring).
+func (c *Client) ResolveProtectionPlanID(ctx context.Context, nameOrID, subnetID string) (string, error) {
+	if isUUID(nameOrID) {
+		return nameOrID, nil
+	}
+	plans, err := c.ListProtectionPlans(ctx, subnetID)
+	if err != nil {
+		return "", fmt.Errorf("listing protection plans to resolve %q: %w", nameOrID, err)
+	}
+	for _, plan := range plans {
+		if strings.EqualFold(plan.Name, nameOrID) {
+			return plan.ID, nil
+		}
+	}
+	for _, plan := range plans {
+		if containsIgnoreCase(plan.Name, nameOrID) {
+			return plan.ID, nil
+		}
+	}
+	return "", fmt.Errorf("protection plan %q not found", nameOrID)
+}
+
+// isUUID reports whether s is a standard UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, ch := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if ch != '-' {
+				return false
+			}
+		default:
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // containsIgnoreCase checks if s contains substr (case-insensitive)
 func containsIgnoreCase(s, substr string) bool {
 	return len(substr) > 0 && len(s) >= len(substr) &&

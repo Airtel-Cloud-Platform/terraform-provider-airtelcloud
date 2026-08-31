@@ -178,7 +178,7 @@ resource "airtelcloud_vm" "windows_server" {
 - `volume_type_id` (String) - The volume type ID.
 - `description` (String) - A description of the compute instance.
 - `enable_backup` (Boolean) - Whether backup is enabled. Default: `false`.
-- `protection_plan` (String) - Protection plan UUID/id for the instance. Pass the `protection_plan_id` value from your backup plan. Name-based `protection_plan` input is in pipeline.
+- `protection_plan` (String) - Protection plan UUID or name for the instance. The provider accepts either the UUID (e.g. `4cb5b1b6-f62f-4fea-b348-d17aa407d64d`) or the plan name (e.g. `daily-backup`). Names are resolved to UUIDs at apply time.
 - `start_date` (String) - The start date for backup scheduling (e.g., `"2025-01-15"`). Mutually exclusive with `weekday`.
 - `weekday` (String) - Optional weekday convenience input for backup scheduling (`monday`..`sunday` or `mon`..`sun`). Mutually exclusive with `start_date`. Converted internally to the next matching `start_date` in IST (`Asia/Kolkata`).
 - `start_time` (String) - The start time for backup scheduling (e.g., `"02:00"`).
