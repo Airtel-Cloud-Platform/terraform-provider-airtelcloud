@@ -236,7 +236,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-				"os_type": schema.StringAttribute{
+			"os_type": schema.StringAttribute{
 				MarkdownDescription: "The OS type of the instance. Accepted values: `linux`, `ubuntu`, `rhel`, `suse`, `centos`, `windows`.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
