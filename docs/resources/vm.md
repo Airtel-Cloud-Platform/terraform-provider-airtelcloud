@@ -139,7 +139,7 @@ resource "airtelcloud_vm" "windows_server" {
   boot_from_volume    = true
   enable_backup       = true
   # Use either the protection plan name (recommended) or UUID
-  protection_plan     = "daily-backup"
+  protection_plan     = "S2-ELEMENTS-COPPER-TFT-DAILY-BACKUP-BKP-PP"
   weekday             = "monday"
   start_time          = "02:00"
 
@@ -179,25 +179,12 @@ resource "airtelcloud_vm" "windows_server" {
 - `volume_type_id` (String) - The volume type ID.
 - `description` (String) - A description of the compute instance.
 - `enable_backup` (Boolean) - Whether backup is enabled. Default: `false`.
-- `protection_plan` (String) - Protection plan UUID or name for the instance. The provider accepts either the UUID (e.g. `4cb5b1b6-f62f-4fea-b348-d17aa407d64d`) or the plan name (e.g. `daily-backup`). Names are resolved to UUIDs at apply time.
+- `protection_plan` (String) - Protection plan UUID or name for the instance. The provider accepts either the UUID (e.g. `4cb5b1b6-f62f-4fea-b348-d17aa407d64d`) or a plan name as shown in UI (e.g. `S2-ELEMENTS-COPPER-TFT-DAILY-BACKUP-BKP-PP`). Names are resolved to UUIDs at apply time.
 - `start_date` (String) - The start date for backup scheduling (e.g., `"2025-01-15"`). Mutually exclusive with `weekday`.
 - `weekday` (String) - Optional weekday convenience input for backup scheduling (`monday`..`sunday` or `mon`..`sun`). Mutually exclusive with `start_date`. Converted internally to the next matching `start_date` in IST (`Asia/Kolkata`).
 - `start_time` (String) - The start time for backup scheduling (e.g., `"02:00"`).
 - `vm_count` (Number) - Number of VM instances to create. Must be between 1 and 10. Default: `1`.
 - `labels` (List of String) - Plain labels to assign to the instance. These are sent exactly as provided in the follow-up compute labels PATCH request. Maximum 5 labels. Each label must be between 3 and 15 characters long. Use simple label values such as `web-server`.
-
-
-## Notes
-
-### Protection Plan Resolution
-
-The `protection_plan` field accepts either a plan name or UUID:
-
-- **By Name (Recommended)**: `protection_plan = "daily-backup"` — The provider automatically resolves the name to its UUID during apply. This provides better readability and maintainability.
-- **By UUID**: `protection_plan = "4cb5b1b6-f62f-4fea-b348-d17aa407d64d"` — Pass the UUID directly if the plan name is not known.
-
-Name resolution happens at apply time using the `ListProtectionPlans` API call with the instance's subnet context, allowing the provider to match the name accurately.
-
 
 ## Attribute Reference
 
