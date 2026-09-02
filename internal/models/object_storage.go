@@ -48,6 +48,11 @@ func (f *FlexBool) UnmarshalJSON(data []byte) error {
 type FlexInt64 int64
 
 func (f *FlexInt64) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*f = 0
+		return nil
+	}
+
 	// Try to unmarshal as int64 first
 	var i int64
 	if err := json.Unmarshal(data, &i); err == nil {
@@ -59,6 +64,10 @@ func (f *FlexInt64) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
+	}
+	if strings.TrimSpace(s) == "" {
+		*f = 0
+		return nil
 	}
 
 	// Parse string to int64
