@@ -70,6 +70,24 @@ func TestAccVMResource(t *testing.T) {
 	})
 }
 
+func TestAccVMResourceWithProtectionPlanName(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccVMResourceConfigWithProtectionPlanName("test-vm-plan-name", "test-plan-for-vm-name-resolution"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("airtelcloud_vm.test", "instance_name", "test-vm-plan-name"),
+					resource.TestCheckResourceAttr("airtelcloud_vm.test", "enable_backup", "true"),
+					resource.TestCheckResourceAttr("airtelcloud_vm.test", "protection_plan", "test-plan-for-vm-name-resolution"),
+					resource.TestCheckResourceAttrSet("airtelcloud_vm.test", "id"),
+				),
+			},
+		},
+	})
+}
+
 func testAccVMResourceConfig(name string) string {
 	return fmt.Sprintf(`
 resource "airtelcloud_vm" "test" {
@@ -87,6 +105,37 @@ resource "airtelcloud_vm" "test" {
   description       = "Test VM"
 }
 `, name, testAccVMAdminUsername, testAccVMAdminPassword)
+}
+
+func testAccVMResourceConfigWithProtectionPlanName(vmName, planName string) string {
+	return fmt.Sprintf(`
+resource "airtelcloud_protection_plan" "test" {
+	name           = %[1]q
+	description    = "Acceptance test plan for VM by name"
+	retention      = 1
+	retention_unit = "DAYS"
+	recurrence     = 86400
+	selector_key   = "AZ"
+	selector_value = "S2"
+	subnet_id      = "35df162d-5211-4d58-84ed-6a499626949c"
+}
+
+resource "airtelcloud_vm" "test" {
+	instance_name     = %[2]q
+	os_type           = "linux"
+	flavor_name       = "t2.micro"
+	image_name        = "ubuntu-20.04"
+	vpc_id            = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
+	subnet_id         = "35df162d-5211-4d58-84ed-6a499626949c"
+	boot_from_volume  = true
+	disk_size         = 20
+	availability_zone = "S2"
+	admin_username    = %[3]q
+	admin_password    = %[4]q
+	enable_backup     = true
+	protection_plan   = airtelcloud_protection_plan.test.name
+}
+`, planName, vmName, testAccVMAdminUsername, testAccVMAdminPassword)
 }
 
 func testAccVMResourceConfigUpdated(name string) string {

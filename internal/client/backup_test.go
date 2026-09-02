@@ -543,3 +543,79 @@ func TestListProtectionPlansDoesNotRetry404(t *testing.T) {
 		t.Errorf("server received %d calls, want 1 (404 must not be retried)", calls)
 	}
 }
+
+func TestResolveProtectionPlanID_UUIDPassthrough(t *testing.T) {
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	const inputUUID = "4cb5b1b6-f62f-4fea-b348-d17aa407d64d"
+	resolved, err := client.ResolveProtectionPlanID(context.Background(), inputUUID, "test-subnet-id")
+	if err != nil {
+		t.Fatalf("ResolveProtectionPlanID() error = %v, want nil", err)
+	}
+	if resolved != inputUUID {
+		t.Fatalf("ResolveProtectionPlanID() = %q, want %q", resolved, inputUUID)
+	}
+}
+
+func TestResolveProtectionPlanID_ByName(t *testing.T) {
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	mockServer.AddHandler("GET", protectionPlanListPath, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(models.ProtectionPlanListResponse{
+			PolicyAttributeList: []models.ProtectionPlan{
+				{ID: "plan-uuid-daily", Name: "Daily Backup"},
+				{ID: "plan-uuid-weekly", Name: "Weekly Backup"},
+			},
+		})
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	t.Run("exact name", func(t *testing.T) {
+		resolved, err := client.ResolveProtectionPlanID(context.Background(), "Daily Backup", "test-subnet-id")
+		if err != nil {
+			t.Fatalf("ResolveProtectionPlanID() error = %v, want nil", err)
+		}
+		if resolved != "plan-uuid-daily" {
+			t.Fatalf("ResolveProtectionPlanID() = %q, want %q", resolved, "plan-uuid-daily")
+		}
+	})
+
+	t.Run("case insensitive name", func(t *testing.T) {
+		resolved, err := client.ResolveProtectionPlanID(context.Background(), "daily backup", "test-subnet-id")
+		if err != nil {
+			t.Fatalf("ResolveProtectionPlanID() error = %v, want nil", err)
+		}
+		if resolved != "plan-uuid-daily" {
+			t.Fatalf("ResolveProtectionPlanID() = %q, want %q", resolved, "plan-uuid-daily")
+		}
+	})
+
+	t.Run("substring fallback", func(t *testing.T) {
+		resolved, err := client.ResolveProtectionPlanID(context.Background(), "weekly", "test-subnet-id")
+		if err != nil {
+			t.Fatalf("ResolveProtectionPlanID() error = %v, want nil", err)
+		}
+		if resolved != "plan-uuid-weekly" {
+			t.Fatalf("ResolveProtectionPlanID() = %q, want %q", resolved, "plan-uuid-weekly")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := client.ResolveProtectionPlanID(context.Background(), "monthly", "test-subnet-id")
+		if err == nil {
+			t.Fatal("ResolveProtectionPlanID() error = nil, want not found error")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("ResolveProtectionPlanID() error = %q, want substring %q", err.Error(), "not found")
+		}
+	})
+}
