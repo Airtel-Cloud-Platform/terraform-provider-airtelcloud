@@ -489,7 +489,7 @@ terraform import airtelcloud_storage_bucket.private_bucket <bucket-name>
 
 ### airtelcloud_volume
 
-Manages a block storage volume. Volumes can be attached to a compute instance via `compute_id`, and the attachment can be changed in-place without replacement.
+Manages a block storage volume. Volumes can be attached to a compute instance via `compute_id` or `compute_name`, and attachment can be changed in-place without replacement.
 
 #### Example Usage
 
@@ -513,11 +513,14 @@ resource "airtelcloud_volume" "data_volume" {
 |---|---|---|---|
 | `name` | String | Yes | Volume name. |
 | `size` | Int64 | Yes | Volume size in GB. |
-| `type` | String | No | Volume type identifier. |
+| `type` | String | No | Volume type identifier. When set, it is validated against active block storage types returned by the API. |
 | `availability_zone` | String | No | Availability zone. |
-| `vpc_id` | String | No | VPC ID. Forces new resource. |
-| `subnet_id` | String | No | Subnet ID. Forces new resource. |
-| `compute_id` | String | No | Compute instance ID to attach to. Can be changed in-place (triggers detach/re-attach). |
+| `vpc_id` | String | No | VPC ID. Mutually exclusive with `vpc_name`. Forces new resource. |
+| `vpc_name` | String | No | VPC name. Resolved to `vpc_id`. Mutually exclusive with `vpc_id`. |
+| `subnet_id` | String | No | Subnet ID. Mutually exclusive with `subnet_name`. Forces new resource. |
+| `subnet_name` | String | No | Subnet name. Resolved to `subnet_id` within the selected VPC. Requires one of `vpc_id` or `vpc_name`. Mutually exclusive with `subnet_id`. |
+| `compute_id` | String | No | Compute instance ID to attach to. Can be changed in-place (triggers detach/re-attach). Mutually exclusive with `compute_name`. |
+| `compute_name` | String | No | Compute instance name to attach to. Resolved to `compute_id`. Mutually exclusive with `compute_id`. |
 | `is_encrypted` | Bool | No | Enable encryption. Default: `false`. Forces new resource. |
 | `bootable` | Bool | No | Mark as bootable. Default: `false`. Forces new resource. |
 | `enable_backup` | Bool | No | Enable backup. Default: `false`. |

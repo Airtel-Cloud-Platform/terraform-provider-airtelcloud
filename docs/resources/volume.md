@@ -79,21 +79,22 @@ resource "airtelcloud_volume" "data" {
 
 ### Required
 
-- `volume_name` (String) - The name of the volume.
-- `volume_size` (Number) - The size of the volume in GB.
-- `type` (String) - The type of the volume (validated against active block storage volume types). Valid types per availability zone:
-  - **S2**: `s2_wkld_ntp02_1iops_backend`, `s2_wkld_ntp02_3iops_backend`, `s2_wkld_ntp02_5iops_backend`, `s2_wkld_root_gen_backend`, `s2_wkld_ntp02_3iops_backend_active`
-- `availability_zone` (String) - The availability zone where the volume is placed.
-- `vpc_id` (String) - The VPC network ID for the volume. Forces replacement if changed.
-- `subnet_id` (String) - The subnet ID for the volume. Forces replacement if changed.
-- `is_encrypted` (Boolean) - Whether the volume is encrypted. Default: `false`. Forces replacement if changed.
-- `bootable` (Boolean) - Whether the volume is bootable. Default: `false`. Forces replacement if changed.
+- `name` (String) - The name of the volume.
+- `size` (Number) - The size of the volume in GB.
 
 
 ### Optional
 
+- `type` (String) - The type of the volume. When set, it is validated against active block storage volume types returned by the API for the target environment.
+- `availability_zone` (String) - The availability zone where the volume is placed.
+- `vpc_id` (String) - The VPC network ID for the volume. Mutually exclusive with `vpc_name`. Forces replacement if changed.
+- `vpc_name` (String) - The VPC name for the volume. If set, it is resolved to `vpc_id`. Mutually exclusive with `vpc_id`.
+- `subnet_id` (String) - The subnet ID for the volume. Mutually exclusive with `subnet_name`. Forces replacement if changed.
+- `subnet_name` (String) - The subnet name for the volume. If set, it is resolved to `subnet_id` within the selected VPC. Requires one of `vpc_id` or `vpc_name`. Mutually exclusive with `subnet_id`.
 - `compute_id` (String) - The compute instance ID to attach the volume to. Changing this value will detach from the old instance and attach to the new one in-place (no replacement). Mutually exclusive with `compute_name`.
 - `compute_name` (String) - The name of the compute instance to attach the volume to. If set, it is resolved to `compute_id`. Mutually exclusive with `compute_id`.
+- `is_encrypted` (Boolean) - Whether the volume is encrypted. Default: `false`. Forces replacement if changed.
+- `bootable` (Boolean) - Whether the volume is bootable. Default: `false`. Forces replacement if changed.
 - `enable_backup` (Boolean) - Whether backup is enabled for the volume. Default: `false`.
 
 ## Attribute Reference
@@ -101,6 +102,7 @@ resource "airtelcloud_volume" "data" {
 In addition to all arguments above, the following attributes are exported:
 
 - `id` (Number) - The unique identifier of the volume.
+- `uuid` (String) - The UUID of the volume.
 - `provider_volume_id` (String) - The provider-specific volume ID.
 - `status` (String) - The current status of the volume (e.g., `available`, `in-use`).
 - `attached_to` (String) - The ID of the compute instance the volume is attached to.

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -189,7 +190,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"admin_username": schema.StringAttribute{
-				MarkdownDescription: "Login username to create on the instance. Supported only when os_type is \"linux\". " +
+				MarkdownDescription: "Login username to create on the instance. Supported for os_type values: `linux`, `ubuntu`, `rhel`, `suse`, `centos`. " +
 					"Must be set together with admin_password. Mutually exclusive with keypair_id and keypair_name.",
 				Optional: true,
 				PlanModifiers: []planmodifier.String{
@@ -197,8 +198,9 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"admin_password": schema.StringAttribute{
-				MarkdownDescription: "Login password for admin_username. Supported only when os_type is \"linux\". " +
+				MarkdownDescription: "Login password for admin_username. Supported for os_type values: `linux`, `ubuntu`, `rhel`, `suse`, `centos`. " +
 					"Must be set together with admin_username. Mutually exclusive with keypair_id and keypair_name. " +
+					"Minimum 8 characters, must contain at least one uppercase letter, one lowercase letter, and one special character. " +
 					"Stored in plaintext in Terraform state.",
 				Optional:  true,
 				Sensitive: true,
@@ -235,7 +237,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"os_type": schema.StringAttribute{
-				MarkdownDescription: "The OS type of the instance (e.g., \"linux\" or \"windows\").",
+				MarkdownDescription: "The OS type of the instance. Accepted values: `linux`, `ubuntu`, `rhel`, `suse`, `centos`, `windows`.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -280,7 +282,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Default:             booldefault.StaticBool(false),
 			},
 			"protection_plan": schema.StringAttribute{
-				MarkdownDescription: "Protection plan UUID/id for the instance. Pass the protection plan id value. Name-based protection_plan input is in pipeline.",
+				MarkdownDescription: "Protection plan UUID or name for the instance. The provider accepts either the UUID (e.g. `4cb5b1b6-f62f-4fea-b348-d17aa407d64d`) or a plan name as shown in UI (e.g. `S2-ELEMENTS-COPPER-TFT-DAILY-BACKUP-BKP-PP`). Names are resolved to UUIDs at apply time.",
 				Optional:            true,
 			},
 			"start_date": schema.StringAttribute{
@@ -453,9 +455,9 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 					"Use either password credentials or an SSH keypair, not both.")
 		}
 
-		if !data.OSType.IsUnknown() && !strings.EqualFold(data.OSType.ValueString(), "linux") {
+		if !data.OSType.IsUnknown() && !isPasswordSupportedOS(data.OSType.ValueString()) {
 			resp.Diagnostics.AddError("Invalid Configuration",
-				"admin_username/admin_password are only supported when os_type is \"linux\".")
+				"admin_username/admin_password are only supported for os_type: linux, ubuntu, rhel, suse, centos.")
 		}
 
 		// The form encoder drops empty strings, so an explicit "" would silently
@@ -468,14 +470,19 @@ func (r *VMResource) ValidateConfig(ctx context.Context, req resource.ValidateCo
 			resp.Diagnostics.AddError("Invalid Configuration",
 				"admin_password may not be an empty string.")
 		}
+		if passwordSet && !data.AdminPassword.IsUnknown() && data.AdminPassword.ValueString() != "" {
+			if err := validateVMPassword(data.AdminPassword.ValueString()); err != nil {
+				resp.Diagnostics.AddError("Invalid Configuration", err.Error())
+			}
+		}
 	}
 
-	// A linux instance needs exactly one authentication method.
-	if !data.OSType.IsUnknown() && strings.EqualFold(data.OSType.ValueString(), "linux") &&
+	// non-Windows instances need exactly one authentication method.
+	if !data.OSType.IsUnknown() && isPasswordSupportedOS(data.OSType.ValueString()) &&
 		!credentialsSet && !keypairSet {
 		resp.Diagnostics.AddError("Invalid Configuration",
-			"A linux instance requires an authentication method: set either keypair_id/keypair_name "+
-				"or admin_username and admin_password.")
+			fmt.Sprintf("A %s instance requires an authentication method: set either keypair_id/keypair_name "+
+				"or admin_username and admin_password.", data.OSType.ValueString()))
 	}
 
 	if !data.Labels.IsNull() && !data.Labels.IsUnknown() {
@@ -666,6 +673,14 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	}
 
 	protectionPlan := strings.TrimSpace(data.ProtectionPlan.ValueString())
+	if protectionPlan != "" {
+		resolved, err := computeClient.ResolveProtectionPlanID(ctx, protectionPlan, subnetID)
+		if err != nil {
+			resp.Diagnostics.AddError("Protection Plan Resolution Error", err.Error())
+			return
+		}
+		protectionPlan = resolved
+	}
 
 	// Description defaults
 	description := data.Description.ValueString()
@@ -981,6 +996,32 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 
 func (r *VMResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// isPasswordSupportedOS reports whether os_type supports admin_username/admin_password auth.
+func isPasswordSupportedOS(osType string) bool {
+	switch strings.ToLower(osType) {
+	case "linux", "ubuntu", "rhel", "suse", "centos":
+		return true
+	}
+	return false
+}
+
+// validateVMPassword enforces: min 8 chars, ≥1 uppercase, ≥1 lowercase, ≥1 special character.
+func validateVMPassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("admin_password must be at least 8 characters long")
+	}
+	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
+		return fmt.Errorf("admin_password must contain at least one uppercase letter")
+	}
+	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
+		return fmt.Errorf("admin_password must contain at least one lowercase letter")
+	}
+	if !regexp.MustCompile(`[^a-zA-Z0-9]`).MatchString(password) {
+		return fmt.Errorf("admin_password must contain at least one special character")
+	}
+	return nil
 }
 
 func validateVMLabelValues(labels []string) error {

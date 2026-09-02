@@ -52,7 +52,7 @@ variable "vm_admin_password" {
 
 resource "airtelcloud_security_group" "web" {
   security_group_name = "${var.resource_prefix}-sg-http-servers"
-  availability_zone = "S2"
+  availability_zone   = "S2"
 }
 
 # Create a private bucket with versioning
@@ -68,17 +68,17 @@ resource "airtelcloud_security_group" "web" {
 # Create a private subnet
 resource "airtelcloud_subnet" "tf_private" {
   #network_id       = "66f0fd26-9362-4f52-8d41-10de059e88fb"
-  network_name	    = "copper-vpc01"
-  name              = "${var.resource_prefix}-tf1-subnet"
+  network_name       = "copper-vpc01"
+  name               = "${var.resource_prefix}-tf1-subnet"
   ipv4_address_space = "10.10.90.0/24"
-  subnet_sub_role   = "Private"
-  availability_zone = "N2"
-  labels            = ["Provider Test"]
+  subnet_sub_role    = "Private"
+  availability_zone  = "N2"
+  labels             = ["Provider Test"]
 
   timeouts {
-      create = "5m"  # Override create timeout to 20 minutes
-      delete = "4m"  # Override delete timeout to 15 minutes
-    }
+    create = "5m" # Override create timeout to 20 minutes
+    delete = "4m" # Override delete timeout to 15 minutes
+  }
 }
 
 # Create NFS volume
@@ -95,7 +95,7 @@ resource "airtelcloud_subnet" "tf_private" {
 #  protocol          = "NFSv4"
 #  availability_zone = "S2"
 
-  # NFS export settings
+# NFS export settings
 #  default_access_type = "ReadWrite"
 #  default_user_squash = "RootSquash"
 #}
@@ -108,7 +108,7 @@ resource "airtelcloud_subnet" "tf_private" {
 # availability_zone = "S1"
 # compute_id        = airtelcloud_vm.web1.id
 
-  # Networking
+# Networking
 # vpc_id    = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
 # subnet_id = "35df162d-5211-4d58-84ed-6a499626949c"
 
@@ -306,9 +306,10 @@ resource "airtelcloud_protection_plan" "daily" {
 
 #Create a protection policy for web server 1
 resource "airtelcloud_protection" "web_server" {
-  name             = "${var.resource_prefix}-web-backup-schedule"
-  description      = "Backup policy for web server"
-  compute_id       = airtelcloud_vm.web1.id
+  name        = "${var.resource_prefix}-web-backup-schedule"
+  description = "Backup policy for web server"
+  compute_id  = airtelcloud_vm.web1.id
+  # protection_plan accepts either the plan name (recommended for readability) or UUID
   protection_plan  = airtelcloud_protection_plan.daily.name
   enable_scheduler = "true"
   start_date       = "2026-04-01"
@@ -479,7 +480,7 @@ output "protection_plan_id" {
 }
 
 output "web_protection_id" {
-  description = "ID of the web server protection policy" 
+  description = "ID of the web server protection policy"
   value       = airtelcloud_protection.web_server.id
 }
 
