@@ -282,7 +282,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Default:             booldefault.StaticBool(false),
 			},
 			"protection_plan": schema.StringAttribute{
-				MarkdownDescription: "Protection plan UUID or name for the instance. The provider accepts either the UUID (e.g. `4cb5b1b6-f62f-4fea-b348-d17aa407d64d`) or the plan name (e.g. `daily-backup`). Names are resolved to UUIDs at apply time.",
+				MarkdownDescription: "Protection plan UUID or name for the instance. The provider accepts either the UUID (e.g. `4cb5b1b6-f62f-4fea-b348-d17aa407d64d`) or a plan name as shown in UI (e.g. `S2-ELEMENTS-COPPER-TFT-DAILY-BACKUP-BKP-PP`). Names are resolved to UUIDs at apply time.",
 				Optional:            true,
 			},
 			"start_date": schema.StringAttribute{
