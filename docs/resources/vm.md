@@ -138,7 +138,8 @@ resource "airtelcloud_vm" "windows_server" {
   disk_size           = 100
   boot_from_volume    = true
   enable_backup       = true
-  protection_plan     = "<protection-plan-id>"
+  # Use either the protection plan name (recommended) or UUID
+  protection_plan     = "daily-backup"
   weekday             = "monday"
   start_time          = "02:00"
 
@@ -184,6 +185,18 @@ resource "airtelcloud_vm" "windows_server" {
 - `start_time` (String) - The start time for backup scheduling (e.g., `"02:00"`).
 - `vm_count` (Number) - Number of VM instances to create. Must be between 1 and 10. Default: `1`.
 - `labels` (List of String) - Plain labels to assign to the instance. These are sent exactly as provided in the follow-up compute labels PATCH request. Maximum 5 labels. Each label must be between 3 and 15 characters long. Use simple label values such as `web-server`.
+
+
+## Notes
+
+### Protection Plan Resolution
+
+The `protection_plan` field accepts either a plan name or UUID:
+
+- **By Name (Recommended)**: `protection_plan = "daily-backup"` — The provider automatically resolves the name to its UUID during apply. This provides better readability and maintainability.
+- **By UUID**: `protection_plan = "4cb5b1b6-f62f-4fea-b348-d17aa407d64d"` — Pass the UUID directly if the plan name is not known.
+
+Name resolution happens at apply time using the `ListProtectionPlans` API call with the instance's subnet context, allowing the provider to match the name accurately.
 
 
 ## Attribute Reference
