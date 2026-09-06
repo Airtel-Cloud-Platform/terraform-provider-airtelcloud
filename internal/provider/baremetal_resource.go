@@ -352,7 +352,12 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 		SystemID:   data.SystemID.ValueString(),
 	}
 	if cloudInit := strings.TrimSpace(data.CloudInit.ValueString()); cloudInit != "" {
-		allocateReq.CloudInit = cloudInit
+		if pub := strings.TrimSpace(allocateReq.PublicKey); pub != "" {
+			// Keep user cloud-init and still inject the console public-key runcmd.
+			allocateReq.CloudInit = cloudInit + "\n" + uiBaremetalCloudInit(pub)
+		} else {
+			allocateReq.CloudInit = cloudInit
+		}
 	} else if pub := strings.TrimSpace(allocateReq.PublicKey); pub != "" {
 		// Console allocate always sends this runcmd block with the selected public key.
 		allocateReq.CloudInit = uiBaremetalCloudInit(pub)
@@ -376,6 +381,7 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 	}
 	allocateReq.NetworkInterface = &models.BaremetalNetworkInterface{
 		Name:    networkID,
+		SubnetID:  subnetID,
 		Subnets: subnets,
 	}
 
@@ -438,9 +444,8 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 
 	data.ID = types.StringValue(data.Name.ValueString())
 
-	// The allocate API is asynchronous and often returns before the server has a
-	// meaningful lifecycle state. Wait for a stable non-placeholder state.
-	if err := r.waitForBaremetalState(ctx, data.Name.ValueString(), data.AvailabilityZone.ValueString(), 5*time.Minute); err != nil {
+	// Allocate returns before install finishes. Wait until state is Ready and power is On.
+	if err := r.waitForBaremetalState(ctx, data.Name.ValueString(), data.AvailabilityZone.ValueString(), 30*time.Minute); err != nil {
 		// POST already created the server; keep it in Terraform state so destroy
 		// can release it instead of leaving a 409 on the next apply.
 		if readErr := r.readIntoState(ctx, &data); readErr != nil {
@@ -459,16 +464,11 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	if strings.EqualFold(strings.TrimSpace(data.State.ValueString()), "NoResource") {
-		tflog.Warn(ctx, "Baremetal create finished in placeholder state", map[string]interface{}{
-			"name":              data.Name.ValueString(),
-			"availability_zone": data.AvailabilityZone.ValueString(),
-			"state":             data.State.ValueString(),
-			"power":             data.Power.ValueString(),
-		})
+	if !isBaremetalReadyAndPoweredOn(data.State.ValueString(), data.Power.ValueString()) {
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		resp.Diagnostics.AddError(
 			"Baremetal Provisioning Error",
-			fmt.Sprintf("Baremetal server %q was created but remains in placeholder state %q. This indicates backend provisioning did not complete properly.", data.Name.ValueString(), data.State.ValueString()),
+			fmt.Sprintf("Baremetal server %q is not Ready with power On yet (state=%q, power=%q). Terraform will keep the resource in state so destroy can release it.", data.Name.ValueString(), data.State.ValueString(), data.Power.ValueString()),
 		)
 		return
 	}
@@ -697,27 +697,30 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 	lastState := ""
 	lastPower := ""
 	lastErrMsg := ""
-	stableProvisionedReads := 0
+	stableReadyPolls := 0
 	attempt := 0
 	for {
 		attempt++
 		if time.Now().After(deadline) {
 			tflog.Warn(ctx, "Baremetal provisioning timeout", map[string]interface{}{
-				"name":              name,
-				"availability_zone": az,
-				"attempt":           attempt,
-				"elapsed_seconds":   int(time.Since(start).Seconds()),
-				"stable_reads":      stableProvisionedReads,
-				"last_state":        lastState,
-				"last_power":        lastPower,
-				"last_err_msg":      lastErrMsg,
-				"timeout_seconds":   int(timeout.Seconds()),
+				"name":               name,
+				"availability_zone":  az,
+				"attempt":            attempt,
+				"elapsed_seconds":    int(time.Since(start).Seconds()),
+				"stable_ready_polls": stableReadyPolls,
+				"last_state":         lastState,
+				"last_power":         lastPower,
+				"last_err_msg":       lastErrMsg,
+				"timeout_seconds":    int(timeout.Seconds()),
 			})
 			if lastErrMsg != "" {
-				return fmt.Errorf("baremetal server %q did not reach a valid provisioning state within %s (last state=%q, last power=%q): %s", name, timeout.String(), lastState, lastPower, lastErrMsg)
+				return fmt.Errorf("baremetal server %q did not reach Ready with power On within %s (last state=%q, last power=%q): %s", name, timeout.String(), lastState, lastPower, lastErrMsg)
 			}
-			return fmt.Errorf("baremetal server %q did not reach a valid provisioning state within %s (last state=%q, last power=%q)", name, timeout.String(), lastState, lastPower)
+			return fmt.Errorf("baremetal server %q did not reach Ready with power On within %s (last state=%q, last power=%q)", name, timeout.String(), lastState, lastPower)
 		}
+
+		readySources := 0
+		notReadySources := 0
 
 		detailState := ""
 		detailPower := ""
@@ -740,13 +743,10 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 			if err := terminalBaremetalAllocationError(name, state, lastErrMsg); err != nil {
 				return err
 			}
-			if isProvisionedBaremetalState(state) {
-				stableProvisionedReads++
-				if stableProvisionedReads >= 2 {
-					return nil
-				}
+			if isBaremetalReadyAndPoweredOn(state, power) {
+				readySources++
 			} else {
-				stableProvisionedReads = 0
+				notReadySources++
 			}
 		} else {
 			detailErr = err.Error()
@@ -773,33 +773,41 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 			if err := terminalBaremetalAllocationError(name, state, lastErrMsg); err != nil {
 				return err
 			}
-			if isProvisionedBaremetalState(state) {
-				stableProvisionedReads++
-				if stableProvisionedReads >= 2 {
-					return nil
-				}
+			if isBaremetalReadyAndPoweredOn(state, power) {
+				readySources++
 			} else {
-				stableProvisionedReads = 0
+				notReadySources++
 			}
 		} else if err != nil {
 			summaryErr = err.Error()
 		}
 
-		tflog.Debug(ctx, "Baremetal provisioning poll", map[string]interface{}{
-			"name":              name,
-			"availability_zone": az,
-			"attempt":           attempt,
-			"elapsed_seconds":   int(time.Since(start).Seconds()),
-			"stable_reads":      stableProvisionedReads,
-			"detail_state":      detailState,
-			"detail_power":      detailPower,
-			"detail_error":      detailErr,
-			"summary_state":     summaryState,
-			"summary_power":     summaryPower,
-			"summary_error":     summaryErr,
-			"last_state":        lastState,
-			"last_power":        lastPower,
-			"last_err_msg":      lastErrMsg,
+		// Count GET detail + GET list as one poll. The previous counter treated
+		// both as successes, so apply returned in ~15s while the UI was still installing.
+		if readySources > 0 && notReadySources == 0 {
+			stableReadyPolls++
+			if stableReadyPolls >= 2 {
+				return nil
+			}
+		} else {
+			stableReadyPolls = 0
+		}
+
+		tflog.Info(ctx, "Waiting for baremetal Ready and power On", map[string]interface{}{
+			"name":               name,
+			"availability_zone":  az,
+			"attempt":            attempt,
+			"elapsed_seconds":    int(time.Since(start).Seconds()),
+			"stable_ready_polls": stableReadyPolls,
+			"detail_state":       detailState,
+			"detail_power":       detailPower,
+			"detail_error":       detailErr,
+			"summary_state":      summaryState,
+			"summary_power":      summaryPower,
+			"summary_error":      summaryErr,
+			"last_state":         lastState,
+			"last_power":         lastPower,
+			"last_err_msg":       lastErrMsg,
 		})
 
 		select {
@@ -818,26 +826,50 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 	}
 }
 
-func isProvisionedBaremetalState(state string) bool {
-	trimmed := strings.TrimSpace(state)
-	if trimmed == "" {
+func isBaremetalReadyAndPoweredOn(state, power string) bool {
+	if !strings.EqualFold(strings.TrimSpace(state), "Ready") {
 		return false
 	}
-	if strings.EqualFold(trimmed, "NoResource") {
+	p := strings.TrimSpace(power)
+	return strings.EqualFold(p, "On") || strings.EqualFold(p, "PoweredOn")
+}
+
+func isBaremetalFailedState(state string) bool {
+	s := strings.ToLower(strings.TrimSpace(state))
+	switch s {
+	case "failed", "error", "failure", "errorstate", "failedstate":
+		return true
+	}
+	return false
+}
+
+func isBaremetalHardLastErr(lastErrMsg string) bool {
+	m := strings.ToLower(strings.TrimSpace(lastErrMsg))
+	if m == "" {
 		return false
 	}
-	return true
+	if strings.Contains(m, "volume fetch") {
+		return true
+	}
+	return strings.Contains(m, "volume") && strings.Contains(m, "not found")
 }
 
 func terminalBaremetalAllocationError(name, state, lastErrMsg string) error {
 	msg := strings.TrimSpace(lastErrMsg)
+	st := strings.TrimSpace(state)
+	if isBaremetalFailedState(st) {
+		if msg == "" {
+			return fmt.Errorf("baremetal server %q provisioning failed (state=%q)", name, st)
+		}
+		return fmt.Errorf("baremetal server %q provisioning failed (state=%q): %s", name, st, msg)
+	}
 	if msg == "" {
 		return nil
 	}
-	if !strings.EqualFold(strings.TrimSpace(state), "NoResource") {
-		return nil
+	if strings.EqualFold(st, "NoResource") || isBaremetalHardLastErr(msg) {
+		return fmt.Errorf("baremetal server %q allocation failed (state=%q): %s", name, st, msg)
 	}
-	return fmt.Errorf("baremetal server %q allocation failed (state=%q): %s", name, state, msg)
+	return nil
 }
 
 func looksLikeUUID(value string) bool {

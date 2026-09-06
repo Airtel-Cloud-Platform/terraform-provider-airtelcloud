@@ -21,6 +21,21 @@ func TestTerminalBaremetalAllocationError(t *testing.T) {
 	if got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}
+
+	err = terminalBaremetalAllocationError("bm-1", "Failed", "volume fetch not found")
+	if err == nil {
+		t.Fatal("expected Failed UI state to stop waiting")
+	}
+	got = err.Error()
+	want = `baremetal server "bm-1" provisioning failed (state="Failed"): volume fetch not found`
+	if got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+
+	err = terminalBaremetalAllocationError("bm-1", "InitializingDependencies", "volume fetch not found")
+	if err == nil {
+		t.Fatal("volume fetch not found must stop waiting even before state flips to Failed")
+	}
 }
 
 func TestLooksLikeUUID(t *testing.T) {
@@ -33,13 +48,19 @@ func TestLooksLikeUUID(t *testing.T) {
 	}
 }
 
-func TestIsProvisionedBaremetalState(t *testing.T) {
+func TestIsBaremetalReadyAndPoweredOn(t *testing.T) {
 	t.Parallel()
 
-	if isProvisionedBaremetalState("") || isProvisionedBaremetalState("NoResource") {
-		t.Fatal("empty and NoResource must not count as provisioned")
+	if isBaremetalReadyAndPoweredOn("InitializingDependencies", "Unknown") {
+		t.Fatal("intermediate state must keep polling")
 	}
-	if !isProvisionedBaremetalState("Allocating") || !isProvisionedBaremetalState("Ready") {
-		t.Fatal("Allocating and Ready must count as provisioned")
+	if isBaremetalReadyAndPoweredOn("Ready", "Unknown") {
+		t.Fatal("Ready with power Unknown must keep polling")
+	}
+	if !isBaremetalReadyAndPoweredOn("Ready", "On") {
+		t.Fatal("Ready and On must complete wait")
+	}
+	if !isBaremetalReadyAndPoweredOn("ready", "poweredon") {
+		t.Fatal("Ready and PoweredOn must complete wait")
 	}
 }

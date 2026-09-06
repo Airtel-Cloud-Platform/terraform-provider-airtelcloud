@@ -145,6 +145,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 			return nil, err
 		}
 		contentType = "application/json"
+
+		// Temporary debug: capture only network configuration for baremetal allocation.
+		if method == http.MethodPost && strings.HasSuffix(strings.TrimSuffix(path, "/"), "/server") {
+			var payload map[string]interface{}
+			if err := json.Unmarshal(buf.(*bytes.Buffer).Bytes(), &payload); err == nil {
+				AgentDebugLog("internal/client/client.go:doRequest", "baremetal allocation request network payload", "E", map[string]interface{}{
+					"network_interface": payload["networkInterface"],
+					"path":              path,
+				})
+			}
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), buf)
