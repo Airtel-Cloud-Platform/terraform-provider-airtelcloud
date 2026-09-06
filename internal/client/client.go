@@ -216,6 +216,39 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		"headers":     resp.Header,
 	})
 
+	// #region agent log
+	if strings.Contains(path, "baremetal-manager") && c.Organization != "test-org" {
+		preview := ""
+		if resp.Body != nil {
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			if readErr == nil {
+				resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				if len(bodyBytes) > 512 {
+					preview = string(bodyBytes[:512])
+				} else {
+					preview = string(bodyBytes)
+				}
+			}
+		}
+		AgentDebugLog("internal/client/client.go:doRequest", "baremetal HTTP roundtrip", "C", map[string]interface{}{
+			"method":       method,
+			"path":         path,
+			"status_code":  resp.StatusCode,
+			"az_header":    req.Header.Get("ce-availability-zone"),
+			"region":       req.Header.Get("ce-region"),
+			"has_ce_auth":  req.Header.Get("Ce-Auth") != "",
+			"body_preview": preview,
+		})
+		if method == http.MethodPost && strings.HasSuffix(strings.TrimSuffix(path, "/"), "/server") {
+			AgentDebugLog("internal/client/client.go:doRequest", "allocate POST headers", "D", map[string]interface{}{
+				"az_header":   req.Header.Get("ce-availability-zone"),
+				"x_az_header": req.Header.Get("x-az"),
+				"status_code": resp.StatusCode,
+			})
+		}
+	}
+	// #endregion
+
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
 

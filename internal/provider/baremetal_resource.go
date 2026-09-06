@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,9 +15,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
@@ -31,30 +35,54 @@ type BaremetalResource struct {
 }
 
 type BaremetalResourceModel struct {
-	ID               types.String `tfsdk:"id"`
-	Name             types.String `tfsdk:"name"`
-	UUID             types.String `tfsdk:"uuid"`
-	Flavor           types.String `tfsdk:"flavor"`
-	OSImage          types.String `tfsdk:"os_image"`
-	CloudInit        types.String `tfsdk:"cloud_init"`
-	SubnetID         types.String `tfsdk:"subnet_id"`
-	NetworkName      types.String `tfsdk:"network_name"`
-	IsReserved       types.Bool   `tfsdk:"is_reserved"`
-	SystemID         types.String `tfsdk:"system_id"`
-	Keypair          types.String `tfsdk:"keypair"`
-	KeypairID        types.String `tfsdk:"keypair_id"`
-	PublicKey        types.String `tfsdk:"public_key"`
-	Tags             types.List   `tfsdk:"tags"`
-	PolicyEnabled    types.Bool   `tfsdk:"policy_enabled"`
-	DeleteDisks      types.Bool   `tfsdk:"delete_disks"`
-	SecureErase      types.Bool   `tfsdk:"secure_erase"`
-	State            types.String `tfsdk:"state"`
-	Hostname         types.String `tfsdk:"hostname"`
-	AvailabilityZone types.String `tfsdk:"availability_zone"`
-	Power            types.String `tfsdk:"power"`
-	IPAddresses      types.List   `tfsdk:"ip_addresses"`
-	BackendPortID    types.Int64  `tfsdk:"backend_port_id"`
+	ID                    types.String `tfsdk:"id"`
+	Name                  types.String `tfsdk:"name"`
+	UUID                  types.String `tfsdk:"uuid"`
+	Flavor                types.String `tfsdk:"flavor"`
+	OSImage               types.String `tfsdk:"os_image"`
+	CloudInit             types.String `tfsdk:"cloud_init"`
+	SubnetName            types.String `tfsdk:"subnet_name"`
+	NetworkName           types.String `tfsdk:"network_name"`
+	IsReserved            types.Bool   `tfsdk:"is_reserved"`
+	SystemID              types.String `tfsdk:"system_id"`
+	Keypair               types.String `tfsdk:"keypair"`
+	KeypairID             types.String `tfsdk:"keypair_id"`
+	PublicKey             types.String `tfsdk:"public_key"`
+	AdditionalSubnetNames types.List   `tfsdk:"additional_subnet_names"`
+	Tags                  types.List   `tfsdk:"tags"`
+	Storage               types.List   `tfsdk:"storage"`
+	BackupConfig          types.Object `tfsdk:"backup_config"`
+	PolicyEnabled         types.Bool   `tfsdk:"policy_enabled"`
+	DeleteDisks           types.Bool   `tfsdk:"delete_disks"`
+	SecureErase           types.Bool   `tfsdk:"secure_erase"`
+	State                 types.String `tfsdk:"state"`
+	Hostname              types.String `tfsdk:"hostname"`
+	AvailabilityZone      types.String `tfsdk:"availability_zone"`
+	Power                 types.String `tfsdk:"power"`
+	IPAddresses           types.List   `tfsdk:"ip_addresses"`
+	BackendPortID         types.Int64  `tfsdk:"backend_port_id"`
 }
+
+type baremetalStorageModel struct {
+	Name        types.String `tfsdk:"name"`
+	Size        types.String `tfsdk:"size"`
+	Path        types.String `tfsdk:"path"`
+	Type        types.String `tfsdk:"type"`
+	FileSystem  types.String `tfsdk:"file_system"`
+	ForceFormat types.Bool   `tfsdk:"force_format"`
+}
+
+type baremetalBackupConfigModel struct {
+	ScheduleType      types.String `tfsdk:"schedule_type"`
+	StartTime         types.String `tfsdk:"start_time"`
+	IncrDays          types.List   `tfsdk:"incr_days"`
+	FullDays          types.List   `tfsdk:"full_days"`
+	FullRetention     types.Int64  `tfsdk:"full_retention"`
+	FullRetentionUnit types.String `tfsdk:"full_retention_unit"`
+	BackupSelections  types.List   `tfsdk:"backup_selections"`
+}
+
+var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func (r *BaremetalResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_baremetal"
@@ -106,9 +134,9 @@ func (r *BaremetalResource) Schema(ctx context.Context, req resource.SchemaReque
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"subnet_id": schema.StringAttribute{
+			"subnet_name": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Subnet id for primary network interface.",
+				MarkdownDescription: "Primary subnet display name. Resolved to `subnetId` before POST /server.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -122,9 +150,89 @@ func (r *BaremetalResource) Schema(ctx context.Context, req resource.SchemaReque
 			},
 			"network_name": schema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Optional network interface name.",
+				MarkdownDescription: "VPC name or UUID sent as `networkInterface.name`. Names are resolved to the VPC UUID.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"additional_subnet_names": schema.ListAttribute{
+				Optional:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "Extra subnet display names appended to `networkInterface.subnets` after the primary subnet.",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
+				},
+			},
+			"storage": schema.ListNestedAttribute{
+				Optional:            true,
+				MarkdownDescription: "Optional extra disks sent as allocate `storage`.",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
+				},
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"name": schema.StringAttribute{
+							Required:            true,
+							MarkdownDescription: "Storage volume name.",
+						},
+						"size": schema.StringAttribute{
+							Required:            true,
+							MarkdownDescription: "Size as sent by the console (for example `10`).",
+						},
+						"path": schema.StringAttribute{
+							Optional:            true,
+							MarkdownDescription: "Mount path.",
+						},
+						"type": schema.StringAttribute{
+							Optional:            true,
+							MarkdownDescription: "Storage type (for example `BlockStorage`).",
+						},
+						"file_system": schema.StringAttribute{
+							Optional:            true,
+							MarkdownDescription: "Filesystem (for example `xfs`).",
+						},
+						"force_format": schema.BoolAttribute{
+							Optional:            true,
+							MarkdownDescription: "Whether to force format the volume.",
+						},
+					},
+				},
+			},
+			"backup_config": schema.SingleNestedAttribute{
+				Optional:            true,
+				MarkdownDescription: "Optional backup schedule sent as allocate `backupConfig`.",
+				Attributes: map[string]schema.Attribute{
+					"schedule_type": schema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "Schedule type (for example `weekly_full`).",
+					},
+					"start_time": schema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "Backup start time (for example `21:00`).",
+					},
+					"incr_days": schema.ListAttribute{
+						Optional:            true,
+						ElementType:         types.Int64Type,
+						MarkdownDescription: "Incremental backup days.",
+					},
+					"full_days": schema.ListAttribute{
+						Optional:            true,
+						ElementType:         types.Int64Type,
+						MarkdownDescription: "Full backup days.",
+					},
+					"full_retention": schema.Int64Attribute{
+						Optional:            true,
+						MarkdownDescription: "Full backup retention count.",
+					},
+					"full_retention_unit": schema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "Full backup retention unit (for example `MONTHS`).",
+					},
+					"backup_selections": schema.ListAttribute{
+						Optional:            true,
+						ElementType:         types.StringType,
+						MarkdownDescription: "Paths included in backup.",
+					},
 				},
 			},
 			"is_reserved": schema.BoolAttribute{
@@ -238,25 +346,37 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 		Name:       data.Name.ValueString(),
 		Flavor:     data.Flavor.ValueString(),
 		OSImage:    data.OSImage.ValueString(),
-		CloudInit:  data.CloudInit.ValueString(),
 		KeypairID:  data.KeypairID.ValueString(),
 		PublicKey:  data.PublicKey.ValueString(),
 		IsReserved: data.IsReserved.ValueBool(),
 		SystemID:   data.SystemID.ValueString(),
 	}
+	if cloudInit := strings.TrimSpace(data.CloudInit.ValueString()); cloudInit != "" {
+		allocateReq.CloudInit = cloudInit
+	} else if pub := strings.TrimSpace(allocateReq.PublicKey); pub != "" {
+		// Console allocate always sends this runcmd block with the selected public key.
+		allocateReq.CloudInit = uiBaremetalCloudInit(pub)
+	}
 
-	if !data.NetworkName.IsNull() || !data.SubnetID.IsNull() {
-		subnetID := data.SubnetID.ValueString()
-		allocateReq.NetworkInterface = &models.BaremetalNetworkInterface{
-			Name:     data.NetworkName.ValueString(),
-			SubnetID: subnetID,
-			Subnets: []models.BaremetalSubnetConfig{
-				{
-					SubnetID:  subnetID,
-					IsPrimary: true,
-				},
-			},
+	networkID, subnetID, extraIDs, err := r.resolveBaremetalNetwork(ctx, data, resp)
+	if err != nil || resp.Diagnostics.HasError() {
+		if err != nil {
+			resp.Diagnostics.AddError("Client Error", err.Error())
 		}
+		return
+	}
+	subnets := []models.BaremetalSubnetConfig{
+		{
+			SubnetID:  subnetID,
+			IsPrimary: true,
+		},
+	}
+	for _, id := range extraIDs {
+		subnets = append(subnets, models.BaremetalSubnetConfig{SubnetID: id})
+	}
+	allocateReq.NetworkInterface = &models.BaremetalNetworkInterface{
+		Name:    networkID,
+		Subnets: subnets,
 	}
 
 	if !data.Keypair.IsNull() && data.Keypair.ValueString() != "" {
@@ -272,13 +392,29 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 		allocateReq.Tags = tags
 	}
 
+	storage, err := expandBaremetalStorage(ctx, data.Storage)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid storage", err.Error())
+		return
+	}
+	allocateReq.Storage = storage
+
+	backupCfg, err := expandBaremetalBackupConfig(ctx, data.BackupConfig, data.PolicyEnabled)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid backup_config", err.Error())
+		return
+	}
+	allocateReq.BackupConfig = backupCfg
+
 	tflog.Debug(ctx, "Baremetal create request prepared", map[string]interface{}{
 		"name":              allocateReq.Name,
 		"flavor":            allocateReq.Flavor,
 		"os_image":          allocateReq.OSImage,
 		"availability_zone": data.AvailabilityZone.ValueString(),
-		"subnet_id":         data.SubnetID.ValueString(),
+		"subnet_name":       data.SubnetName.ValueString(),
 		"network_name":      data.NetworkName.ValueString(),
+		"network_id":        networkID,
+		"subnet_id":         subnetID,
 		"is_reserved":       allocateReq.IsReserved,
 		"has_system_id":     strings.TrimSpace(allocateReq.SystemID) != "",
 		"has_keypair":       allocateReq.Metadata != nil && strings.TrimSpace(allocateReq.Metadata.Keypair) != "",
@@ -286,6 +422,8 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 		"has_public_key":    strings.TrimSpace(allocateReq.PublicKey) != "",
 		"tags_count":        len(allocateReq.Tags),
 		"has_cloud_init":    strings.TrimSpace(allocateReq.CloudInit) != "",
+		"storage_count":     len(allocateReq.Storage),
+		"has_backup_config": allocateReq.BackupConfig != nil,
 	})
 
 	bmClient := r.client.WithAvailabilityZone(data.AvailabilityZone.ValueString())
@@ -303,6 +441,15 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 	// The allocate API is asynchronous and often returns before the server has a
 	// meaningful lifecycle state. Wait for a stable non-placeholder state.
 	if err := r.waitForBaremetalState(ctx, data.Name.ValueString(), data.AvailabilityZone.ValueString(), 5*time.Minute); err != nil {
+		// POST already created the server; keep it in Terraform state so destroy
+		// can release it instead of leaving a 409 on the next apply.
+		if readErr := r.readIntoState(ctx, &data); readErr != nil {
+			tflog.Warn(ctx, "Unable to refresh baremetal after provisioning failure", map[string]interface{}{
+				"name":  data.Name.ValueString(),
+				"error": readErr.Error(),
+			})
+		}
+		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 		resp.Diagnostics.AddError("Baremetal Provisioning Error", err.Error())
 		return
 	}
@@ -549,6 +696,7 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 	start := time.Now()
 	lastState := ""
 	lastPower := ""
+	lastErrMsg := ""
 	stableProvisionedReads := 0
 	attempt := 0
 	for {
@@ -562,8 +710,12 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 				"stable_reads":      stableProvisionedReads,
 				"last_state":        lastState,
 				"last_power":        lastPower,
+				"last_err_msg":      lastErrMsg,
 				"timeout_seconds":   int(timeout.Seconds()),
 			})
+			if lastErrMsg != "" {
+				return fmt.Errorf("baremetal server %q did not reach a valid provisioning state within %s (last state=%q, last power=%q): %s", name, timeout.String(), lastState, lastPower, lastErrMsg)
+			}
 			return fmt.Errorf("baremetal server %q did not reach a valid provisioning state within %s (last state=%q, last power=%q)", name, timeout.String(), lastState, lastPower)
 		}
 
@@ -576,11 +728,17 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 			power := strings.TrimSpace(detail.PowerState)
 			detailState = state
 			detailPower = power
+			if msg := strings.TrimSpace(detail.LastErrMsg); msg != "" {
+				lastErrMsg = msg
+			}
 			if state != "" {
 				lastState = state
 			}
 			if power != "" {
 				lastPower = power
+			}
+			if err := terminalBaremetalAllocationError(name, state, lastErrMsg); err != nil {
+				return err
 			}
 			if isProvisionedBaremetalState(state) {
 				stableProvisionedReads++
@@ -603,11 +761,17 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 			power := strings.TrimSpace(summary.PowerState)
 			summaryState = state
 			summaryPower = power
+			if msg := strings.TrimSpace(summary.LastErrMsg); msg != "" {
+				lastErrMsg = msg
+			}
 			if state != "" {
 				lastState = state
 			}
 			if power != "" {
 				lastPower = power
+			}
+			if err := terminalBaremetalAllocationError(name, state, lastErrMsg); err != nil {
+				return err
 			}
 			if isProvisionedBaremetalState(state) {
 				stableProvisionedReads++
@@ -635,6 +799,7 @@ func (r *BaremetalResource) waitForBaremetalState(ctx context.Context, name, az 
 			"summary_error":     summaryErr,
 			"last_state":        lastState,
 			"last_power":        lastPower,
+			"last_err_msg":      lastErrMsg,
 		})
 
 		select {
@@ -662,6 +827,166 @@ func isProvisionedBaremetalState(state string) bool {
 		return false
 	}
 	return true
+}
+
+func terminalBaremetalAllocationError(name, state, lastErrMsg string) error {
+	msg := strings.TrimSpace(lastErrMsg)
+	if msg == "" {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(state), "NoResource") {
+		return nil
+	}
+	return fmt.Errorf("baremetal server %q allocation failed (state=%q): %s", name, state, msg)
+}
+
+func looksLikeUUID(value string) bool {
+	return uuidPattern.MatchString(strings.TrimSpace(value))
+}
+
+func (r *BaremetalResource) resolveBaremetalNetwork(ctx context.Context, data BaremetalResourceModel, resp *resource.CreateResponse) (networkID, subnetID string, extra []string, err error) {
+	networkRef := strings.TrimSpace(data.NetworkName.ValueString())
+	if networkRef == "" {
+		return "", "", nil, fmt.Errorf("network_name is required to resolve subnet_name")
+	}
+	if looksLikeUUID(networkRef) {
+		networkID = networkRef
+	} else {
+		networkID, err = r.client.ResolveVPCID(ctx, networkRef)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("unable to resolve network_name %q: %w", networkRef, err)
+		}
+	}
+
+	subnetName := strings.TrimSpace(data.SubnetName.ValueString())
+	subnetID, err = r.client.ResolveSubnetID(ctx, networkID, subnetName)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("unable to resolve subnet_name %q: %w", subnetName, err)
+	}
+
+	if !data.AdditionalSubnetNames.IsNull() && !data.AdditionalSubnetNames.IsUnknown() {
+		var names []string
+		resp.Diagnostics.Append(data.AdditionalSubnetNames.ElementsAs(ctx, &names, false)...)
+		if resp.Diagnostics.HasError() {
+			return networkID, subnetID, nil, nil
+		}
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			id, resolveErr := r.client.ResolveSubnetID(ctx, networkID, name)
+			if resolveErr != nil {
+				return "", "", nil, fmt.Errorf("unable to resolve additional subnet_name %q: %w", name, resolveErr)
+			}
+			extra = append(extra, id)
+		}
+	}
+
+	return networkID, subnetID, extra, nil
+}
+
+func expandBaremetalStorage(ctx context.Context, list types.List) ([]models.BaremetalAllocateStorageMap, error) {
+	if list.IsNull() || list.IsUnknown() {
+		return nil, nil
+	}
+	var items []baremetalStorageModel
+	diags := list.ElementsAs(ctx, &items, false)
+	if diags.HasError() {
+		return nil, fmt.Errorf("failed to parse storage")
+	}
+	out := make([]models.BaremetalAllocateStorageMap, 0, len(items))
+	for _, item := range items {
+		out = append(out, models.BaremetalAllocateStorageMap{
+			Name:        item.Name.ValueString(),
+			Size:        item.Size.ValueString(),
+			Path:        item.Path.ValueString(),
+			Type:        item.Type.ValueString(),
+			FileSystem:  item.FileSystem.ValueString(),
+			ForceFormat: item.ForceFormat.ValueBool(),
+		})
+	}
+	return out, nil
+}
+
+func expandBaremetalBackupConfig(ctx context.Context, obj types.Object, policyEnabled types.Bool) (*models.BaremetalBackupConfig, error) {
+	if obj.IsNull() || obj.IsUnknown() {
+		if policyEnabled.IsNull() || policyEnabled.IsUnknown() {
+			return nil, nil
+		}
+		return &models.BaremetalBackupConfig{PolicyEnabled: policyEnabled.ValueBool()}, nil
+	}
+
+	var cfg baremetalBackupConfigModel
+	diags := obj.As(ctx, &cfg, basetypes.ObjectAsOptions{})
+	if diags.HasError() {
+		return nil, fmt.Errorf("failed to parse backup_config")
+	}
+
+	incrDays, err := intListFromAttr(ctx, cfg.IncrDays)
+	if err != nil {
+		return nil, err
+	}
+	fullDays, err := intListFromAttr(ctx, cfg.FullDays)
+	if err != nil {
+		return nil, err
+	}
+	selections, err := stringListFromAttr(ctx, cfg.BackupSelections)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &models.BaremetalBackupConfig{
+		ScheduleType:      cfg.ScheduleType.ValueString(),
+		StartTime:         cfg.StartTime.ValueString(),
+		IncrDays:          incrDays,
+		FullDays:          fullDays,
+		FullRetention:     int(cfg.FullRetention.ValueInt64()),
+		FullRetentionUnit: cfg.FullRetentionUnit.ValueString(),
+		BackupSelections:  selections,
+	}
+	if !policyEnabled.IsNull() && !policyEnabled.IsUnknown() {
+		out.PolicyEnabled = policyEnabled.ValueBool()
+	}
+	return out, nil
+}
+
+func intListFromAttr(ctx context.Context, list types.List) ([]int, error) {
+	if list.IsNull() || list.IsUnknown() {
+		return []int{}, nil
+	}
+	var vals []int64
+	diags := list.ElementsAs(ctx, &vals, false)
+	if diags.HasError() {
+		return nil, fmt.Errorf("failed to parse integer list")
+	}
+	out := make([]int, len(vals))
+	for i, v := range vals {
+		out[i] = int(v)
+	}
+	return out, nil
+}
+
+func stringListFromAttr(ctx context.Context, list types.List) ([]string, error) {
+	if list.IsNull() || list.IsUnknown() {
+		return nil, nil
+	}
+	var vals []string
+	diags := list.ElementsAs(ctx, &vals, false)
+	if diags.HasError() {
+		return nil, fmt.Errorf("failed to parse string list")
+	}
+	return vals, nil
+}
+
+func uiBaremetalCloudInit(publicKey string) string {
+	return "runcmd:\n\n" +
+		"- useradd -m cloud-user\n" +
+		"- mkdir -p /home/cloud-user/.ssh\n" +
+		"- echo " + strconv.Quote(publicKey) + " >> /home/cloud-user/.ssh/authorized_keys\n" +
+		"- chmod 700 /home/cloud-user/.ssh\n" +
+		"- chmod 600 /home/cloud-user/.ssh/authorized_keys\n" +
+		"- chown -R cloud-user:cloud-user /home/cloud-user/.ssh"
 }
 
 func (r *BaremetalResource) resolveBaremetalAZ(ctx context.Context, name string, timeout time.Duration) (string, error) {

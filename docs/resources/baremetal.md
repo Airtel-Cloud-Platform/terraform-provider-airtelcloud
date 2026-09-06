@@ -12,6 +12,8 @@ Allocates and manages an Airtel Cloud baremetal server.
 The resource currently supports:
 
 - server allocation via create API
+- subnet names resolved to UUIDs before POST `/server`
+- optional extra disks (`storage`) and backup schedule (`backup_config`)
 - state refresh from list/detail APIs
 - backup policy toggle updates (`policy_enabled`)
 - server release on destroy
@@ -20,18 +22,40 @@ The resource currently supports:
 
 ```terraform
 resource "airtelcloud_baremetal" "app" {
-  name         = "tft-bm-app-01"
-  flavor       = "ccd.large"
-  os_image     = "Ubuntu22_04_Aug2026"
-  subnet_id    = "8d5d63eb-f9a6-46ff-a5af-f7c05711391c"
-  availability_zone = "N2"
-  network_name = "33c9f6c7-ba79-41e0-9009-0ec94ab1cdf4"
+  name                    = "tft-bm-app-01"
+  flavor                  = "metal-c56-m1024"
+  os_image                = "ubuntu22_Aug2026"
+  subnet_name             = "proxy-test-subnet"
+  additional_subnet_names = ["temporal-subnet"]
+  availability_zone       = "S1"
+  network_name            = "copper-vpc1"
 
-  keypair      = "my-linux-keypair"
+  keypair      = "Vinay"
   keypair_id   = "f97f1f91-3d1a-4a7b-acf4-98df88f28945"
   public_key   = "ssh-rsa AAAA..."
   is_reserved  = false
-  tags         = ["terraform", "app", "prod"]
+  tags         = ["South-AZ1"]
+
+  storage = [
+    {
+      name         = "baremetel"
+      size         = "10"
+      path         = "/test"
+      type         = "BlockStorage"
+      file_system  = "xfs"
+      force_format = true
+    }
+  ]
+
+  backup_config = {
+    schedule_type       = "weekly_full"
+    start_time          = "21:00"
+    incr_days           = []
+    full_days           = [7]
+    full_retention      = 1
+    full_retention_unit = "MONTHS"
+    backup_selections   = ["/test"]
+  }
 
   # Mutable field (update API)
   policy_enabled = true
@@ -49,20 +73,23 @@ resource "airtelcloud_baremetal" "app" {
 - `name` (String) - Baremetal server name.
 - `flavor` (String) - Flavor profile to allocate.
 - `os_image` (String) - OS image name to install.
-- `subnet_id` (String) - Subnet ID for the primary network interface.
+- `subnet_name` (String) - Primary subnet display name. Resolved to `subnetId` before allocate.
 - `availability_zone` (String) - Availability zone used by baremetal APIs (for example `N1`, `N2`, `S1`, `S2`).
 
 ### Optional
 
-- `network_name` (String) - Value sent as `networkInterface.name` (often a network UUID from UI requests).
+- `network_name` (String) - VPC name or UUID sent as `networkInterface.name`. Names are resolved to the VPC UUID. Required to resolve `subnet_name`.
+- `additional_subnet_names` (List of String) - Extra subnet display names sent in `networkInterface.subnets` after the primary subnet.
+- `storage` (List of Object) - Extra disks: `name`, `size`, `path`, `type`, `file_system`, `force_format`.
+- `backup_config` (Object) - Backup schedule: `schedule_type`, `start_time`, `incr_days`, `full_days`, `full_retention`, `full_retention_unit`, `backup_selections`.
 - `cloud_init` (String) - Cloud-init script for first boot.
 - `is_reserved` (Boolean) - Whether to allocate from reserved capacity. Defaults to `false`.
 - `system_id` (String) - Optional system ID used by backend for reservation/release flows.
 - `keypair` (String) - SSH keypair name to inject.
 - `keypair_id` (String) - Optional keypair UUID sent as `keypairId`.
 - `public_key` (String) - Optional SSH public key sent as `publicKey`.
-- `tags` (List of String) - Tags to assign at allocation.
-- `policy_enabled` (Boolean) - Mutable backup policy toggle sent to update API.
+- `tags` (List of String) - Tags to assign at allocation. The console sends a placement tag such as `South-AZ1`; this is not the same as generic labels like `terraform`.
+- `policy_enabled` (Boolean) - Mutable backup policy toggle sent to update API. When set at create, it is also included on `backupConfig.policyEnabled`.
 - `delete_disks` (Boolean) - Whether to delete disks when resource is destroyed. Defaults to `false`.
 - `secure_erase` (Boolean) - Whether to perform secure erase on destroy. Defaults to `false`.
 

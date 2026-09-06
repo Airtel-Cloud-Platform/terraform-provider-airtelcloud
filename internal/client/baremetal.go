@@ -60,6 +60,13 @@ func (c *Client) GetBaremetal(ctx context.Context, name, az string) (*models.Bar
 	if bm.NetworkInfo.PortID == 0 && resp.NetworkInfo.PortID != 0 {
 		bm.NetworkInfo = resp.NetworkInfo
 	}
+	if bm.LastErrMsg == "" {
+		if resp.ServerDetails.LastErrMsg != "" {
+			bm.LastErrMsg = resp.ServerDetails.LastErrMsg
+		} else if resp.Baremetal.LastErrMsg != "" {
+			bm.LastErrMsg = resp.Baremetal.LastErrMsg
+		}
+	}
 	return &bm, nil
 }
 

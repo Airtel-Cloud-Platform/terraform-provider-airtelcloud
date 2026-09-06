@@ -106,6 +106,26 @@ func TestResolveBaremetalNodeNotReady(t *testing.T) {
 	}
 }
 
+func TestGetBaremetalLastErrMsg(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	ms.AddHandler("GET", baremetalTestBasePath+"/server/bm-1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"serverDetails":{"name":"bm-1","state":"NoResource","uuid":"bm-uuid-1","lastErrMsg":"No bms instance found in the general pool; provider: bmaas-provider-s1 | flavor: metal-c56-m1024"}}`))
+	})
+
+	client := newBaremetalTestClient(t, ms)
+	bm, err := client.GetBaremetal(context.Background(), "bm-1", "S1")
+	if err != nil {
+		t.Fatalf("GetBaremetal() error = %v", err)
+	}
+	want := "No bms instance found in the general pool; provider: bmaas-provider-s1 | flavor: metal-c56-m1024"
+	if bm.LastErrMsg != want {
+		t.Fatalf("LastErrMsg = %q, want %q", bm.LastErrMsg, want)
+	}
+}
+
 func TestAllocateBaremetal(t *testing.T) {
 	ms := testutil.NewMockServer()
 	defer ms.Close()
@@ -122,15 +142,72 @@ func TestAllocateBaremetal(t *testing.T) {
 		if !strings.Contains(body, `"flavor":"ccd.large"`) {
 			t.Fatalf("request body missing flavor field: %s", body)
 		}
+		if !strings.Contains(body, `"cloudInit":"runcmd:`) {
+			t.Fatalf("request body missing cloudInit runcmd: %s", body)
+		}
+		if !strings.Contains(body, `"keypairId":"kp-1"`) {
+			t.Fatalf("request body missing keypairId field: %s", body)
+		}
+		if !strings.Contains(body, `"networkInterface":{"name":"net-uuid"`) {
+			t.Fatalf("request body missing UI-shaped networkInterface: %s", body)
+		}
+		if strings.Contains(body, `"networkInterface":{"name":"net-uuid","subnetId"`) {
+			t.Fatalf("request body should not send top-level networkInterface.subnetId: %s", body)
+		}
+		if !strings.Contains(body, `"subnets":[{"subnetId":"subnet-primary","isPrimary":true}`) {
+			t.Fatalf("request body missing primary subnet: %s", body)
+		}
+		if !strings.Contains(body, `"storage":[{"name":"baremetel","size":"10","path":"/test","type":"BlockStorage","fileSystem":"xfs","forceFormat":true}]`) {
+			t.Fatalf("request body missing storage: %s", body)
+		}
+		if !strings.Contains(body, `"scheduleType":"weekly_full"`) {
+			t.Fatalf("request body missing backupConfig.scheduleType: %s", body)
+		}
+		if !strings.Contains(body, `"incrDays":[]`) {
+			t.Fatalf("request body missing empty incrDays: %s", body)
+		}
+		if !strings.Contains(body, `"fullDays":[7]`) {
+			t.Fatalf("request body missing fullDays: %s", body)
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{}`))
 	})
 
 	client := newBaremetalTestClient(t, ms)
 	err := client.AllocateBaremetal(context.Background(), &models.AllocateBaremetalRequest{
-		Name:    "bm-new",
-		Flavor:  "ccd.large",
-		OSImage: "Ubuntu22_04_Aug2026",
+		Name:      "bm-new",
+		Flavor:    "ccd.large",
+		OSImage:   "rhel/RHEL9-v1-Aug2026",
+		CloudInit: "runcmd:\n\n- useradd -m cloud-user",
+		KeypairID: "kp-1",
+		PublicKey: "ssh-rsa AAAA",
+		Metadata:  &models.BaremetalMetadata{Keypair: "Vinay"},
+		NetworkInterface: &models.BaremetalNetworkInterface{
+			Name: "net-uuid",
+			Subnets: []models.BaremetalSubnetConfig{
+				{SubnetID: "subnet-primary", IsPrimary: true},
+				{SubnetID: "subnet-extra"},
+			},
+		},
+		Storage: []models.BaremetalAllocateStorageMap{
+			{
+				Name:        "baremetel",
+				Size:        "10",
+				Path:        "/test",
+				Type:        "BlockStorage",
+				FileSystem:  "xfs",
+				ForceFormat: true,
+			},
+		},
+		BackupConfig: &models.BaremetalBackupConfig{
+			ScheduleType:      "weekly_full",
+			StartTime:         "21:00",
+			IncrDays:          []int{},
+			FullDays:          []int{7},
+			FullRetention:     1,
+			FullRetentionUnit: "MONTHS",
+			BackupSelections:  []string{"/test"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("AllocateBaremetal() error = %v", err)

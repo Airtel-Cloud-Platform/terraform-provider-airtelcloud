@@ -18,6 +18,8 @@ type BaremetalSubnetConfig struct {
 }
 
 // BaremetalNetworkInterface models the networkInterface field used by allocate.
+// The UI sends network UUID as name and the attached subnets in subnets[];
+// it does not send a top-level subnetId on this object.
 type BaremetalNetworkInterface struct {
 	Name     string                  `json:"name,omitempty"`
 	SubnetID string                  `json:"subnetId,omitempty"`
@@ -34,7 +36,7 @@ type BaremetalBackupConfig struct {
 	PolicyName           string   `json:"policyName,omitempty"`
 	ScheduleType         string   `json:"scheduleType,omitempty"`
 	StartTime            string   `json:"startTime,omitempty"`
-	IncrDays             []int    `json:"incrDays,omitempty"`
+	IncrDays             []int    `json:"incrDays"`
 	FullDays             []int    `json:"fullDays,omitempty"`
 	FullRetention        int      `json:"fullRetention,omitempty"`
 	FullRetentionUnit    string   `json:"fullRetentionUnit,omitempty"`
@@ -107,6 +109,7 @@ type Baremetal struct {
 	Flavor           string      `json:"flavor,omitempty"`
 	PowerState       string      `json:"powerState,omitempty"`
 	AvailabilityZone string      `json:"availabilityZone,omitempty"`
+	LastErrMsg       string      `json:"lastErrMsg,omitempty"`
 	NetworkInfo      NetworkInfo `json:"networkInfo"` // carries the backend port id
 	// PortID is derived from NetworkInfo.PortID (networkInfo.portId in the
 	// /server/{name} detail response) and maps to a virtual server node's
