@@ -17,8 +17,8 @@ resource "airtelcloud_storage_bucket" "private_bucket" {
   replication_type  = "Local"
   replication_tag   = "south_S1"
   availability_zone = "S1"
-  versioning        = true
-  object_locking    = false
+  versioning                = true
+  object_locking            = false
 
   tags = {
     Environment = "production"
@@ -43,6 +43,7 @@ resource "airtelcloud_storage_bucket" "private_bucket" {
 
 - `versioning` (Boolean) - Whether versioning is enabled. Default: `false`.
 - `object_locking` (Boolean) - Whether object locking is enabled. Default: `false`.
+- `object_lock_validity_days` (Number) - Object lock retention in days (`config.objLockValidityDays`). Defaults to `30` when object locking is enabled.
 - `tags` (Map of String) - A map of tags to assign to the bucket.
 
 ## Attribute Reference

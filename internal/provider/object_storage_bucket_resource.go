@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -35,14 +36,15 @@ type ObjectStorageBucketResource struct {
 
 // ObjectStorageBucketResourceModel describes the resource data model.
 type ObjectStorageBucketResourceModel struct {
-	ID               types.String `tfsdk:"id"`
-	Name             types.String `tfsdk:"name"`
-	ReplicationType  types.String `tfsdk:"replication_type"`
-	ReplicationTag   types.String `tfsdk:"replication_tag"`
-	AvailabilityZone types.String `tfsdk:"availability_zone"`
-	Versioning       types.Bool   `tfsdk:"versioning"`
-	ObjectLocking    types.Bool   `tfsdk:"object_locking"`
-	Tags             types.Map    `tfsdk:"tags"`
+	ID                     types.String `tfsdk:"id"`
+	Name                   types.String `tfsdk:"name"`
+	ReplicationType        types.String `tfsdk:"replication_type"`
+	ReplicationTag         types.String `tfsdk:"replication_tag"`
+	AvailabilityZone       types.String `tfsdk:"availability_zone"`
+	Versioning             types.Bool   `tfsdk:"versioning"`
+	ObjectLocking          types.Bool   `tfsdk:"object_locking"`
+	ObjectLockValidityDays types.Int64  `tfsdk:"object_lock_validity_days"`
+	Tags                   types.Map    `tfsdk:"tags"`
 	// Computed fields from response
 	S3Endpoint     types.String `tfsdk:"s3_endpoint"`
 	PublicEndpoint types.String `tfsdk:"public_endpoint"`
@@ -124,6 +126,13 @@ func (r *ObjectStorageBucketResource) Schema(ctx context.Context, req resource.S
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
 			},
+			"object_lock_validity_days": schema.Int64Attribute{
+				MarkdownDescription: "Object lock retention in days. Sent as `config.objLockValidityDays` when object locking is enabled (console default is 30).",
+				Optional:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+				},
+			},
 			"tags": schema.MapAttribute{
 				ElementType:         types.StringType,
 				MarkdownDescription: "A map of tags to assign to the bucket.",
@@ -199,11 +208,17 @@ func (r *ObjectStorageBucketResource) Create(ctx context.Context, req resource.C
 		Tag:             data.ReplicationTag.ValueString(),
 	}
 
-	// Build config
 	config := &models.BucketCreateConfig{
 		Versioning:  data.Versioning.ValueBool(),
 		ObjLocking:  data.ObjectLocking.ValueBool(),
 		Replication: replication,
+	}
+	if data.ObjectLocking.ValueBool() {
+		days := data.ObjectLockValidityDays.ValueInt64()
+		if days == 0 {
+			days = 30
+		}
+		config.ObjLockValidityDays = days
 	}
 
 	createReq := &models.CreateObjectStorageBucketRequest{
@@ -249,7 +264,7 @@ func (r *ObjectStorageBucketResource) Read(ctx context.Context, req resource.Rea
 
 	bucket, err := r.client.GetObjectStorageBucket(ctx, data.Name.ValueString())
 	if err != nil {
-		if apiErr, ok := err.(*client.APIError); ok && apiErr.StatusCode == 404 {
+		if client.IsNotFoundError(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -352,8 +367,8 @@ func (r *ObjectStorageBucketResource) Delete(ctx context.Context, req resource.D
 		return
 	}
 
-	err := r.client.DeleteObjectStorageBucket(ctx, data.Name.ValueString())
-	if err != nil {
+	err := r.client.DeleteObjectStorageBucket(ctx, data.Name.ValueString(), data.AvailabilityZone.ValueString(), data.ObjectLocking.ValueBool())
+	if err != nil && !client.IsNotFoundError(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete bucket, got error: %s", err))
 		return
 	}

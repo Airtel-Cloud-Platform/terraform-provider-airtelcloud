@@ -118,6 +118,7 @@ type ObjectStorageBucket struct {
 	ReplicationConfig *BucketReplicationConfig `json:"replicationConfig,omitempty"`
 	Tags              map[string]string        `json:"tags,omitempty"`
 	Versioning        *FlexBool                `json:"versioning,omitempty"`
+	IsDeleted         bool                     `json:"isDeleted,omitempty"`
 }
 
 // UpdateObjectStorageBucketRequest represents the request to update an object storage bucket

@@ -118,7 +118,7 @@ func TestObjectStorageIntegration_CreateGetDelete(t *testing.T) {
 	// Cleanup: Delete bucket at the end
 	defer func() {
 		t.Logf("Deleting bucket: %s", bucket.Name)
-		err := client.DeleteObjectStorageBucket(ctx, bucket.Name)
+		err := client.DeleteObjectStorageBucket(ctx, bucket.Name, "S1", false)
 		if err != nil {
 			t.Errorf("DeleteObjectStorageBucket failed: %v", err)
 		} else {
@@ -209,7 +209,7 @@ func TestObjectStorageIntegration_Update(t *testing.T) {
 	// Cleanup: Delete bucket at the end
 	defer func() {
 		t.Logf("Deleting bucket: %s", bucket.Name)
-		err := client.DeleteObjectStorageBucket(ctx, bucket.Name)
+		err := client.DeleteObjectStorageBucket(ctx, bucket.Name, "S1", false)
 		if err != nil {
 			t.Errorf("DeleteObjectStorageBucket failed: %v", err)
 		} else {
