@@ -1,0 +1,54 @@
+terraform {
+  required_providers {
+    airtelcloud = {
+      source  = "Airtel-Cloud-Platform/airtelcloud"
+      version = "1.2.3"
+    }
+  }
+}
+
+provider "airtelcloud" {
+  api_endpoint = "https://south.cloud.airtel.in"
+  api_key      = var.airtel_api_key
+  api_secret   = var.airtel_api_secret
+  region       = "south"
+  organization = var.organization
+  project_name = var.project_name
+}
+
+variable "airtel_api_key" {
+  description = "Airtel Cloud API key"
+  type        = string
+  sensitive   = true
+}
+
+variable "airtel_api_secret" {
+  description = "Airtel Cloud API secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "organization" {
+  description = "organization for the resources"
+  type        = string
+}
+
+variable "project_name" {
+  description = "Project for the resources"
+  type        = string
+}
+
+resource "airtelcloud_baremetal_storage" "data" {
+  name              = "ak-store"
+  availability_zone = "S1"
+  size              = 10
+  description       = "Create new baremetal storage"
+}
+
+output "volume_id" {
+  value = airtelcloud_baremetal_storage.data.id
+}
+
+output "volume_state" {
+  value = airtelcloud_baremetal_storage.data.state
+}
