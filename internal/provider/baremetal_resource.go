@@ -380,9 +380,9 @@ func (r *BaremetalResource) Create(ctx context.Context, req resource.CreateReque
 		subnets = append(subnets, models.BaremetalSubnetConfig{SubnetID: id})
 	}
 	allocateReq.NetworkInterface = &models.BaremetalNetworkInterface{
-		Name:    networkID,
-		SubnetID:  subnetID,
-		Subnets: subnets,
+		Name:     networkID,
+		SubnetID: subnetID,
+		Subnets:  subnets,
 	}
 
 	if !data.Keypair.IsNull() && data.Keypair.ValueString() != "" {
