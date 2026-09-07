@@ -145,17 +145,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 			return nil, err
 		}
 		contentType = "application/json"
-
-		// Temporary debug: capture only network configuration for baremetal allocation.
-		if method == http.MethodPost && strings.HasSuffix(strings.TrimSuffix(path, "/"), "/server") {
-			var payload map[string]interface{}
-			if err := json.Unmarshal(buf.(*bytes.Buffer).Bytes(), &payload); err == nil {
-				AgentDebugLog("internal/client/client.go:doRequest", "baremetal allocation request network payload", "E", map[string]interface{}{
-					"network_interface": payload["networkInterface"],
-					"path":              path,
-				})
-			}
-		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), buf)
@@ -226,39 +215,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		"status":      resp.Status,
 		"headers":     resp.Header,
 	})
-
-	// #region agent log
-	if strings.Contains(path, "baremetal-manager") && c.Organization != "test-org" {
-		preview := ""
-		if resp.Body != nil {
-			bodyBytes, readErr := io.ReadAll(resp.Body)
-			if readErr == nil {
-				resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				if len(bodyBytes) > 512 {
-					preview = string(bodyBytes[:512])
-				} else {
-					preview = string(bodyBytes)
-				}
-			}
-		}
-		AgentDebugLog("internal/client/client.go:doRequest", "baremetal HTTP roundtrip", "C", map[string]interface{}{
-			"method":       method,
-			"path":         path,
-			"status_code":  resp.StatusCode,
-			"az_header":    req.Header.Get("ce-availability-zone"),
-			"region":       req.Header.Get("ce-region"),
-			"has_ce_auth":  req.Header.Get("Ce-Auth") != "",
-			"body_preview": preview,
-		})
-		if method == http.MethodPost && strings.HasSuffix(strings.TrimSuffix(path, "/"), "/server") {
-			AgentDebugLog("internal/client/client.go:doRequest", "allocate POST headers", "D", map[string]interface{}{
-				"az_header":   req.Header.Get("ce-availability-zone"),
-				"x_az_header": req.Header.Get("x-az"),
-				"status_code": resp.StatusCode,
-			})
-		}
-	}
-	// #endregion
 
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
