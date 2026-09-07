@@ -38,3 +38,17 @@ variable "project_name" {
   type        = string
 }
 
+resource "airtelcloud_baremetal_storage" "data" {
+  name              = "ak-store"
+  availability_zone = "S1"
+  size              = 10
+  description       = "Create new baremetal storage"
+}
+
+output "volume_id" {
+  value = airtelcloud_baremetal_storage.data.id
+}
+
+output "volume_state" {
+  value = airtelcloud_baremetal_storage.data.state
+}

@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -28,18 +30,73 @@ func (c *Client) ListBaremetals(ctx context.Context) ([]models.Baremetal, error)
 	return response.Items, nil
 }
 
+// AllocateBaremetal allocates a new baremetal server.
+func (c *Client) AllocateBaremetal(ctx context.Context, req *models.AllocateBaremetalRequest) error {
+	return c.Post(ctx, fmt.Sprintf("%s/server", c.baremetalBasePath()), req, nil)
+}
+
 // GetBaremetal retrieves a single baremetal server by name. The detail endpoint
 // is scoped by the server's availability zone (ce-availability-zone header) and
 // carries the backend port id used for load balancer pool membership.
 func (c *Client) GetBaremetal(ctx context.Context, name, az string) (*models.Baremetal, error) {
 	scopedClient := c.WithAvailabilityZone(az)
 
-	var bm models.Baremetal
-	err := scopedClient.Get(ctx, fmt.Sprintf("%s/server/%s", c.baremetalBasePath(), name), &bm)
+	// Swagger defines /server/{name} as a wrapped shape with serverDetails and
+	// networkInfo, while some backend responses are flat. Decode both shapes.
+	var resp struct {
+		models.Baremetal
+		ServerDetails models.Baremetal   `json:"serverDetails"`
+		NetworkInfo   models.NetworkInfo `json:"networkInfo"`
+	}
+	err := scopedClient.Get(ctx, fmt.Sprintf("%s/server/%s", c.baremetalBasePath(), name), &resp)
 	if err != nil {
 		return nil, err
 	}
+
+	bm := resp.Baremetal
+	if resp.ServerDetails.Name != "" || resp.ServerDetails.UUID != "" {
+		bm = resp.ServerDetails
+	}
+	if bm.NetworkInfo.PortID == 0 && resp.NetworkInfo.PortID != 0 {
+		bm.NetworkInfo = resp.NetworkInfo
+	}
+	if bm.LastErrMsg == "" {
+		if resp.ServerDetails.LastErrMsg != "" {
+			bm.LastErrMsg = resp.ServerDetails.LastErrMsg
+		} else if resp.Baremetal.LastErrMsg != "" {
+			bm.LastErrMsg = resp.Baremetal.LastErrMsg
+		}
+	}
 	return &bm, nil
+}
+
+// UpdateBaremetal updates mutable baremetal settings.
+func (c *Client) UpdateBaremetal(ctx context.Context, name string, req *models.UpdateBaremetalRequest) error {
+	return c.Put(ctx, fmt.Sprintf("%s/server/%s", c.baremetalBasePath(), name), req, nil)
+}
+
+// ReleaseBaremetal releases (deletes) a baremetal server by name.
+func (c *Client) ReleaseBaremetal(ctx context.Context, name string, opts *models.ReleaseBaremetalOptions) error {
+	path := fmt.Sprintf("%s/server/%s", c.baremetalBasePath(), name)
+	if opts == nil {
+		return c.Delete(ctx, path)
+	}
+
+	q := url.Values{}
+	if opts.SystemID != "" {
+		q.Set("systemId", opts.SystemID)
+	}
+	if opts.DeleteDisks != nil {
+		q.Set("deleteDisks", strconv.FormatBool(*opts.DeleteDisks))
+	}
+	if opts.SecureErase != nil {
+		q.Set("secureErase", strconv.FormatBool(*opts.SecureErase))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path = path + "?" + encoded
+	}
+
+	return c.Delete(ctx, path)
 }
 
 // ResolveBaremetalNode resolves a baremetal pool member by UUID or name and

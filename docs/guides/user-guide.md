@@ -3,7 +3,7 @@ page_title: "Airtel Cloud Terraform Provider - User Guide"
 subcategory: ""
 description: |-
   Complete user guide for managing Airtel Cloud infrastructure with Terraform.
-  Covers all 22 resources with examples, argument references, and import instructions.
+  Covers all 23 resources with examples, argument references, and import instructions.
 ---
 
 # Airtel Cloud Terraform Provider - User Guide
@@ -27,7 +27,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.3"
+      version = "1.2.4"
     }
   }
 }

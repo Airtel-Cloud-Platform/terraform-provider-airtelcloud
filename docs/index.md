@@ -11,7 +11,7 @@ The Airtel Cloud provider allows Terraform to manage Airtel Cloud infrastructure
 
 -> **New to this provider?** See the [Getting Started Guide](guides/getting-started) for a full walkthrough.
 
--> **Complete Resource Guide:** See the [User Guide](guides/user-guide) for all 22 resources with examples, argument references, and import instructions.
+-> **Complete Resource Guide:** See the [User Guide](guides/user-guide) for all 23 resources with examples, argument references, and import instructions.
 
 ## Example Usage
 
@@ -20,7 +20,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.3"
+      version = "1.2.4"
     }
   }
 }
@@ -105,10 +105,11 @@ The following arguments are supported in the provider configuration:
 
 ## Available Resources
 
-The provider supports the following 22 resources:
+The provider supports the following 23 resources:
 
 **Compute:**
 - [`airtelcloud_vm`](resources/vm) - Virtual Machine
+- [`airtelcloud_baremetal`](resources/baremetal) - Baremetal Server
 - `airtelcloud_compute_snapshot` - Compute Snapshot
 
 **Storage:**

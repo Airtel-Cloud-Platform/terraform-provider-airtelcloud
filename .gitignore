@@ -29,4 +29,7 @@ dist/
 #script
 scripts/tf-local-dev.sh
 
+# Local temp workspaces
+.tmp/
+
 

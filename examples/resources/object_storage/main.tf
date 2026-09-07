@@ -2,7 +2,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.3"
+      version = "1.2.4"
     }
   }
 }
@@ -50,8 +50,8 @@ resource "airtelcloud_storage_bucket" "private_bucket" {
   replication_type  = "Local"
   replication_tag   = "south_S1"
   availability_zone = "S1"
-  versioning        = true
-  object_locking    = false
+  versioning                 = true
+  object_locking             = false
 
   tags = {
     Environment = "example"
