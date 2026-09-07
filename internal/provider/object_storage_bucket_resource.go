@@ -183,6 +183,30 @@ func (r *ObjectStorageBucketResource) Configure(ctx context.Context, req resourc
 	r.client = client
 }
 
+// mapReplicationTypeToAPI converts Terraform replication_type values to API values.
+func mapReplicationTypeToAPI(replicationType string) string {
+	switch replicationType {
+	case "Replicated within region":
+		return "Az"
+	case "Replicated across region":
+		return "Region"
+	default:
+		return replicationType
+	}
+}
+
+// mapReplicationTypeFromAPI converts API replication_type values back to Terraform values.
+func mapReplicationTypeFromAPI(replicationType string) string {
+	switch replicationType {
+	case "Az":
+		return "Replicated within region"
+	case "Region":
+		return "Replicated across region"
+	default:
+		return replicationType
+	}
+}
+
 func (r *ObjectStorageBucketResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data ObjectStorageBucketResourceModel
 
@@ -203,7 +227,7 @@ func (r *ObjectStorageBucketResource) Create(ctx context.Context, req resource.C
 
 	// Build replication config
 	replication := &models.BucketReplicationConfig{
-		ReplicationType: data.ReplicationType.ValueString(),
+		ReplicationType: mapReplicationTypeToAPI(data.ReplicationType.ValueString()),
 		AZ:              data.AvailabilityZone.ValueString(),
 		Tag:             data.ReplicationTag.ValueString(),
 	}
@@ -226,6 +250,12 @@ func (r *ObjectStorageBucketResource) Create(ctx context.Context, req resource.C
 		Config: config,
 		Tags:   tags,
 	}
+
+	tflog.Debug(ctx, "create===========req", map[string]interface{}{
+		"bucket": createReq.Bucket,
+		"config": createReq.Config,
+		"tags":   createReq.Tags,
+	})
 
 	_, err := r.client.CreateObjectStorageBucket(ctx, createReq)
 	if err != nil {
@@ -289,7 +319,7 @@ func (r *ObjectStorageBucketResource) Read(ctx context.Context, req resource.Rea
 
 	// Map replication config to flat attributes
 	if bucket.ReplicationConfig != nil {
-		data.ReplicationType = types.StringValue(bucket.ReplicationConfig.ReplicationType)
+		data.ReplicationType = types.StringValue(mapReplicationTypeFromAPI(bucket.ReplicationConfig.ReplicationType))
 		data.ReplicationTag = types.StringValue(bucket.ReplicationConfig.Tag)
 		data.AvailabilityZone = types.StringValue(bucket.ReplicationConfig.AZ)
 	}
