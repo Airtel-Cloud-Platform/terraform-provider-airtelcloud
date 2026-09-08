@@ -119,6 +119,9 @@ The provider supports the following 23 resources:
 - [`airtelcloud_file_storage`](resources/file_storage) - File Storage (NFS Volume)
 - [`airtelcloud_file_storage_export_path`](resources/file_storage_export_path) - File Storage Export Path
 
+**Database:**
+- [`airtelcloud_postgres`](resources/postgres) - PostgreSQL Cluster
+
 **Networking:**
 - [`airtelcloud_vpc`](resources/vpc) - Virtual Private Cloud
 - [`airtelcloud_subnet`](resources/subnet) - VPC Subnet

@@ -589,6 +589,88 @@ terraform import airtelcloud_file_storage.basic <id>
 
 ---
 
+### airtelcloud_postgres
+
+Manages a PostgreSQL cluster. v1 supports create, read, import, and delete. Changing configuration forces a new cluster.
+
+#### Example Usage
+
+```terraform
+variable "postgres_password" {
+  type      = string
+  sensitive = true
+}
+
+resource "airtelcloud_postgres" "app" {
+  cluster_name      = "app-db"
+  version           = "17"
+  database_name     = "app"
+  postgres_username = "dbadmin"
+  password          = var.postgres_password
+  compute_size      = "db.postgres.uhper.ccs.xlarge"
+  storage_size      = 200
+  availability_zone = "S1"
+  high_availability = true
+  num_replicas      = 1
+
+  backup = {
+    enabled         = true
+    protection_plan = "weekly-full-daily-incr"
+    schedule_time   = "02:00"
+    schedule_day    = "Monday"
+  }
+}
+```
+
+#### Argument Reference
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `cluster_name` | String | Yes | Display name. Forces new resource. |
+| `version` | String | Yes | PostgreSQL major version. Forces new resource. |
+| `database_name` | String | Yes | Initial database name. Forces new resource. |
+| `postgres_username` | String | Yes | Admin username. Forces new resource. |
+| `password` | String | Yes | Admin password. Sensitive. Forces new resource. |
+| `compute_size` | String | Yes | Flavor name. Resolved internally. Forces new resource. |
+| `storage_size` | Number | Yes | Size in GB (minimum 200). Forces new resource. |
+| `availability_zone` | String | Yes | Zone code (for example `S1`). Forces new resource. |
+| `description` | String | No | Description. Forces new resource. |
+| `high_availability` | Boolean | No | Primary-standby topology when true. Default: `false`. Forces new resource. |
+| `num_replicas` | Number | No | `1` to `10` when HA is true. Default: `0`. Forces new resource. |
+| `is_superuser` | Boolean | No | Default: `false`. Forces new resource. |
+| `network_type` | String | No | Default: `private`. Forces new resource. |
+| `storage_type` | String | No | Catalog label. Default: `High Performance`. Forces new resource. |
+| `pg_extensions` | List of String | No | Extensions such as `pgvector`. Forces new resource. |
+| `labels` | List of String | No | Labels. Forces new resource. |
+| `backup` | Object | No | Backup settings. Forces new resource. |
+| `backup.enabled` | Boolean | No | Whether backup is enabled. Default: `false`. |
+| `backup.protection_plan` | String | No | Plan value from the protection-plans catalog. |
+| `backup.compression_level` | Number | No | Compression level. Default: `6`. |
+| `backup.retention` | Number | No | Retention in days. Default: `15`. |
+| `backup.schedule_time` | String | No | Backup schedule time in `HH:MM` format. Required when `backup.enabled` is true. |
+| `backup.schedule_day` | String | No | Backup schedule day. Must be `Monday` through `Sunday`. Required when `backup.enabled` is true. |
+| `security_group` | Object | No | `allowed_ips` CIDRs. Forces new resource. |
+
+#### Attribute Reference
+
+| Attribute | Type | Description |
+|---|---|---|
+| `id` | String | Cluster UUID. |
+| `status` | String | Current status. |
+| `topology` | String | `standalone` or `primary-standby`. |
+| `connection_string` | String | Connection string (password masked by the API). |
+| `created_at` | String | Creation timestamp. |
+
+#### Import
+
+```bash
+terraform import airtelcloud_postgres.app <cluster-uuid>
+```
+
+-> **Note:** The API does not return the admin password. Import cannot populate `password`.
+
+---
+
 ### airtelcloud_file_storage_export_path
 
 Manages an NFS export path (mount point) for a file storage volume.
@@ -1225,6 +1307,7 @@ terraform import <resource_type>.<name> <import_id>
 | `airtelcloud_storage_bucket` | `<bucket-name>` | `my-bucket` |
 | `airtelcloud_volume` | `<numeric-id>` | `123` |
 | `airtelcloud_file_storage` | `<id>` | `fs-abc123` |
+| `airtelcloud_postgres` | `<cluster-uuid>` | `e9953b5d-...` |
 | `airtelcloud_file_storage_export_path` | `<path-id>` | `exp-xyz789` |
 | `airtelcloud_dns_zone` | `<zone-uuid>` | `a1b2c3d4-...` |
 | `airtelcloud_dns_record` | `<zone_id>/<record_id>` | `zone-uuid/record-uuid` |
