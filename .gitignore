@@ -29,7 +29,20 @@ dist/
 #script
 scripts/tf-local-dev.sh
 
+<<<<<<< HEAD
 # Local temp workspaces
 .tmp/
 
+=======
+# Temporary files
+/api-specs
+/specs/*
+>>>>>>> 9eb51ac (Add PostgreSQL resource implementation and tests)
 
+
+
+.github/copilot-instructions.md
+.cursor
+
+
+/docs/provider-architecture.md

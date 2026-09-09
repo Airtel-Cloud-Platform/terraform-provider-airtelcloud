@@ -15,6 +15,7 @@ This repository contains a Terraform provider for managing Airtel Public Cloud r
 - **Load Balancer**: Create and manage Load Balancers
 - **Backup**: Create and manage virtual machine backups and protection plans.
 - **Public IP**: Create and manage Public IPs and related policies.
+- **PostgreSQL**: Create and manage PostgreSQL clusters.
 
 ## Prerequisites
 
@@ -52,7 +53,7 @@ make install
 `make install` places the binary at:
 
 ```
-~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.2.4/<OS_ARCH>/
+~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.2.5/<OS_ARCH>/
 ```
 
 where `<OS_ARCH>` defaults to your current Go platform (`$(go env GOOS)_$(go env GOARCH)`) and can be overridden in the Makefile.
@@ -96,7 +97,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.4"
+      version = "1.2.5"
     }
   }
 }

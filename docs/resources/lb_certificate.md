@@ -1,6 +1,6 @@
 ---
 page_title: "airtelcloud_lb_certificate Resource - Airtel Cloud"
-subcategory: "Load Balancing"
+subcategory: "Networking"
 description: |-
   Manages an SSL certificate for an Airtel Cloud Load Balancer Service. Certificates are immutable; any change requires replacement.
 ---

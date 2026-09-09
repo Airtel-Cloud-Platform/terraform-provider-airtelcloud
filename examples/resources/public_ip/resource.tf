@@ -2,7 +2,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.4"
+      version = "1.2.5"
     }
   }
 }
@@ -46,7 +46,7 @@ variable "resource_prefix" {
 
 # # Allocate a public IP NATted against a VM's private IP
 resource "airtelcloud_public_ip" "example" {
-  object_name       = "${var.resource_prefix}-my-vm-public-ip-1"
+  object_name = "${var.resource_prefix}-my-vm-public-ip-1"
   # VIP must already exist on a VM NIC or LB VIP in this project and AZ.
   vip               = "10.10.3.237"
   availability_zone = "N1"

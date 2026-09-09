@@ -2,7 +2,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.4"
+      version = "1.2.5"
     }
   }
 }
@@ -38,17 +38,23 @@ variable "project_name" {
   type        = string
 }
 
-resource "airtelcloud_baremetal_storage" "data" {
-  name              = "ak-store"
-  availability_zone = "S1"
-  size              = 10
-  description       = "Create new baremetal storage"
+# Allocate a VIP port for a Load Balancer Service.
+# The VIP is auto-assigned from the LB service's network.
+resource "airtelcloud_lb_vip" "example" {
+  lb_service_id = "ac238c5b-6334-49b9-b9c0-decc0aaf63d6"
 }
 
-output "volume_id" {
-  value = airtelcloud_baremetal_storage.data.id
+output "vip_id" {
+  description = "ID of the VIP port"
+  value       = airtelcloud_lb_vip.example.id
 }
 
-output "volume_state" {
-  value = airtelcloud_baremetal_storage.data.state
+output "vip_fixed_ips" {
+  description = "Fixed IP addresses assigned to the VIP"
+  value       = airtelcloud_lb_vip.example.fixed_ips
+}
+
+output "vip_status" {
+  description = "Status of the VIP port"
+  value       = airtelcloud_lb_vip.example.status
 }

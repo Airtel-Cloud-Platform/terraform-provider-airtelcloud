@@ -1,6 +1,6 @@
 ---
 page_title: "airtelcloud_lb_service Resource - Airtel Cloud"
-subcategory: "Load Balancing"
+subcategory: "Networking"
 description: |-
   Manages an Airtel Cloud Load Balancer Service.
 ---

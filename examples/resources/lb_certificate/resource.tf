@@ -2,7 +2,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.4"
+      version = "1.2.5"
     }
   }
 }
@@ -59,11 +59,11 @@ variable "ca_cert_pem" {
 
 # Upload an SSL certificate to a Load Balancer Service
 resource "airtelcloud_lb_certificate" "example" {
-  lb_service_id  = "ac238c5b-6334-49b9-b9c0-decc0aaf63d6"
-  name           = "my-ssl-cert"
-  ssl_cert       = var.ssl_cert_pem
+  lb_service_id   = "ac238c5b-6334-49b9-b9c0-decc0aaf63d6"
+  name            = "my-ssl-cert"
+  ssl_cert        = var.ssl_cert_pem
   ssl_private_key = var.ssl_key_pem
-  ca_cert        = var.ca_cert_pem != "" ? var.ca_cert_pem : null
+  ca_cert         = var.ca_cert_pem != "" ? var.ca_cert_pem : null
 }
 
 output "certificate_id" {

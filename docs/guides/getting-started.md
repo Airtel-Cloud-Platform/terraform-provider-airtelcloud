@@ -1,6 +1,5 @@
 ---
 page_title: "Getting Started with the Airtel Cloud Provider"
-subcategory: ""
 description: |-
   A step-by-step guide to building, configuring, and using the Airtel Cloud Terraform provider.
 ---
@@ -60,7 +59,7 @@ make install
 
 `make install` copies the binary to both locations:
 
-- `~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.2.4/<GOOS>_<GOARCH>/`
+- `~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.2.5/<GOOS>_<GOARCH>/`
 - `$(go env GOPATH)/bin/`
 
 You can verify installation with:
@@ -97,7 +96,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.4"
+      version = "1.2.5"
     }
   }
 }

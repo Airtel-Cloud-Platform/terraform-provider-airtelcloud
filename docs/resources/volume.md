@@ -1,6 +1,6 @@
 ---
 page_title: "airtelcloud_volume Resource - Airtel Cloud"
-subcategory: "Block Storage"
+subcategory: "Storage"
 description: |-
   Manages an Airtel Cloud block storage volume.
 ---
