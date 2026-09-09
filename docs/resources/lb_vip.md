@@ -1,6 +1,6 @@
 ---
 page_title: "airtelcloud_lb_vip Resource - Airtel Cloud"
-subcategory: "Load Balancing"
+subcategory: "Networking"
 description: |-
   Manages a VIP (Virtual IP) port for an Airtel Cloud Load Balancer Service.
 ---

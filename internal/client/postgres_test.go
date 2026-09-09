@@ -246,7 +246,7 @@ func TestResolvePostgresStorage(t *testing.T) {
 func TestResolvePostgresProtectionPlan(t *testing.T) {
 	ms := testutil.NewMockServer()
 	defer ms.Close()
-	ms.AddHandler("GET", "/api/v1/protection-plans", func(w http.ResponseWriter, r *http.Request) {
+	ms.AddHandler("GET", testPostgresBase+"/protection-plans", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, models.PostgresProtectionPlanListResponse{
 			ProtectionPlans: []models.PostgresProtectionPlan{
 				{Value: "weekly-full-daily-incr", Label: "Weekly full and daily Incremental"},

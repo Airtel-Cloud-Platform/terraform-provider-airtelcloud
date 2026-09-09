@@ -61,6 +61,10 @@ lint:
 	golangci-lint run
 
 docs-generate:
-	go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs
+	go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.24.0 generate
 
-.PHONY: build release install test testacc fmt lint docs-generate
+docs-validate:
+	go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.24.0 validate \
+		--allowed-resource-subcategories Compute,Storage,Database,Networking,Security,DNS,Backup
+
+.PHONY: build release install test testacc fmt lint docs-generate docs-validate

@@ -1,6 +1,5 @@
 ---
 page_title: "Getting Started with the Airtel Cloud Provider"
-subcategory: ""
 description: |-
   A step-by-step guide to building, configuring, and using the Airtel Cloud Terraform provider.
 ---

@@ -1,6 +1,5 @@
 ---
 page_title: "Airtel Cloud Provider"
-subcategory: ""
 description: |-
   The Airtel Cloud provider for Terraform allows you to manage Airtel Cloud resources.
 ---
@@ -11,7 +10,7 @@ The Airtel Cloud provider allows Terraform to manage Airtel Cloud infrastructure
 
 -> **New to this provider?** See the [Getting Started Guide](guides/getting-started) for a full walkthrough.
 
--> **Complete Resource Guide:** See the [User Guide](guides/user-guide) for all 23 resources with examples, argument references, and import instructions.
+-> **Complete Resource Guide:** See the [User Guide](guides/user-guide) for all 25 resources with examples, argument references, and import instructions.
 
 ## Example Usage
 
@@ -105,19 +104,20 @@ The following arguments are supported in the provider configuration:
 
 ## Available Resources
 
-The provider supports the following 23 resources:
+The provider supports the following 25 resources:
 
 **Compute:**
 - [`airtelcloud_vm`](resources/vm) - Virtual Machine
 - [`airtelcloud_baremetal`](resources/baremetal) - Baremetal Server
-- `airtelcloud_compute_snapshot` - Compute Snapshot
+- [`airtelcloud_compute_snapshot`](resources/compute_snapshot) - Compute Snapshot
 
 **Storage:**
 - [`airtelcloud_volume`](resources/volume) - Block Storage Volume
 - [`airtelcloud_storage_bucket`](resources/storage_bucket) - Object Storage Bucket
-- `airtelcloud_object_storage_access_key` - Object Storage Access Key
+- [`airtelcloud_storage_access_key`](resources/storage_access_key) - Object Storage Access Key
 - [`airtelcloud_file_storage`](resources/file_storage) - File Storage (NFS Volume)
 - [`airtelcloud_file_storage_export_path`](resources/file_storage_export_path) - File Storage Export Path
+- [`airtelcloud_baremetal_storage`](resources/baremetal_storage) - Baremetal Block Storage
 
 **Database:**
 - [`airtelcloud_postgres`](resources/postgres) - PostgreSQL Cluster
@@ -125,25 +125,25 @@ The provider supports the following 23 resources:
 **Networking:**
 - [`airtelcloud_vpc`](resources/vpc) - Virtual Private Cloud
 - [`airtelcloud_subnet`](resources/subnet) - VPC Subnet
-- `airtelcloud_security_group` - Security Group
-- `airtelcloud_security_group_rule` - Security Group Rule
-- `airtelcloud_vpc_peering` - VPC Peering
-- `airtelcloud_public_ip` - Public IP
-- `airtelcloud_public_ip_policy_rule` - Public IP Policy Rule
+- [`airtelcloud_security_group`](resources/security_group) - Security Group
+- [`airtelcloud_security_group_rule`](resources/security_group_rule) - Security Group Rule
+- [`airtelcloud_vpc_peering`](resources/vpc_peering) - VPC Peering
+- [`airtelcloud_lb_service`](resources/lb_service) - Load Balancer Service
+- [`airtelcloud_lb_vip`](resources/lb_vip) - Load Balancer VIP
+- [`airtelcloud_lb_certificate`](resources/lb_certificate) - Load Balancer Certificate
+- [`airtelcloud_lb_virtual_server`](resources/lb_virtual_server) - Load Balancer Virtual Server
+
+**Security:**
+- [`airtelcloud_public_ip`](resources/public_ip) - Public IP
+- [`airtelcloud_public_ip_policy_rule`](resources/public_ip_policy_rule) - Public IP Policy Rule
 
 **DNS:**
 - [`airtelcloud_dns_zone`](resources/dns_zone) - DNS Zone
 - [`airtelcloud_dns_record`](resources/dns_record) - DNS Record
 
-**Load Balancing:**
-- `airtelcloud_lb_service` - Load Balancer Service
-- `airtelcloud_lb_vip` - Load Balancer VIP
-- `airtelcloud_lb_certificate` - Load Balancer Certificate
-- `airtelcloud_lb_virtual_server` - Load Balancer Virtual Server
-
 **Backup:**
-- `airtelcloud_protection_plan` - Protection Plan
-- `airtelcloud_protection` - Protection Policy
+- [`airtelcloud_protection_plan`](resources/protection_plan) - Protection Plan
+- [`airtelcloud_protection`](resources/protection) - Protection Policy
 
 ## Example Infrastructure
 

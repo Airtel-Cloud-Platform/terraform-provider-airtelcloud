@@ -1,6 +1,6 @@
 ---
 page_title: "airtelcloud_file_storage_export_path Resource - Airtel Cloud"
-subcategory: "File Storage"
+subcategory: "Storage"
 description: |-
   Manages an Airtel Cloud NFS export path on a file storage volume.
 ---

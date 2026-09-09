@@ -1,6 +1,6 @@
 ---
 page_title: "airtelcloud_file_storage Resource - Airtel Cloud"
-subcategory: "File Storage"
+subcategory: "Storage"
 description: |-
   Manages an Airtel Cloud NFS file storage volume.
 ---

@@ -102,9 +102,9 @@ resource "airtelcloud_baremetal" "app" {
   availability_zone       = var.availability_zone
   network_name            = var.network_name
 
-  keypair        = var.keypair_name
-  keypair_id     = var.keypair_id
-  public_key     = var.public_key
+  keypair    = var.keypair_name
+  keypair_id = var.keypair_id
+  public_key = var.public_key
   # cloud_init is generated from public_key in the same runcmd shape the console sends
   is_reserved    = false
   policy_enabled = true

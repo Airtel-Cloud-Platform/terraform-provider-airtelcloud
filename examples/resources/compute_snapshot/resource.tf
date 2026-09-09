@@ -55,7 +55,7 @@ variable "resource_prefix" {
 resource "airtelcloud_compute_snapshot" "example" {
   #compute_id = "aa8ad6fc-5400-452f-95ee-8ecb95a7f3d4"
   # Or reference the compute by name instead of compute_id:
-  compute_name = "aakash"
+  compute_name  = "aakash"
   snapshot_name = "${var.resource_prefix}-snapshot"
 
   timeouts {
