@@ -59,7 +59,7 @@ make install
 
 `make install` copies the binary to both locations:
 
-- `~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.2.5/<GOOS>_<GOARCH>/`
+- `~/.terraform.d/plugins/registry.terraform.io/Airtel-Cloud-Platform/airtelcloud/1.2.6/<GOOS>_<GOARCH>/`
 - `$(go env GOPATH)/bin/`
 
 You can verify installation with:
@@ -96,7 +96,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.5"
+      version = "1.2.6"
     }
   }
 }
