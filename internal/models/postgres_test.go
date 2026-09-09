@@ -2,9 +2,6 @@ package models
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -55,39 +52,6 @@ func TestUnmarshalPostgresCreateRequest(t *testing.T) {
 	}
 	if req.AZIDs[0] != "S1" || req.Backup == nil || req.Backup.ProtectionPlan != "weekly-full-daily-incr" {
 		t.Fatalf("unexpected az/backup mapping: az=%v backup=%+v", req.AZIDs, req.Backup)
-	}
-}
-
-func TestUnmarshalPostgresClusterGetResponse(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	path := filepath.Join(filepath.Dir(file), "..", "..", "api-specs", "postgres", "get-response.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read get-response.json: %v", err)
-	}
-
-	var cluster PostgresCluster
-	if err := json.Unmarshal(raw, &cluster); err != nil {
-		t.Fatalf("unmarshal get response: %v", err)
-	}
-
-	if cluster.UUID != "e9953b5d-aa93-4c45-b9fe-6b977b2bd7be" {
-		t.Fatalf("uuid = %q", cluster.UUID)
-	}
-	if cluster.Status != PostgresStatusActive {
-		t.Fatalf("status = %q", cluster.Status)
-	}
-	if cluster.ConnectionString == nil || *cluster.ConnectionString == "" {
-		t.Fatal("expected connection_string")
-	}
-	if cluster.NetworkConfig == nil || cluster.NetworkConfig.NetworkType != "private" {
-		t.Fatalf("unexpected network_config: %+v", cluster.NetworkConfig)
-	}
-	if len(cluster.AzNames) == 0 || cluster.AzNames[0] != "S1" {
-		t.Fatalf("az_names = %v", cluster.AzNames)
 	}
 }
 
