@@ -328,7 +328,7 @@ func (r *PostgresResource) Schema(ctx context.Context, req resource.SchemaReques
 			},
 			"security_group": schema.SingleNestedAttribute{
 				MarkdownDescription: "Allowed client CIDRs. Changes force a new cluster.",
-				Optional:            true,
+				Required:            true,
 				PlanModifiers: []planmodifier.Object{
 					objectplanmodifier.RequiresReplace(),
 				},
@@ -336,7 +336,7 @@ func (r *PostgresResource) Schema(ctx context.Context, req resource.SchemaReques
 					"allowed_ips": schema.ListAttribute{
 						ElementType:         types.StringType,
 						MarkdownDescription: "CIDR blocks allowed to connect (for example `192.168.1.0/24`).",
-						Optional:            true,
+						Required:            true,
 					},
 				},
 			},
@@ -392,6 +392,34 @@ func (r *PostgresResource) ValidateConfig(ctx context.Context, req resource.Vali
 			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_day"), "Invalid schedule_day", msg)
 		}
 	}
+
+	if data.SecurityGroup != nil {
+		if msg := validatePostgresSecurityGroup(data.SecurityGroup); msg != "" {
+			resp.Diagnostics.AddAttributeError(path.Root("security_group"), "Invalid security_group", msg)
+		}
+	}
+}
+
+func validatePostgresSecurityGroup(group *PostgresSecurityGroupModel) string {
+	if group == nil {
+		return "security_group is required."
+	}
+	if group.AllowedIPs.IsNull() || group.AllowedIPs.IsUnknown() {
+		return "security_group.allowed_ips is required."
+	}
+	var ips []string
+	if diags := group.AllowedIPs.ElementsAs(context.Background(), &ips, false); diags.HasError() {
+		return "security_group.allowed_ips is invalid."
+	}
+	if len(ips) == 0 {
+		return "security_group.allowed_ips must contain at least one CIDR."
+	}
+	for _, ip := range ips {
+		if strings.TrimSpace(ip) == "" {
+			return "security_group.allowed_ips cannot contain empty values."
+		}
+	}
+	return ""
 }
 
 func validatePostgresReplicas(ha types.Bool, replicas types.Int64) string {

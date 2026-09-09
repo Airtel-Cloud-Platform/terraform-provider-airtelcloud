@@ -56,6 +56,8 @@ resource "airtelcloud_postgres" "app" {
 - `compute_size` (String) - Flavor name from the postgres flavors catalog (for example `db.postgres.uhper.ccs.xlarge`). Resolved to flavor ID and RAM internally. Forces new resource.
 - `storage_size` (Number) - Data volume size in GB. Must be at least 200. Forces new resource.
 - `availability_zone` (String) - Availability zone code (for example `S1`). Forces new resource.
+- `security_group` (Attributes) - Allowed client CIDRs. Forces new resource.
+  - `allowed_ips` (List of String) - CIDR blocks allowed to connect. Must contain at least one IP range.
 
 ### Optional
 
@@ -74,8 +76,6 @@ resource "airtelcloud_postgres" "app" {
   - `retention` (Number) - Retention in days. Defaults to `15`.
   - `schedule_time` (String) - Backup schedule time in `HH:MM` format. Required when `enabled` is `true`.
   - `schedule_day` (String) - Backup schedule day. Must be one of `Monday` through `Sunday`. Required when `enabled` is `true`.
-- `security_group` (Attributes) - Allowed client CIDRs. Forces new resource.
-  - `allowed_ips` (List of String) - CIDR blocks allowed to connect.
 - `timeouts` (Block) - Create and delete timeouts. Defaults to 30 minutes.
 
 ## Attribute Reference

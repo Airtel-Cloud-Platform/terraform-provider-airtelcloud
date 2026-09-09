@@ -1,11 +1,16 @@
----
-page_title: "airtelcloud_baremetal Resource - Airtel Cloud"
-subcategory: "Compute"
-description: |-
-  Allocates and manages an Airtel Cloud baremetal server.
+
 ---
 
-# airtelcloud_baremetal (Resource)
+page_title: "airtelcloud_baremetal Resource - Airtel Cloud"
+
+subcategory: "Compute"
+
+description: |-
+Allocates and manages an Airtel Cloud baremetal server.
+
+---
+
+**# airtelcloud_baremetal (Resource)**
 
 Allocates and manages an Airtel Cloud baremetal server.
 
@@ -23,7 +28,7 @@ The resource supports:
 * Backup policy updates.
 * Server release and optional disk deletion on destroy.
 
-## Example Usage
+**## Example Usage**
 
 ```terraform
 resource "airtelcloud_baremetal" "app" {
@@ -85,9 +90,9 @@ resource "airtelcloud_baremetal" "app" {
 }
 ```
 
-## Argument Reference
+**## Argument Reference**
 
-### Required
+**### Required**
 
 * `name` (String) - The name of the baremetal server.
 
@@ -146,7 +151,7 @@ resource "airtelcloud_baremetal" "app" {
   keypair = "Vinay"
   ```
 
-### Optional
+**### Optional**
 
 * `additional_subnet_names` (List of String) - A list of additional subnet display names to attach to the server.
 
@@ -306,7 +311,7 @@ resource "airtelcloud_baremetal" "app" {
   secure_erase = false
   ```
 
-## Network Configuration
+**## Network Configuration**
 
 A baremetal server can have one primary subnet and additional subnets.
 
@@ -329,7 +334,7 @@ When a subnet name is provided, the provider resolves the subnet display name to
 
 If `network_name` is a VPC name rather than a UUID, the provider resolves the VPC name to its UUID.
 
-## Storage Configuration
+**## Storage Configuration**
 
 Additional disks can be configured using the `storage` argument.
 
@@ -358,7 +363,7 @@ For example:
 /backup
 ```
 
-## Backup Configuration
+**## Backup Configuration**
 
 Backups can be configured using `backup_config`.
 
@@ -389,7 +394,7 @@ backup_selections = [
 
 The `policy_enabled` argument can be used to enable or disable the backup policy after the server has been created.
 
-## Cloud-Init
+**## Cloud-Init**
 
 The `cloud_init` argument allows you to automatically configure the server during its first boot.
 
@@ -412,7 +417,7 @@ EOF
 
 Cloud-init can be used to automate initial server configuration, including package installation, service configuration, user creation, and startup commands.
 
-## Destroy Behavior
+**## Destroy Behavior**
 
 When the Terraform resource is destroyed, the baremetal server is released.
 
@@ -442,7 +447,7 @@ delete_disks = false
 secure_erase = false
 ```
 
-## Attribute Reference
+**## Attribute Reference**
 
 In addition to all arguments above, the following attributes are exported:
 
@@ -462,7 +467,7 @@ In addition to all arguments above, the following attributes are exported:
 
 * `backend_port_id` (Number) - The backend network port identifier returned by the detail API (`networkInfo.portId`).
 
-## Import
+**## Import**
 
 An existing baremetal server can be imported using its server name:
 
@@ -478,7 +483,7 @@ terraform plan
 
 to verify that the Terraform configuration matches the existing baremetal server.
 
-## Important Notes
+**## Important Notes**
 
 * `availability_zone` must be a valid availability zone supported by the Airtel Cloud baremetal service.
 * `subnet_name` refers to the subnet display name and is resolved to a subnet UUID by the provider.
@@ -489,3 +494,4 @@ to verify that the Terraform configuration matches the existing baremetal server
 * `delete_disks` controls whether attached disks are removed when the server is destroyed.
 * `secure_erase` controls whether secure erase is requested during server destruction.
 * `is_reserved` controls whether the allocation uses reserved capacity.
+ 

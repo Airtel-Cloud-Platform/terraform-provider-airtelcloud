@@ -4,10 +4,30 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
+
+func TestPostgresSchemaRequiredSecurityGroup(t *testing.T) {
+	t.Parallel()
+
+	var resp resource.SchemaResponse
+	(&PostgresResource{}).Schema(context.Background(), resource.SchemaRequest{}, &resp)
+
+	securityGroupAttr, ok := resp.Schema.Attributes["security_group"].(schema.SingleNestedAttribute)
+	if !ok {
+		t.Fatal("security_group attribute not found or not a single nested attribute")
+	}
+	if !securityGroupAttr.IsRequired() {
+		t.Fatal("security_group must be required")
+	}
+	if !securityGroupAttr.Attributes["allowed_ips"].IsRequired() {
+		t.Fatal("security_group.allowed_ips must be required")
+	}
+}
 
 func TestValidatePostgresReplicas(t *testing.T) {
 	tests := []struct {
