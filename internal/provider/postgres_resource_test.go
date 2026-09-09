@@ -228,10 +228,10 @@ func TestValidatePostgresNames(t *testing.T) {
 
 func TestValidatePostgresBackupScheduleRequired(t *testing.T) {
 	tests := []struct {
-		name      string
-		backup    *PostgresBackupModel
-		wantTime  bool
-		wantDay   bool
+		name     string
+		backup   *PostgresBackupModel
+		wantTime bool
+		wantDay  bool
 	}{
 		{
 			name: "backup disabled allows missing schedule",
