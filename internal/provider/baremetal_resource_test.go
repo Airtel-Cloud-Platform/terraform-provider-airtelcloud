@@ -1,6 +1,34 @@
 package provider
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+)
+
+func TestBaremetalSchemaRequiredFields(t *testing.T) {
+	t.Parallel()
+
+	var resp resource.SchemaResponse
+	(&BaremetalResource{}).Schema(context.Background(), resource.SchemaRequest{}, &resp)
+
+	attr, ok := resp.Schema.Attributes["network_name"]
+	if !ok {
+		t.Fatal("network_name attribute not found")
+	}
+	if !attr.IsRequired() {
+		t.Fatal("network_name must be required")
+	}
+
+	attr, ok = resp.Schema.Attributes["keypair"]
+	if !ok {
+		t.Fatal("keypair attribute not found")
+	}
+	if !attr.IsRequired() {
+		t.Fatal("keypair must be required")
+	}
+}
 
 func TestTerminalBaremetalAllocationError(t *testing.T) {
 	t.Parallel()

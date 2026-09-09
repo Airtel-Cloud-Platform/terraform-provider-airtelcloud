@@ -126,8 +126,6 @@ resource "airtelcloud_baremetal" "app" {
   availability_zone = "S1"
   ```
 
-### Optional
-
 * `network_name` (String) - The VPC name or UUID to which the baremetal server is connected.
 
   If a VPC name is provided, the provider resolves it to the VPC UUID before allocation.
@@ -139,6 +137,16 @@ resource "airtelcloud_baremetal" "app" {
   ```terraform
   network_name = "copper-vpc1"
   ```
+
+* `keypair` (String) - The SSH keypair name to inject into the baremetal server.
+
+  Example:
+
+  ```terraform
+  keypair = "Vinay"
+  ```
+
+### Optional
 
 * `additional_subnet_names` (List of String) - A list of additional subnet display names to attach to the server.
 
@@ -255,14 +263,6 @@ resource "airtelcloud_baremetal" "app" {
   ```
 
 * `system_id` (String) - Optional system identifier used by the backend during reservation and release operations.
-
-* `keypair` (String) - The name of the SSH keypair to inject into the baremetal server.
-
-  Example:
-
-  ```terraform
-  keypair = "Vinay"
-  ```
 
 * `tags` (List of String) - Tags used during server allocation.
 

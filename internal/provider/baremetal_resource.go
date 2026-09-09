@@ -149,8 +149,8 @@ func (r *BaremetalResource) Schema(ctx context.Context, req resource.SchemaReque
 				},
 			},
 			"network_name": schema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "VPC name or UUID sent as `networkInterface.name`. Names are resolved to the VPC UUID.",
+				Required:            true,
+				MarkdownDescription: "VPC name or UUID sent as `networkInterface.name`. Names are resolved to the VPC UUID before creating the server.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -249,14 +249,14 @@ func (r *BaremetalResource) Schema(ctx context.Context, req resource.SchemaReque
 				},
 			},
 			"keypair": schema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "Optional SSH keypair name to inject.",
+				Required:            true,
+				MarkdownDescription: "SSH keypair name to inject in instance metadata.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"keypair_id": schema.StringAttribute{
-				Optional:            true,
+				Optional:            false,
 				MarkdownDescription: "Optional keypair UUID, sent as `keypairId` in baremetal allocate API.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
