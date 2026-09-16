@@ -46,3 +46,12 @@ scripts/tf-local-dev.sh
 
 
 /docs/provider-architecture.md
+
+# AI Dev Toolkit
+.aidevtoolkit
+.aidevtoolkit/*.db
+.aidevtoolkit/*.db-shm
+.aidevtoolkit/*.db-wal
+.aidevtoolkit/git-events/
+AGENTS.md
+CLAUDE.md
