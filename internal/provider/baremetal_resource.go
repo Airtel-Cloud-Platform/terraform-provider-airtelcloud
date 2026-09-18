@@ -256,7 +256,7 @@ func (r *BaremetalResource) Schema(ctx context.Context, req resource.SchemaReque
 				},
 			},
 			"keypair_id": schema.StringAttribute{
-				Optional:            false,
+				Optional:            true,
 				MarkdownDescription: "Optional keypair UUID, sent as `keypairId` in baremetal allocate API.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -131,6 +132,43 @@ func (c *Client) ResolveSubnetID(ctx context.Context, vpcID, name string) (strin
 		}
 	}
 	return "", fmt.Errorf("subnet with name %q not found in VPC %s", name, vpcID)
+}
+
+// ResolveSubnetIDByName resolves a subnet name to its UUID. If vpcName is set,
+// the lookup is scoped to that VPC. Otherwise every VPC in the project is searched.
+func (c *Client) ResolveSubnetIDByName(ctx context.Context, subnetName, vpcName string) (string, error) {
+	if strings.TrimSpace(subnetName) == "" {
+		return "", fmt.Errorf("subnet name is required")
+	}
+	if vpcName = strings.TrimSpace(vpcName); vpcName != "" {
+		vpcID, err := c.ResolveVPCID(ctx, vpcName)
+		if err != nil {
+			return "", err
+		}
+		return c.ResolveSubnetID(ctx, vpcID, subnetName)
+	}
+
+	vpcs, err := c.ListVPCs(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to list VPCs while resolving subnet %q: %w", subnetName, err)
+	}
+
+	var matches []string
+	for _, vpc := range vpcs.Items {
+		id, err := c.ResolveSubnetID(ctx, vpc.ID, subnetName)
+		if err != nil {
+			continue
+		}
+		matches = append(matches, id)
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return "", fmt.Errorf("subnet with name %q not found", subnetName)
+	default:
+		return "", fmt.Errorf("subnet with name %q found in multiple VPCs; set vpc_name to disambiguate", subnetName)
+	}
 }
 
 // ResolveComputeID resolves a compute (VM) instance name to its ID

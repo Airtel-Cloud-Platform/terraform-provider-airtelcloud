@@ -104,11 +104,12 @@ The following arguments are supported in the provider configuration:
 
 ## Available Resources
 
-The provider supports the following 25 resources:
+The provider supports the following 26 resources:
 
 **Compute:**
 - [`airtelcloud_vm`](resources/vm) - Virtual Machine
 - [`airtelcloud_baremetal`](resources/baremetal) - Baremetal Server
+- [`airtelcloud_kubernetes`](resources/kubernetes) - Kubernetes Cluster (CKP)
 - [`airtelcloud_compute_snapshot`](resources/compute_snapshot) - Compute Snapshot
 
 **Storage:**
