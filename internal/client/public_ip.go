@@ -20,10 +20,16 @@ type sourceOfTruthPublicIPPolicyService struct {
 	IsDefault bool   `json:"is_default"`
 }
 
+type publicIPPolicyGeographic struct {
+	CountryCode string `json:"country_code,omitempty"`
+	CountryName string `json:"country_name,omitempty"`
+}
+
 type publicIPPolicySourceEntry struct {
-	CreateNew  bool   `json:"create_new"`
-	IPCIDR     string `json:"ip_cidr,omitempty"`
-	SourceType string `json:"source_type"`
+	CreateNew  *bool                     `json:"create_new,omitempty"`
+	IPCIDR     string                    `json:"ip_cidr,omitempty"`
+	SourceType string                    `json:"source_type"`
+	Geographic *publicIPPolicyGeographic `json:"geographic,omitempty"`
 }
 
 type sourceOfTruthCreatePublicIPPolicyRequest struct {
@@ -90,6 +96,243 @@ func (c *Client) CreatePublicIP(ctx context.Context, req *models.CreatePublicIPR
 		return nil, err
 	}
 	return &createResp.Data, nil
+}
+
+// AttachPublicIP binds a reserved public IP to a port.
+func (c *Client) AttachPublicIP(ctx context.Context, uuid string, portID int, availabilityZone string) error {
+	scopedClient := c.WithAvailabilityZone(availabilityZone)
+	path := fmt.Sprintf("%s/%s/attach", scopedClient.ipamBasePath(), uuid)
+	req := &models.AttachPublicIPRequest{PortID: portID}
+
+	tflog.Debug(ctx, "AttachPublicIP request", map[string]interface{}{
+		"availability_zone": availabilityZone,
+		"public_ip_uuid":    uuid,
+		"port_id":           portID,
+	})
+
+	return scopedClient.Post(ctx, path, req, nil)
+}
+
+// DetachPublicIP unbinds a public IP from a port and returns it to reserved.
+func (c *Client) DetachPublicIP(ctx context.Context, uuid string, portID int, availabilityZone string) error {
+	scopedClient := c.WithAvailabilityZone(availabilityZone)
+	path := fmt.Sprintf("%s/%s/detach", scopedClient.ipamBasePath(), uuid)
+	req := &models.AttachPublicIPRequest{PortID: portID}
+
+	tflog.Debug(ctx, "DetachPublicIP request", map[string]interface{}{
+		"availability_zone": availabilityZone,
+		"public_ip_uuid":    uuid,
+		"port_id":           portID,
+	})
+
+	return scopedClient.Post(ctx, path, req, nil)
+}
+
+// Resource types accepted when attaching a public IP.
+const (
+	PublicIPResourceTypeVM        = "vm"
+	PublicIPResourceTypeLB        = "lb"
+	PublicIPResourceTypeBaremetal = "baremetal"
+)
+
+// NormalizePublicIPResourceType maps user-facing aliases to canonical types.
+func NormalizePublicIPResourceType(resourceType string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(resourceType)) {
+	case "vm", "compute", "instance", "virtual_machine":
+		return PublicIPResourceTypeVM, nil
+	case "lb", "load_balancer", "loadbalancer":
+		return PublicIPResourceTypeLB, nil
+	case "baremetal", "bare_metal", "bm":
+		return PublicIPResourceTypeBaremetal, nil
+	default:
+		return "", fmt.Errorf("unsupported resource_type %q: must be one of vm, lb, baremetal", resourceType)
+	}
+}
+
+// FindPortForResource resolves the attach port ID for a named VM, load balancer,
+// or baremetal server. It always uses the resource's primary private IP/VIP
+// (first NIC, first LB VIP, or first baremetal ipAddr). It returns the port ID
+// and that private IP.
+func (c *Client) FindPortForResource(ctx context.Context, resourceType, resourceName, targetVIP, availabilityZone string) (int, string, error) {
+	canonicalType, err := NormalizePublicIPResourceType(resourceType)
+	if err != nil {
+		return 0, "", err
+	}
+
+	name := strings.TrimSpace(resourceName)
+	if name == "" {
+		return 0, "", fmt.Errorf("resource_name is required")
+	}
+
+	vip := strings.TrimSpace(targetVIP)
+	if vip != "" && net.ParseIP(vip) == nil {
+		return 0, "", fmt.Errorf("invalid target_vip %q", targetVIP)
+	}
+
+	tflog.Debug(ctx, "FindPortForResource: resolving attach port", map[string]interface{}{
+		"resource_type":     canonicalType,
+		"resource_name":     name,
+		"target_vip":        vip,
+		"availability_zone": availabilityZone,
+	})
+
+	scopedClient := c.WithAvailabilityZone(availabilityZone)
+
+	switch canonicalType {
+	case PublicIPResourceTypeVM:
+		return scopedClient.findVMPortForResource(ctx, name, vip, availabilityZone)
+	case PublicIPResourceTypeLB:
+		return scopedClient.findLBPortForResource(ctx, name, vip, availabilityZone)
+	default:
+		return scopedClient.findBaremetalPortForResource(ctx, name, vip, availabilityZone)
+	}
+}
+
+func (c *Client) findVMPortForResource(ctx context.Context, name, vip, availabilityZone string) (int, string, error) {
+	computes, err := c.ListComputes(ctx)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to list computes to find port for VM %q in availability zone %s: %w", name, availabilityZone, err)
+	}
+
+	for _, compute := range computes {
+		if compute.InstanceName != name {
+			continue
+		}
+
+		ports := compute.Ports
+		if len(ports) == 0 && compute.ID != "" {
+			fullCompute, getErr := c.GetCompute(ctx, compute.ID)
+			if getErr != nil {
+				return 0, "", fmt.Errorf("failed to fetch compute %q details: %w", name, getErr)
+			}
+			ports = fullCompute.Ports
+		}
+		if len(ports) == 0 {
+			return 0, "", fmt.Errorf("VM %q has no ports in availability zone %s", name, availabilityZone)
+		}
+
+		if portID, matchedVIP, ok := matchPortByVIP(ports, vip); ok {
+			return portID, matchedVIP, nil
+		}
+		return 0, "", fmt.Errorf("VM %q has no port with private IP %s", name, vip)
+	}
+
+	return 0, "", fmt.Errorf("VM with name %q not found in availability zone %s", name, availabilityZone)
+}
+
+func (c *Client) findLBPortForResource(ctx context.Context, name, vip, availabilityZone string) (int, string, error) {
+	var mappings []models.NetworkVIPPort
+	if err := c.Get(ctx, c.networkPortsVipsBasePath(), &mappings); err == nil {
+		for _, item := range mappings {
+			if !strings.EqualFold(strings.TrimSpace(item.LBName), name) || item.PortID == 0 {
+				continue
+			}
+			allowedIP := strings.TrimSpace(item.AllowedIPAddress)
+			if vip == "" || sameIP(allowedIP, vip) {
+				return item.PortID, allowedIP, nil
+			}
+		}
+	} else {
+		tflog.Warn(ctx, "FindPortForResource: networks VIP lookup failed; falling back to LB services", map[string]interface{}{
+			"lb_name": name,
+			"error":   err.Error(),
+		})
+	}
+
+	services, err := c.ListLBServices(ctx)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to list load balancers to find port for %q: %w", name, err)
+	}
+
+	normalizedAZ := strings.TrimSpace(availabilityZone)
+	for _, svc := range services {
+		if !strings.EqualFold(strings.TrimSpace(svc.Name), name) {
+			continue
+		}
+		if normalizedAZ != "" && svc.AZName != "" && !strings.EqualFold(strings.TrimSpace(svc.AZName), normalizedAZ) {
+			continue
+		}
+
+		lbScopedClient := c
+		if strings.TrimSpace(svc.NetworkID) != "" {
+			lbScopedClient = c.WithSubnetID(strings.TrimSpace(svc.NetworkID))
+		}
+
+		lbVips, vipErr := lbScopedClient.ListLBVips(ctx, svc.ID)
+		if vipErr != nil {
+			return 0, "", fmt.Errorf("failed to list VIPs for load balancer %q: %w", name, vipErr)
+		}
+		if len(lbVips) == 0 {
+			return 0, "", fmt.Errorf("load balancer %q has no VIP ports", name)
+		}
+
+		ports := make([]models.Port, 0, len(lbVips))
+		for _, lbVIP := range lbVips {
+			ports = append(ports, models.Port{ID: lbVIP.ID, FixedIPs: lbVIP.FixedIPs})
+		}
+		if portID, matchedVIP, ok := matchPortByVIP(ports, vip); ok {
+			return portID, matchedVIP, nil
+		}
+		return 0, "", fmt.Errorf("load balancer %q has no VIP port with private IP %s", name, vip)
+	}
+
+	return 0, "", fmt.Errorf("load balancer with name %q not found in availability zone %s", name, availabilityZone)
+}
+
+func (c *Client) findBaremetalPortForResource(ctx context.Context, name, vip, availabilityZone string) (int, string, error) {
+	server, err := c.GetBaremetal(ctx, name, availabilityZone)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to fetch baremetal server %q: %w", name, err)
+	}
+
+	portID := int(server.NetworkInfo.PortID)
+	if portID == 0 {
+		return 0, "", fmt.Errorf("baremetal server %q has no port id", name)
+	}
+
+	if vip == "" {
+		return portID, server.PrimaryIP(), nil
+	}
+	for _, ip := range server.IPAddr {
+		if sameIP(ip, vip) {
+			return portID, strings.TrimSpace(ip), nil
+		}
+	}
+	return 0, "", fmt.Errorf("baremetal server %q has no private IP %s", name, vip)
+}
+
+// matchPortByVIP returns the port carrying vip, or the first port when vip is empty.
+func matchPortByVIP(ports []models.Port, vip string) (int, string, bool) {
+	if len(ports) == 0 {
+		return 0, "", false
+	}
+
+	if vip == "" {
+		first := ports[0]
+		fixedIP := ""
+		if len(first.FixedIPs) > 0 {
+			fixedIP = strings.TrimSpace(first.FixedIPs[0])
+		}
+		return first.ID, fixedIP, true
+	}
+
+	for _, port := range ports {
+		for _, fixedIP := range port.FixedIPs {
+			if sameIP(fixedIP, vip) {
+				return port.ID, strings.TrimSpace(fixedIP), true
+			}
+		}
+	}
+	return 0, "", false
+}
+
+func sameIP(a, b string) bool {
+	parsedA := net.ParseIP(strings.TrimSpace(a))
+	parsedB := net.ParseIP(strings.TrimSpace(b))
+	if parsedA == nil || parsedB == nil {
+		return false
+	}
+	return parsedA.Equal(parsedB)
 }
 
 // FindPortIDByVIP lists all compute instances and returns the port ID
@@ -298,12 +541,28 @@ func (c *Client) GetPublicIP(ctx context.Context, uuid string) (*models.PublicIP
 
 // ListPublicIPs retrieves all public IPs
 func (c *Client) ListPublicIPs(ctx context.Context) (*models.PublicIPListResponse, error) {
-	var response models.PublicIPListResponse
-	err := c.Get(ctx, fmt.Sprintf("%s?offset=0&limit=1000", c.ipamBasePath()), &response)
+	var wrapped struct {
+		Message string `json:"message"`
+		Data    struct {
+			Items []models.PublicIP `json:"items"`
+			Count int               `json:"count"`
+		} `json:"data"`
+		Items []models.PublicIP `json:"items"`
+		Count int               `json:"count"`
+	}
+	err := c.Get(ctx, fmt.Sprintf("%s?offset=0&limit=1000", c.ipamBasePath()), &wrapped)
 	if err != nil {
 		return nil, err
 	}
-	return &response, nil
+
+	items := wrapped.Data.Items
+	count := wrapped.Data.Count
+	if len(items) == 0 {
+		items = wrapped.Items
+		count = wrapped.Count
+	}
+
+	return &models.PublicIPListResponse{Items: items, Count: count}, nil
 }
 
 // DeletePublicIP deallocates a public IP by UUID
@@ -421,29 +680,41 @@ func isPublicIPFailed(status string) bool {
 	}
 }
 
-// ResolvePublicIPID resolves a public IP name (object_name) to its UUID
-func (c *Client) ResolvePublicIPID(ctx context.Context, name string) (string, error) {
+// GetPublicIPByName resolves a public IP object_name to the full object.
+func (c *Client) GetPublicIPByName(ctx context.Context, name string) (*models.PublicIP, error) {
 	resp, err := c.ListPublicIPs(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to list public IPs: %w", err)
+		return nil, fmt.Errorf("failed to list public IPs: %w", err)
 	}
-	tflog.Debug(ctx, "ResolvePublicIPID: listing public IPs", map[string]interface{}{
+	tflog.Debug(ctx, "GetPublicIPByName: listing public IPs", map[string]interface{}{
 		"public_ip_count": len(resp.Items),
 		"searched_name":   name,
 	})
+	want := strings.TrimSpace(name)
 	for _, ip := range resp.Items {
-		if ip.ObjectName == name {
-			if ip.UUID == "" {
-				return "", fmt.Errorf("public IP %q found but has empty UUID (API response field mismatch)", name)
-			}
-			tflog.Debug(ctx, "ResolvePublicIPID: resolved public IP", map[string]interface{}{
-				"name": name,
-				"uuid": ip.UUID,
-			})
-			return ip.UUID, nil
+		if !strings.EqualFold(models.PublicIPDisplayName(ip), want) {
+			continue
 		}
+		if ip.UUID == "" {
+			return nil, fmt.Errorf("public IP %q found but has empty UUID (API response field mismatch)", name)
+		}
+		full, getErr := c.GetPublicIP(ctx, ip.UUID)
+		if getErr != nil || full == nil || strings.TrimSpace(full.UUID) == "" {
+			copied := ip
+			return &copied, nil
+		}
+		return full, nil
 	}
-	return "", fmt.Errorf("public IP with name %q not found", name)
+	return nil, fmt.Errorf("public IP with name %q not found", name)
+}
+
+// ResolvePublicIPID resolves a public IP name (object_name) to its UUID
+func (c *Client) ResolvePublicIPID(ctx context.Context, name string) (string, error) {
+	ip, err := c.GetPublicIPByName(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	return ip.UUID, nil
 }
 
 // --- Public IP Policy Rule ---
@@ -473,51 +744,84 @@ func (c *Client) ListIPAMServices(ctx context.Context, availabilityZone string) 
 func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.CreatePublicIPPolicyRuleRequest, availabilityZone string) (string, error) {
 	scopedClient := c.WithAvailabilityZone(availabilityZone)
 
-	policySource := make([]publicIPPolicySourceEntry, 0, len(req.SourceConfig))
+	falseVal := false
+	policySource := make([]publicIPPolicySourceEntry, 0, len(req.SourceConfig)+1)
 	for _, source := range req.SourceConfig {
 		sourceType := strings.TrimSpace(strings.ToLower(source.SourceType))
 		ipCIDR := strings.TrimSpace(source.IPCIDR)
 
+		var geographic *publicIPPolicyGeographic
+		if source.Geographic != nil {
+			code := strings.TrimSpace(source.Geographic.CountryCode)
+			name := strings.TrimSpace(source.Geographic.CountryName)
+			if code != "" || name != "" {
+				geographic = &publicIPPolicyGeographic{CountryCode: code, CountryName: name}
+			}
+		}
+
 		if sourceType == "" {
-			if ipCIDR == "" || strings.EqualFold(ipCIDR, "any") || strings.EqualFold(ipCIDR, "all") {
+			switch {
+			case geographic != nil:
+				sourceType = "geographic"
+			case ipCIDR == "" || strings.EqualFold(ipCIDR, "any") || strings.EqualFold(ipCIDR, "all"):
 				sourceType = "all"
-			} else {
+			default:
 				sourceType = "ip_cidr"
 			}
+		}
+		if sourceType == "any" {
+			sourceType = "all"
 		}
 
 		if sourceType == "ip_cidr" && ipCIDR == "" {
 			continue
 		}
-
-		createNew := true
-		if source.CreateNew != nil {
-			createNew = *source.CreateNew
+		if sourceType == "geographic" && geographic == nil {
+			continue
 		}
 
-		entry := publicIPPolicySourceEntry{
-			CreateNew:  createNew,
-			SourceType: sourceType,
-		}
-		if sourceType == "ip_cidr" {
+		entry := publicIPPolicySourceEntry{SourceType: sourceType}
+		switch sourceType {
+		case "geographic":
+			entry.Geographic = geographic
+		case "ip_cidr":
 			entry.IPCIDR = ipCIDR
+			entry.CreateNew = &falseVal
+			if source.CreateNew != nil {
+				entry.CreateNew = source.CreateNew
+			}
+		case "all":
+			entry.CreateNew = &falseVal
+			if source.CreateNew != nil {
+				entry.CreateNew = source.CreateNew
+			}
+		default:
+			if ipCIDR != "" {
+				entry.IPCIDR = ipCIDR
+			}
+			if geographic != nil {
+				entry.Geographic = geographic
+			}
+			if source.CreateNew != nil {
+				entry.CreateNew = source.CreateNew
+			}
 		}
-
 		policySource = append(policySource, entry)
 	}
 
 	if len(policySource) == 0 {
-		source := strings.TrimSpace(strings.ToLower(req.Source))
-		if source == "" || source == "any" || source == "all" {
+		source := strings.TrimSpace(req.Source)
+		lower := strings.ToLower(source)
+		if source == "" || lower == "any" || lower == "all" {
 			policySource = []publicIPPolicySourceEntry{{
-				CreateNew:  true,
+				CreateNew:  &falseVal,
 				SourceType: "all",
 			}}
 		} else {
 			policySource = []publicIPPolicySourceEntry{{
-				CreateNew:  true,
+				CreateNew:  &falseVal,
 				SourceType: "ip_cidr",
-				IPCIDR:     strings.TrimSpace(req.Source),
+				IPCIDR:     source,
 			}}
 		}
 	}
@@ -951,8 +1255,17 @@ func extractPolicyRuleState(state, status string) string {
 	return state
 }
 
-// WaitForPublicIPReady polls until the public IP reaches "Created" status
+// WaitForPublicIPReady polls until the public IP is reserved (or created on older APIs).
 func (c *Client) WaitForPublicIPReady(ctx context.Context, uuid string, timeout time.Duration) (*models.PublicIP, error) {
+	return c.WaitForPublicIPStatus(ctx, uuid, timeout, isPublicIPReservedStatus, "reserved")
+}
+
+// WaitForPublicIPAttached polls until the public IP is attached to a port.
+func (c *Client) WaitForPublicIPAttached(ctx context.Context, uuid string, timeout time.Duration) (*models.PublicIP, error) {
+	return c.WaitForPublicIPStatus(ctx, uuid, timeout, isPublicIPAttachedStatus, "attached")
+}
+
+func (c *Client) WaitForPublicIPStatus(ctx context.Context, uuid string, timeout time.Duration, ready func(string) bool, want string) (*models.PublicIP, error) {
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
@@ -967,15 +1280,66 @@ func (c *Client) WaitForPublicIPReady(ctx context.Context, uuid string, timeout 
 			return nil, err
 		}
 
-		switch ip.Status {
-		case "Created", "created", "CREATED":
+		if ready(ip.Status) {
 			return ip, nil
-		case "Error", "error", "ERROR":
-			return nil, fmt.Errorf("public IP entered error state")
+		}
+		if isPublicIPFailed(ip.Status) {
+			return nil, fmt.Errorf("public IP entered error state %q", ip.Status)
 		}
 
 		time.Sleep(15 * time.Second)
 	}
 
-	return nil, fmt.Errorf("public IP did not become ready within %v", timeout)
+	return nil, fmt.Errorf("public IP did not become %s within %v", want, timeout)
+}
+
+func isPublicIPReservedStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "reserved", "created":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPublicIPAttachedStatus(status string) bool {
+	return strings.ToLower(strings.TrimSpace(status)) == "attached"
+}
+
+// ErrPublicIPNotAttached is returned when a policy is created against a
+// public IP that is not bound to a VM, load balancer, or baremetal server.
+var ErrPublicIPNotAttached = errors.New("public IP is not attached to a VM, load balancer, or baremetal")
+
+// IsPublicIPAttached reports whether a public IP status allows policy rules.
+func IsPublicIPAttached(status string) bool {
+	return isPublicIPAttachedStatus(status)
+}
+
+// PublicIPBoundToResource reports whether the public IP is attached to a
+// compute, load balancer, or baremetal port (status attached plus port or VIP).
+func PublicIPBoundToResource(ip *models.PublicIP) bool {
+	if ip == nil {
+		return false
+	}
+	if !IsPublicIPAttached(ip.Status) {
+		return false
+	}
+	return ip.PortID != 0 || strings.TrimSpace(ip.TargetVIP) != ""
+}
+
+// RequirePublicIPAttached loads a public IP and errors unless it is attached
+// to a VM, load balancer, or baremetal server.
+func (c *Client) RequirePublicIPAttached(ctx context.Context, uuid string) (*models.PublicIP, error) {
+	ip, err := c.GetPublicIP(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+	if ip == nil {
+		return nil, fmt.Errorf("public IP %q not found", uuid)
+	}
+	if !PublicIPBoundToResource(ip) {
+		return ip, fmt.Errorf("%w: %q is in %q state (port_id=%d target_vip=%q); attach first then add policy",
+			ErrPublicIPNotAttached, uuid, ip.Status, ip.PortID, ip.TargetVIP)
+	}
+	return ip, nil
 }

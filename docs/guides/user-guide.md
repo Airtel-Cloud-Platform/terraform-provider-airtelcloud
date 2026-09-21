@@ -241,14 +241,14 @@ terraform import airtelcloud_subnet.private <network_id>/<subnet_id>
 
 ### airtelcloud_public_ip
 
-Allocates a public IP via NAT against a VM or Load Balancer private IP. Public IPs are availability-zone-specific and immutable -- any change requires replacement.
+Allocates a reserved public IP. Attach it to a VM or load balancer by name, then add policy rules.
 
 #### Example Usage
 
 ```terraform
 resource "airtelcloud_public_ip" "web1_public" {
   object_name       = "web1-public-ip"
-  vip               = airtelcloud_vm.web1.private_ip
+  description       = "web1 public IP"
   availability_zone = "S1"
 
   timeouts {
@@ -256,14 +256,30 @@ resource "airtelcloud_public_ip" "web1_public" {
     delete = "5m"
   }
 }
+
+resource "airtelcloud_public_ip_attachment" "web1_public" {
+  public_ip_name = airtelcloud_public_ip.web1_public.object_name
+  resource_type  = "vm"
+  resource_name  = airtelcloud_vm.web1.instance_name
+}
 ```
+
+#### Attachment Argument Reference
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `public_ip_name` | String | Yes | Object name of the reserved public IP. |
+| `resource_type` | String | Yes | `vm`, `lb`, or `baremetal`. |
+| `resource_name` | String | Yes | Name of the VM, load balancer, or baremetal server. |
+
+`availability_zone` and `target_vip` are looked up from the public IP and the named resource. They are not set in configuration.
 
 #### Argument Reference
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `object_name` | String | Yes | Name for the public IP allocation. Forces new resource. |
-| `vip` | String | Yes | Target private IP (VM or LB) to NAT against. Forces new resource. |
+| `object_name` | String | Yes | Name for the public IP reservation. Forces new resource. |
+| `description` | String | No | Description. Forces new resource. |
 | `availability_zone` | String | Yes | Availability zone (e.g., `S1`, `S2`). Forces new resource. |
 
 #### Attribute Reference
@@ -295,20 +311,17 @@ terraform import airtelcloud_public_ip.web1_public <uuid>
 
 ### airtelcloud_public_ip_policy_rule
 
-Manages a NAT policy rule on a public IP to control allowed or denied traffic. Service names (e.g., `HTTP`, `HTTPS`) are automatically resolved to their UUIDs by the provider.
+Manages a NAT policy rule on a public IP. The public IP must already be in `attached` state; reserved IPs cannot receive policies.
 
 #### Example Usage
 
 ```terraform
 resource "airtelcloud_public_ip_policy_rule" "web_traffic" {
-  public_ip_id      = airtelcloud_public_ip.web1_public.id
-  display_name      = "allow-http-https"
-  source            = "any"
-  services          = ["HTTP", "HTTPS"]
-  action            = "accept"
-  target_vip        = airtelcloud_public_ip.web1_public.vip
-  public_ip         = airtelcloud_public_ip.web1_public.public_ip
-  availability_zone = "S1"
+  public_ip_name = airtelcloud_public_ip_attachment.web1_public.public_ip_name
+  rule_name      = "allow-http-https"
+  source         = "any"
+  services       = ["HTTP", "HTTPS"]
+  action         = "accept"
 }
 ```
 
@@ -316,14 +329,14 @@ resource "airtelcloud_public_ip_policy_rule" "web_traffic" {
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `public_ip_id` | String | Yes | UUID of the parent public IP. Forces new resource. |
-| `display_name` | String | Yes | Display name for the rule. Forces new resource. |
+| `public_ip_name` | String | Yes | Object name of the parent public IP. Must be attached. Forces new resource. |
+| `rule_name` | String | Yes | Name of the policy rule (`rule_name` in the API). Forces new resource. |
 | `source` | String | Yes | Source IP or `any`. Forces new resource. |
 | `services` | List of String | Yes | Service names (e.g., `HTTP`, `HTTPS`, `SSH`). |
 | `action` | String | Yes | Action: `accept` or `deny`. Forces new resource. |
-| `target_vip` | String | Yes | Target private IP (VIP). Forces new resource. |
-| `public_ip` | String | Yes | Public IP address. Forces new resource. |
-| `availability_zone` | String | Yes | Availability zone. Forces new resource. |
+| `target_vip` | String | No | Target private IP (VIP). Read from the public IP when omitted. |
+| `public_ip` | String | No | Public IP address. Read from the public IP when omitted. |
+| `availability_zone` | String | No | Availability zone. Read from the public IP when omitted. |
 
 #### Attribute Reference
 
