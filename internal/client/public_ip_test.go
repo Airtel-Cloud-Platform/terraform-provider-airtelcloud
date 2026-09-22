@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -45,6 +46,27 @@ func TestListPublicIPs(t *testing.T) {
 							Status:     "Created",
 						}},
 						Count: 1,
+					})
+				})
+			},
+			wantCount: 1,
+		},
+		{
+			name: "successful list wrapped in data",
+			setup: func(ms *testutil.MockServer) {
+				ms.AddHandler("GET", testPublicIPBasePath, func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"message": "Public IPs fetched successfully.",
+						"data": map[string]any{
+							"items": []map[string]any{{
+								"uuid":   "test-public-ip-uuid",
+								"name":   "test-public-ip",
+								"ip":     "103.239.168.100",
+								"status": "reserved",
+							}},
+							"count": 1,
+						},
 					})
 				})
 			},
@@ -245,6 +267,26 @@ func TestResolvePublicIPID(t *testing.T) {
 			},
 			lookup:   "test-public-ip",
 			wantUUID: "test-public-ip-uuid",
+		},
+		{
+			name: "resolves wrapped list by name field",
+			setup: func(ms *testutil.MockServer) {
+				ms.AddHandler("GET", testPublicIPBasePath, func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"message": "Public IPs fetched successfully.",
+						"data": map[string]any{
+							"items": []map[string]any{{
+								"uuid": "wrapped-uuid",
+								"name": "tft-pip-1",
+							}},
+							"count": 1,
+						},
+					})
+				})
+			},
+			lookup:   "tft-pip-1",
+			wantUUID: "wrapped-uuid",
 		},
 		{
 			name: "name not found",
@@ -479,14 +521,31 @@ func TestCreatePublicIPPolicyRule_SourceOfTruthPayload(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload source[0] = %T, want object", sourceRaw[0])
 	}
-	if got, ok := sourceObj["create_new"].(bool); !ok || !got {
-		t.Fatalf("payload source[0].create_new = %v, want true", sourceObj["create_new"])
+	if got, ok := sourceObj["create_new"].(bool); !ok || got {
+		t.Fatalf("payload source[0].create_new = %v, want false", sourceObj["create_new"])
 	}
 	if got, ok := sourceObj["source_type"].(string); !ok || got != "all" {
 		t.Fatalf("payload source[0].source_type = %v, want all", sourceObj["source_type"])
 	}
+	servicesRaw, ok := payload["services"].([]any)
+	if !ok || len(servicesRaw) != 1 {
+		t.Fatalf("payload services = %v, want one service object", payload["services"])
+	}
+	serviceObj, ok := servicesRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("payload services[0] = %T, want object", servicesRaw[0])
+	}
+	if got, ok := serviceObj["create_new"].(bool); !ok || got {
+		t.Fatalf("payload services[0].create_new = %v, want false", serviceObj["create_new"])
+	}
+	if got, ok := serviceObj["name"].(string); !ok || got != "uuid-http" {
+		t.Fatalf("payload services[0].name = %v, want uuid-http", serviceObj["name"])
+	}
 	if got, ok := payload["action"].(string); !ok || got != "accept" {
 		t.Fatalf("payload action = %v, want accept", payload["action"])
+	}
+	if got, ok := payload["revision_note"].(string); !ok || got != "creating Policy" {
+		t.Fatalf("payload revision_note = %v, want creating Policy", payload["revision_note"])
 	}
 }
 
@@ -505,23 +564,32 @@ func TestCreatePublicIPPolicyRule_SourceOfTruthPayload_WithDetailedConfig(t *tes
 		})
 	})
 
-	createNewTrue := true
 	createNewFalse := false
 	isDefaultFalse := false
 
 	client := newTestClientForPublicIP(t, ms)
 	_, err := client.CreatePublicIPPolicyRule(context.Background(), &models.CreatePublicIPPolicyRuleRequest{
-		DisplayName: "hello-rule",
-		SourceConfig: []models.PublicIPPolicyRuleSourceInput{{
-			CreateNew:  &createNewTrue,
-			IPCIDR:     "1.2.1.0/24",
-			SourceType: "ip_cidr",
-		}},
-		ServiceConfig: []models.PublicIPPolicyRuleServiceInput{{
-			CreateNew: &createNewFalse,
-			Name:      "RDP",
-			IsDefault: &isDefaultFalse,
-		}},
+		DisplayName: "temporal-rule",
+		SourceConfig: []models.PublicIPPolicyRuleSourceInput{
+			{
+				CreateNew:  &createNewFalse,
+				IPCIDR:     "182.77.78.18/32",
+				SourceType: "ip_cidr",
+			},
+			{
+				SourceType: "geographic",
+				Geographic: &models.PublicIPPolicyRuleGeographicInput{
+					CountryCode: "IN",
+					CountryName: "India",
+				},
+			},
+		},
+		ServiceConfig: []models.PublicIPPolicyRuleServiceInput{
+			{CreateNew: &createNewFalse, Name: "tcp-443-443", IsDefault: &isDefaultFalse},
+			{CreateNew: &createNewFalse, Name: "SSH", IsDefault: &isDefaultFalse},
+			{CreateNew: &createNewFalse, Name: "HTTP", IsDefault: &isDefaultFalse},
+			{CreateNew: &createNewFalse, Name: "HTTPS", IsDefault: &isDefaultFalse},
+		},
 		Action:       "accept",
 		ResourceType: "ipam",
 		RevisionNote: "creating Policy",
@@ -541,26 +609,46 @@ func TestCreatePublicIPPolicyRule_SourceOfTruthPayload_WithDetailedConfig(t *tes
 	}
 
 	sourceRaw, ok := payload["source"].([]any)
-	if !ok || len(sourceRaw) != 1 {
-		t.Fatalf("payload source = %v, want one source object", payload["source"])
+	if !ok || len(sourceRaw) != 2 {
+		t.Fatalf("payload source = %v, want two source objects", payload["source"])
 	}
-	sourceObj, ok := sourceRaw[0].(map[string]any)
+	cidrObj, ok := sourceRaw[0].(map[string]any)
 	if !ok {
 		t.Fatalf("payload source[0] = %T, want object", sourceRaw[0])
 	}
-	if got, ok := sourceObj["create_new"].(bool); !ok || !got {
-		t.Fatalf("payload source[0].create_new = %v, want true", sourceObj["create_new"])
+	if got, ok := cidrObj["create_new"].(bool); !ok || got {
+		t.Fatalf("payload source[0].create_new = %v, want false", cidrObj["create_new"])
 	}
-	if got, ok := sourceObj["source_type"].(string); !ok || got != "ip_cidr" {
-		t.Fatalf("payload source[0].source_type = %v, want ip_cidr", sourceObj["source_type"])
+	if got, ok := cidrObj["source_type"].(string); !ok || got != "ip_cidr" {
+		t.Fatalf("payload source[0].source_type = %v, want ip_cidr", cidrObj["source_type"])
 	}
-	if got, ok := sourceObj["ip_cidr"].(string); !ok || got != "1.2.1.0/24" {
-		t.Fatalf("payload source[0].ip_cidr = %v, want 1.2.1.0/24", sourceObj["ip_cidr"])
+	if got, ok := cidrObj["ip_cidr"].(string); !ok || got != "182.77.78.18/32" {
+		t.Fatalf("payload source[0].ip_cidr = %v, want 182.77.78.18/32", cidrObj["ip_cidr"])
+	}
+	geoObj, ok := sourceRaw[1].(map[string]any)
+	if !ok {
+		t.Fatalf("payload source[1] = %T, want object", sourceRaw[1])
+	}
+	if _, hasCreateNew := geoObj["create_new"]; hasCreateNew {
+		t.Fatalf("payload source[1] must not include create_new, got %v", geoObj)
+	}
+	if got, ok := geoObj["source_type"].(string); !ok || got != "geographic" {
+		t.Fatalf("payload source[1].source_type = %v, want geographic", geoObj["source_type"])
+	}
+	geo, ok := geoObj["geographic"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload source[1].geographic = %T, want object", geoObj["geographic"])
+	}
+	if got, ok := geo["country_code"].(string); !ok || got != "IN" {
+		t.Fatalf("payload source[1].geographic.country_code = %v, want IN", geo["country_code"])
+	}
+	if got, ok := geo["country_name"].(string); !ok || got != "India" {
+		t.Fatalf("payload source[1].geographic.country_name = %v, want India", geo["country_name"])
 	}
 
 	servicesRaw, ok := payload["services"].([]any)
-	if !ok || len(servicesRaw) != 1 {
-		t.Fatalf("payload services = %v, want one service object", payload["services"])
+	if !ok || len(servicesRaw) != 4 {
+		t.Fatalf("payload services = %v, want four service objects", payload["services"])
 	}
 	serviceObj, ok := servicesRaw[0].(map[string]any)
 	if !ok {
@@ -569,8 +657,8 @@ func TestCreatePublicIPPolicyRule_SourceOfTruthPayload_WithDetailedConfig(t *tes
 	if got, ok := serviceObj["create_new"].(bool); !ok || got {
 		t.Fatalf("payload services[0].create_new = %v, want false", serviceObj["create_new"])
 	}
-	if got, ok := serviceObj["name"].(string); !ok || got != "RDP" {
-		t.Fatalf("payload services[0].name = %v, want RDP", serviceObj["name"])
+	if got, ok := serviceObj["name"].(string); !ok || got != "tcp-443-443" {
+		t.Fatalf("payload services[0].name = %v, want tcp-443-443", serviceObj["name"])
 	}
 	if got, ok := serviceObj["is_default"].(bool); !ok || got {
 		t.Fatalf("payload services[0].is_default = %v, want false", serviceObj["is_default"])
@@ -969,7 +1057,7 @@ func TestCreatePublicIP_DecodesWrappedResponseData(t *testing.T) {
 	})
 
 	client := newTestClientForPublicIP(t, ms)
-	created, err := client.CreatePublicIP(context.Background(), &models.CreatePublicIPRequest{Name: "test", PortID: 19526}, "N1")
+	created, err := client.CreatePublicIP(context.Background(), &models.CreatePublicIPRequest{Name: "test", PortID: intPtr(19526)}, "N1")
 	if err != nil {
 		t.Fatalf("CreatePublicIP() unexpected error = %v", err)
 	}
@@ -1140,3 +1228,222 @@ func TestFindPortIDByVIP_ResolvesLBVipPortIDFromNetworkVIPsAPI(t *testing.T) {
 		t.Fatalf("FindPortIDByVIP() portID = %d, want 17664", portID)
 	}
 }
+
+func TestCreatePublicIP_SendsNullPortID(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	path := testPublicIPBasePath
+	ms.AddHandler("POST", path, func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode create body: %v", err)
+		}
+		if payload["name"] != "temporal-pip" {
+			t.Errorf("name = %v, want temporal-pip", payload["name"])
+		}
+		if payload["description"] != "new pip" {
+			t.Errorf("description = %v, want new pip", payload["description"])
+		}
+		if payload["port_id"] != nil {
+			t.Errorf("port_id = %v, want null", payload["port_id"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"uuid":      "pip-uuid-reserve",
+				"public_ip": "45.112.58.189",
+				"status":    "reserved",
+			},
+		})
+	})
+
+	client := newTestClientForPublicIP(t, ms)
+	created, err := client.CreatePublicIP(context.Background(), &models.CreatePublicIPRequest{
+		Name:        "temporal-pip",
+		Description: "new pip",
+		PortID:      nil,
+	}, "S1")
+	if err != nil {
+		t.Fatalf("CreatePublicIP() unexpected error = %v", err)
+	}
+	if created.UUID != "pip-uuid-reserve" {
+		t.Fatalf("CreatePublicIP() UUID = %q, want pip-uuid-reserve", created.UUID)
+	}
+}
+
+func TestAttachPublicIP_PostsPortID(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	path := testPublicIPBasePath + "/a1ad4176-7955-44cc-ac8a-4d72ac77559a/attach"
+	ms.AddHandler("POST", path, func(w http.ResponseWriter, r *http.Request) {
+		var payload models.AttachPublicIPRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode attach body: %v", err)
+		}
+		if payload.PortID != 27148 {
+			t.Errorf("port_id = %d, want 27148", payload.PortID)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	client := newTestClientForPublicIP(t, ms)
+	err := client.AttachPublicIP(context.Background(), "a1ad4176-7955-44cc-ac8a-4d72ac77559a", 27148, "S1")
+	if err != nil {
+		t.Fatalf("AttachPublicIP() unexpected error = %v", err)
+	}
+}
+
+func TestNormalizePublicIPResourceType(t *testing.T) {
+	cases := map[string]string{
+		"vm":        PublicIPResourceTypeVM,
+		"VM":        PublicIPResourceTypeVM,
+		"compute":   PublicIPResourceTypeVM,
+		"lb":        PublicIPResourceTypeLB,
+		"baremetal": PublicIPResourceTypeBaremetal,
+	}
+	for in, want := range cases {
+		got, err := NormalizePublicIPResourceType(in)
+		if err != nil {
+			t.Fatalf("NormalizePublicIPResourceType(%q) error = %v", in, err)
+		}
+		if got != want {
+			t.Fatalf("NormalizePublicIPResourceType(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	if _, err := NormalizePublicIPResourceType("volume"); err == nil {
+		t.Fatal("NormalizePublicIPResourceType() expected error for unsupported type")
+	}
+}
+
+func TestFindPortForResource_VM(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	client := newTestClientForPublicIP(t, ms)
+
+	t.Run("matches target vip", func(t *testing.T) {
+		portID, vip, err := client.FindPortForResource(context.Background(), "vm", "instance-1", "10.1.99.172", "S1")
+		if err != nil {
+			t.Fatalf("FindPortForResource() unexpected error = %v", err)
+		}
+		if portID != 101 || vip != "10.1.99.172" {
+			t.Fatalf("FindPortForResource() = (%d, %q), want (101, 10.1.99.172)", portID, vip)
+		}
+	})
+
+	t.Run("defaults to primary port", func(t *testing.T) {
+		portID, vip, err := client.FindPortForResource(context.Background(), "vm", "instance-2", "", "S1")
+		if err != nil {
+			t.Fatalf("FindPortForResource() unexpected error = %v", err)
+		}
+		if portID != 202 || vip != "10.1.99.200" {
+			t.Fatalf("FindPortForResource() = (%d, %q), want (202, 10.1.99.200)", portID, vip)
+		}
+	})
+
+	t.Run("rejects vip not on resource", func(t *testing.T) {
+		if _, _, err := client.FindPortForResource(context.Background(), "vm", "instance-1", "10.9.9.9", "S1"); err == nil {
+			t.Fatal("FindPortForResource() expected error for mismatched target_vip")
+		}
+	})
+}
+
+func TestFindPortForResource_LB(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+
+	path := "/api/v2.1/networks/domain/test-org/project/test-project/networks/ports/vips"
+	ms.AddHandler("GET", path, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]models.NetworkVIPPort{
+			{LBName: "gardener-vip-lb", PortID: 855, AllowedIPAddress: "10.101.21.119"},
+			{LBName: "gardener-vip-lb", PortID: 17664, AllowedIPAddress: "10.101.21.35"},
+		})
+	})
+
+	client := newTestClientForPublicIP(t, ms)
+	portID, vip, err := client.FindPortForResource(context.Background(), "lb", "gardener-vip-lb", "10.101.21.35", "S1")
+	if err != nil {
+		t.Fatalf("FindPortForResource() unexpected error = %v", err)
+	}
+	if portID != 17664 || vip != "10.101.21.35" {
+		t.Fatalf("FindPortForResource() = (%d, %q), want (17664, 10.101.21.35)", portID, vip)
+	}
+}
+
+func TestIsPublicIPAttached(t *testing.T) {
+	if !IsPublicIPAttached("attached") || !IsPublicIPAttached("Attached") {
+		t.Fatal("expected attached statuses to pass")
+	}
+	if IsPublicIPAttached("reserved") || IsPublicIPAttached("created") || IsPublicIPAttached("") {
+		t.Fatal("expected non-attached statuses to fail")
+	}
+}
+
+func TestRequirePublicIPAttached(t *testing.T) {
+	t.Run("allows attached with port", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+		ms.AddHandler("GET", testPublicIPBasePath+"/pip-uuid-123", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"uuid": "pip-uuid-123", "status": "attached", "port_id": 27148, "target_vip": "10.10.3.237"},
+			})
+		})
+		client := newTestClientForPublicIP(t, ms)
+		ip, err := client.RequirePublicIPAttached(context.Background(), "pip-uuid-123")
+		if err != nil {
+			t.Fatalf("RequirePublicIPAttached() unexpected error = %v", err)
+		}
+		if ip.UUID != "pip-uuid-123" {
+			t.Fatalf("UUID = %q", ip.UUID)
+		}
+	})
+
+	t.Run("rejects reserved", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+		ms.AddHandler("GET", testPublicIPBasePath+"/pip-uuid-123", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"uuid": "pip-uuid-123", "status": "reserved", "object_name": "temporal-pip"},
+			})
+		})
+		client := newTestClientForPublicIP(t, ms)
+		ip, err := client.RequirePublicIPAttached(context.Background(), "pip-uuid-123")
+		if err == nil {
+			t.Fatal("RequirePublicIPAttached() expected error for reserved")
+		}
+		if ip == nil || ip.Status != "reserved" {
+			t.Fatalf("expected reserved public IP in error path, got %+v", ip)
+		}
+		if !errors.Is(err, ErrPublicIPNotAttached) {
+			t.Fatalf("error = %v, want ErrPublicIPNotAttached", err)
+		}
+	})
+
+	t.Run("rejects attached without resource", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+		ms.AddHandler("GET", testPublicIPBasePath+"/pip-uuid-123", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"uuid": "pip-uuid-123", "status": "attached"},
+			})
+		})
+		client := newTestClientForPublicIP(t, ms)
+		_, err := client.RequirePublicIPAttached(context.Background(), "pip-uuid-123")
+		if err == nil {
+			t.Fatal("RequirePublicIPAttached() expected error when no port or target_vip")
+		}
+		if !errors.Is(err, ErrPublicIPNotAttached) {
+			t.Fatalf("error = %v, want ErrPublicIPNotAttached", err)
+		}
+	})
+}
+
+func intPtr(v int) *int { return &v }

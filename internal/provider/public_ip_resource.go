@@ -39,6 +39,7 @@ type PublicIPResource struct {
 type PublicIPResourceModel struct {
 	ID               types.String   `tfsdk:"id"`
 	ObjectName       types.String   `tfsdk:"object_name"`
+	Description      types.String   `tfsdk:"description"`
 	VIP              types.String   `tfsdk:"vip"`
 	AvailabilityZone types.String   `tfsdk:"availability_zone"`
 	PublicIP         types.String   `tfsdk:"public_ip"`
@@ -88,7 +89,7 @@ func (r *PublicIPResource) Metadata(ctx context.Context, req resource.MetadataRe
 
 func (r *PublicIPResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages an Airtel Cloud Public IP. Public IPs are allocated via NAT against a Virtual Machine or Load Balancer private IP and are availability zone specific.",
+		MarkdownDescription: "Manages an Airtel Cloud Public IP reservation. Create allocates a public IP in `reserved` state. Attach it to a VM or load balancer with `airtelcloud_public_ip_attachment`, then add traffic rules with `airtelcloud_public_ip_policy_rule`.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -99,18 +100,22 @@ func (r *PublicIPResource) Schema(ctx context.Context, req resource.SchemaReques
 				},
 			},
 			"object_name": schema.StringAttribute{
-				MarkdownDescription: "The name for the public IP allocation.",
+				MarkdownDescription: "The name for the public IP reservation.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"vip": schema.StringAttribute{
-				MarkdownDescription: "The target private IP (VM or Load Balancer IP) to NAT against.",
-				Required:            true,
+			"description": schema.StringAttribute{
+				MarkdownDescription: "Optional description for the public IP reservation.",
+				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"vip": schema.StringAttribute{
+				MarkdownDescription: "The target private IP after attach. Empty while the public IP is reserved.",
+				Computed:            true,
 			},
 			"availability_zone": schema.StringAttribute{
 				MarkdownDescription: "The availability zone for the public IP (e.g., `S1`, `S2`).",
@@ -187,21 +192,14 @@ func (r *PublicIPResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	portID, err := r.client.FindPortIDByVIP(ctx, data.VIP.ValueString(), data.AvailabilityZone.ValueString())
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to find port ID for VIP %s: %s", data.VIP.ValueString(), err))
-		return
-	}
-
 	createReq := &models.CreatePublicIPRequest{
-		Name:   data.ObjectName.ValueString(),
-		PortID: portID,
+		Name:        data.ObjectName.ValueString(),
+		Description: data.Description.ValueString(),
+		PortID:      nil,
 	}
 
-	tflog.Debug(ctx, "Creating public IP", map[string]interface{}{
+	tflog.Debug(ctx, "Reserving public IP", map[string]interface{}{
 		"name":              data.ObjectName.ValueString(),
-		"port_id":           portID,
-		"vip":               data.VIP.ValueString(),
 		"availability_zone": data.AvailabilityZone.ValueString(),
 	})
 
@@ -211,7 +209,7 @@ func (r *PublicIPResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	// Create response only returns uuid and public_ip; poll until status is "Created" to get full details
+	// Create response only returns uuid and public_ip; poll until reserved.
 	uuid := created.UUID
 	readyIP, err := r.client.WaitForPublicIPReady(ctx, uuid, createTimeout)
 	if err != nil {
@@ -224,6 +222,11 @@ func (r *PublicIPResource) Create(ctx context.Context, req resource.CreateReques
 	data.ID = types.StringValue(readyIP.UUID)
 	data.PublicIP = types.StringValue(publicIP)
 	data.Status = types.StringValue(readyIP.Status)
+	if readyIP.TargetVIP != "" {
+		data.VIP = types.StringValue(readyIP.TargetVIP)
+	} else {
+		data.VIP = types.StringValue("")
+	}
 	if readyIP.Domain != "" {
 		data.Domain = types.StringValue(readyIP.Domain)
 	}
@@ -311,6 +314,21 @@ func (r *PublicIPResource) Delete(ctx context.Context, req resource.DeleteReques
 	// Best-effort pre-cleanup for policies that may exist even when policy resources
 	// are not tracked in state (for example, interrupted applies/import gaps).
 	r.cleanupAttachedPublicIPPolicies(ctx, deleteClient, data)
+
+	az := data.AvailabilityZone.ValueString()
+	if az == "" {
+		az = data.AZName.ValueString()
+	}
+	if current, getErr := deleteClient.GetPublicIP(ctx, data.ID.ValueString()); getErr == nil && current != nil {
+		if strings.EqualFold(strings.TrimSpace(current.Status), "attached") && current.PortID != 0 {
+			if detachErr := deleteClient.DetachPublicIP(ctx, data.ID.ValueString(), current.PortID, az); detachErr != nil && !client.IsNotFoundError(detachErr) {
+				tflog.Warn(ctx, "PublicIP delete: detach before delete failed", map[string]interface{}{
+					"public_ip_id": data.ID.ValueString(),
+					"error":        detachErr.Error(),
+				})
+			}
+		}
+	}
 
 	err := deleteClient.DeletePublicIPWithWait(ctx, data.ID.ValueString(), defaultPublicIPDeleteTimeout)
 	if err != nil {

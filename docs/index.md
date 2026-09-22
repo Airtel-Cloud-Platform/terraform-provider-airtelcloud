@@ -134,7 +134,8 @@ The provider supports the following 25 resources:
 - [`airtelcloud_lb_virtual_server`](resources/lb_virtual_server) - Load Balancer Virtual Server
 
 **Security:**
-- [`airtelcloud_public_ip`](resources/public_ip) - Public IP
+- [`airtelcloud_public_ip`](resources/public_ip) - Public IP reservation
+- [`airtelcloud_public_ip_attachment`](resources/public_ip_attachment) - Public IP attach to VM or LB
 - [`airtelcloud_public_ip_policy_rule`](resources/public_ip_policy_rule) - Public IP Policy Rule
 
 **DNS:**

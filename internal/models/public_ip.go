@@ -1,5 +1,7 @@
 package models
 
+import "strings"
+
 // PublicIP represents a public IP allocation (API response)
 type PublicIP struct {
 	UUID            string `json:"uuid"`
@@ -7,7 +9,10 @@ type PublicIP struct {
 	PublicIP        string `json:"public_ip"`
 	Domain          string `json:"domain,omitempty"`
 	ObjectName      string `json:"object_name,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Description     string `json:"description,omitempty"`
 	TargetVIP       string `json:"target_vip,omitempty"`
+	PortID          int    `json:"port_id,omitempty"`
 	Username        string `json:"username,omitempty"`
 	OrgID           string `json:"org_id,omitempty"`
 	OrgName         string `json:"org_name,omitempty"`
@@ -21,18 +26,31 @@ type PublicIP struct {
 	Status          string `json:"status,omitempty"`
 }
 
-// CreatePublicIPRequest represents the request to allocate a public IP
-// using the new TCPWave flow: allocation is done by port id, and the backend
-// handles VIP object creation and static route setup.
+// CreatePublicIPRequest reserves a public IP. port_id must be JSON null
+// until a later attach call binds the allocation to a VM or LB port.
 type CreatePublicIPRequest struct {
-	Name   string `json:"name"`
-	PortID int    `json:"port_id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	PortID      *int   `json:"port_id"`
+}
+
+// AttachPublicIPRequest binds a reserved public IP to a compute or LB port.
+type AttachPublicIPRequest struct {
+	PortID int `json:"port_id"`
 }
 
 // PublicIPListResponse represents the paginated list response for public IPs
 type PublicIPListResponse struct {
 	Items []PublicIP `json:"items"`
 	Count int        `json:"count"`
+}
+
+// PublicIPDisplayName is the customer-facing name from list or get payloads.
+func PublicIPDisplayName(ip PublicIP) string {
+	if strings.TrimSpace(ip.ObjectName) != "" {
+		return strings.TrimSpace(ip.ObjectName)
+	}
+	return strings.TrimSpace(ip.Name)
 }
 
 // PublicIPPolicyRule represents a NAT policy rule on a public IP (API response)
@@ -49,12 +67,19 @@ type PublicIPPolicyRule struct {
 	Action      string   `json:"action,omitempty"`
 }
 
+// PublicIPPolicyRuleGeographicInput is a country selector in a policy source.
+type PublicIPPolicyRuleGeographicInput struct {
+	CountryCode string `json:"country_code,omitempty"`
+	CountryName string `json:"country_name,omitempty"`
+}
+
 // PublicIPPolicyRuleSourceInput represents one source selector in a
 // source-of-truth public IP policy create payload.
 type PublicIPPolicyRuleSourceInput struct {
-	CreateNew  *bool  `json:"create_new,omitempty"`
-	IPCIDR     string `json:"ip_cidr,omitempty"`
-	SourceType string `json:"source_type,omitempty"`
+	CreateNew  *bool                              `json:"create_new,omitempty"`
+	IPCIDR     string                             `json:"ip_cidr,omitempty"`
+	SourceType string                             `json:"source_type,omitempty"`
+	Geographic *PublicIPPolicyRuleGeographicInput `json:"geographic,omitempty"`
 }
 
 // PublicIPPolicyRuleServiceInput represents one service selector in a

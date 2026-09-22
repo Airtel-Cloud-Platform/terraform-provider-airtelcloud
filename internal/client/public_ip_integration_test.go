@@ -75,8 +75,9 @@ func TestPublicIPIntegration_CreateGetDelete(t *testing.T) {
 	objectName := fmt.Sprintf("test-pip-%d", time.Now().Unix())
 
 	createReq := &models.CreatePublicIPRequest{
-		Name:   objectName,
-		PortID: 0, // test should set this explicitly when mocking the provider-side workflow
+		Name:        objectName,
+		Description: "integration reserve",
+		PortID:      nil,
 	}
 
 	t.Logf("Creating public IP: name=%s, vip=%s, az=%s", objectName, vip, az)

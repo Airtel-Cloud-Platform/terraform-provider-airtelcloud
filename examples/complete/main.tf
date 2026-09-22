@@ -396,7 +396,7 @@ resource "airtelcloud_lb_virtual_server" "http" {
 # Allocate a public IP NATted against web server 1's private IP
 resource "airtelcloud_public_ip" "web1_public" {
   object_name       = "${var.resource_prefix}-web1-public-ip"
-  vip               = airtelcloud_vm.web1.private_ip
+  description       = "web1 public IP"
   availability_zone = "S1"
 
   timeouts {
@@ -406,16 +406,18 @@ resource "airtelcloud_public_ip" "web1_public" {
   depends_on = [airtelcloud_vm.web1]
 }
 
-# Allow HTTP and HTTPS traffic through the public IP
+resource "airtelcloud_public_ip_attachment" "web1_public" {
+  public_ip_name = airtelcloud_public_ip.web1_public.object_name
+  resource_type  = "vm"
+  resource_name  = airtelcloud_vm.web1.instance_name
+}
+
 resource "airtelcloud_public_ip_policy_rule" "web1_http_https" {
-  public_ip_id      = airtelcloud_public_ip.web1_public.id
-  display_name      = "${var.resource_prefix}-web1-allow-http-https"
-  source            = "any"
-  services          = ["HTTP", "HTTPS"]
-  action            = "accept"
-  target_vip        = airtelcloud_public_ip.web1_public.vip
-  public_ip         = airtelcloud_public_ip.web1_public.public_ip
-  availability_zone = "S1"
+  public_ip_name = airtelcloud_public_ip_attachment.web1_public.public_ip_name
+  rule_name      = "${var.resource_prefix}-web1-allow-http-https"
+  source         = "any"
+  services       = ["HTTP", "HTTPS"]
+  action         = "accept"
 }
 
 # Output basic volume details
