@@ -50,25 +50,46 @@ variable "vpc_name" {
 }
 
 resource "airtelcloud_kubernetes" "cluster" {
-  name                = "test-kms"
-  description         = "test"
-  k8s_version         = "v1.33.7"
-  cni_name            = "calico"
-  cni_version         = "v3.30.6"
-  master_nodes        = 3
-  availability_zone   = "S1"
+  name                   = "test-kms"
+  description            = "test"
+  kubernetes_version     = "v1.33.7"
+  networking_name        = "calico"
+  networking_version     = "v3.30.6"
+  availability_zone      = "S1"
+  os_distribution        = "Ubuntu"
   control_plane_provider = "Kamaji"
 
-  vpc_name            = var.vpc_name
+  vpc_name = var.vpc_name
 
   node_pools = [
     {
-      name              = "md0"
-      host_group        = "ccd.xLarge"
-      group_name        = "Compute dense"
-      subnet_name       = var.subnet_name
-      os_distribution   = "Ubuntu"
-      count             = 1
+      flavor      = "ccd.xLarge"
+      flavor_type = "Compute dense"
+      subnet_name = var.subnet_name
+      count       = 0
+      autoscaling = {
+        enabled   = true
+        max_nodes = 2
+      }
+      labels = [
+        {
+          key   = "test"
+          value = "test"
+        }
+      ]
+      annotations = [
+        {
+          key   = "new"
+          value = "new"
+        }
+      ]
+      taints = [
+        {
+          key    = "test"
+          value  = "test"
+          effect = "PreferNoSchedule"
+        }
+      ]
     }
   ]
 }

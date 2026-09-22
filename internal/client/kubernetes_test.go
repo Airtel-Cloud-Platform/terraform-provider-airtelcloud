@@ -14,11 +14,10 @@ import (
 )
 
 const (
-	testK8sName       = "test-kms"
-	testK8sHostGroup  = "ccd.xLarge"
-	testK8sBase       = "/api/airtel/v1/domain/test-org/project/test-project/cluster"
-	testK8sPath       = testK8sBase + "/" + testK8sName
-	testK8sHostGroups = "/api/airtel/v1/domain/test-org/project/test-project/hostgroup/" + testK8sHostGroup + "/clusters"
+	testK8sName   = "test-kms"
+	testK8sBase   = "/api/airtel/v1/domain/test-org/project/test-project/cluster"
+	testK8sDelete = "/api/compass/v1/domain/test-org/project/test-project/cluster/" + testK8sName
+	testK8sStatus = testK8sDelete + "/status"
 )
 
 func newKubernetesTestClient(t *testing.T, ms *testutil.MockServer) *Client {
@@ -30,19 +29,16 @@ func newKubernetesTestClient(t *testing.T, ms *testutil.MockServer) *Client {
 	return c
 }
 
-func sampleK8sCluster(state string) models.KubernetesCluster {
-	return models.KubernetesCluster{
-		Name:       testK8sName,
-		K8sVersion: "v1.33.7",
-		State:      state,
-		K8sInfo: &models.KubernetesKubeInfo{
-			K8sName:     "CKP",
-			K8sVersion:  "v1.33.7",
-			CNIName:     "calico",
-			CNIVersion:  "v3.30.6",
-			MasterNodes: 3,
-			WorkerNodes: 1,
-		},
+func k8sStatusHandler(state, lifecycleState, failedStateError string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, models.KubernetesClusterStatus{
+			Cluster: models.KubernetesCluster{
+				Key:              models.KubernetesClusterKey{Cluster: testK8sName},
+				LifeCycleState:   lifecycleState,
+				FailedStateError: failedStateError,
+			},
+			State: state,
+		})
 	}
 }
 
@@ -88,68 +84,120 @@ func TestCreateKubernetesCluster(t *testing.T) {
 }
 
 func TestGetKubernetesCluster(t *testing.T) {
-	ms := testutil.NewMockServer()
-	defer ms.Close()
+	t.Run("connected", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
 
-	ms.AddHandler("GET", testK8sHostGroups, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, models.KubernetesClusterList{
-			Count: 1,
-			Items: []models.KubernetesCluster{sampleK8sCluster(models.KubernetesStateReady)},
-		})
+		ms.AddHandler("GET", testK8sStatus, k8sStatusHandler(models.KubernetesStateConnected, models.KubernetesStateReady, ""))
+
+		got, err := newKubernetesTestClient(t, ms).GetKubernetesCluster(context.Background(), testK8sName)
+		if err != nil {
+			t.Fatalf("GetKubernetesCluster() error = %v", err)
+		}
+		if got.ClusterName() != testK8sName || got.State != models.KubernetesStateConnected || got.LifeCycleState != models.KubernetesStateReady {
+			t.Fatalf("got %+v", got)
+		}
 	})
 
-	got, err := newKubernetesTestClient(t, ms).GetKubernetesCluster(context.Background(), testK8sName, []string{testK8sHostGroup})
-	if err != nil {
-		t.Fatalf("GetKubernetesCluster() error = %v", err)
-	}
-	if got.ClusterName() != testK8sName || got.State != models.KubernetesStateReady {
-		t.Fatalf("got %+v", got)
-	}
+	t.Run("status endpoint not found", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		ms.AddHandler("GET", testK8sStatus, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"code":5,"message":"Cluster not found"}`))
+		})
+
+		_, err := newKubernetesTestClient(t, ms).GetKubernetesCluster(context.Background(), testK8sName)
+		if !IsNotFoundError(err) {
+			t.Fatalf("error = %v, want not found", err)
+		}
+	})
 }
 
-func TestDeleteKubernetesClusterNotFoundIsSuccess(t *testing.T) {
-	ms := testutil.NewMockServer()
-	defer ms.Close()
+func TestDeleteKubernetesCluster(t *testing.T) {
+	t.Run("compass delete", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
 
-	ms.AddHandler("DELETE", testK8sPath, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"message":"not found"}`))
+		ms.AddHandler("DELETE", testK8sDelete, func(w http.ResponseWriter, r *http.Request) {
+			if got := r.URL.Query().Get("forceDelete"); got != "false" {
+				t.Errorf("forceDelete = %q, want false", got)
+			}
+			w.WriteHeader(http.StatusOK)
+		})
+
+		if err := newKubernetesTestClient(t, ms).DeleteKubernetesCluster(context.Background(), testK8sName); err != nil {
+			t.Fatalf("DeleteKubernetesCluster() error = %v", err)
+		}
 	})
 
-	if err := newKubernetesTestClient(t, ms).DeleteKubernetesCluster(context.Background(), testK8sName); err != nil {
-		t.Fatalf("DeleteKubernetesCluster() error = %v", err)
-	}
+	t.Run("not found is success", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+
+		ms.AddHandler("DELETE", testK8sDelete, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"not found"}`))
+		})
+
+		if err := newKubernetesTestClient(t, ms).DeleteKubernetesCluster(context.Background(), testK8sName); err != nil {
+			t.Fatalf("DeleteKubernetesCluster() error = %v", err)
+		}
+	})
 }
 
 func TestWaitForKubernetesReady(t *testing.T) {
-	ms := testutil.NewMockServer()
-	defer ms.Close()
+	t.Run("compass connected", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+		ms.AddHandler("GET", testK8sStatus, k8sStatusHandler(models.KubernetesStateConnected, models.KubernetesStateReady, ""))
 
-	ms.AddHandler("GET", testK8sHostGroups, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, models.KubernetesClusterList{
-			Count: 1,
-			Items: []models.KubernetesCluster{sampleK8sCluster(models.KubernetesStateReady)},
-		})
+		got, err := newKubernetesTestClient(t, ms).WaitForKubernetesReady(context.Background(), testK8sName, time.Minute)
+		if err != nil {
+			t.Fatalf("WaitForKubernetesReady() error = %v", err)
+		}
+		if got.State != models.KubernetesStateConnected {
+			t.Fatalf("state = %q", got.State)
+		}
 	})
 
-	got, err := newKubernetesTestClient(t, ms).WaitForKubernetesReady(context.Background(), testK8sName, []string{testK8sHostGroup}, time.Minute)
-	if err != nil {
-		t.Fatalf("WaitForKubernetesReady() error = %v", err)
-	}
-	if got.State != models.KubernetesStateReady {
-		t.Fatalf("state = %q", got.State)
-	}
+	t.Run("not registered times out", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+		ms.AddHandler("GET", testK8sStatus, k8sStatusHandler(models.KubernetesStateNotRegistered, models.KubernetesStateCreating, ""))
+
+		_, err := newKubernetesTestClient(t, ms).WaitForKubernetesReady(context.Background(), testK8sName, time.Millisecond)
+		if err == nil {
+			t.Fatal("WaitForKubernetesReady() error = nil, want timeout")
+		}
+		if !strings.Contains(err.Error(), models.KubernetesStateNotRegistered) {
+			t.Fatalf("error = %v, want state Not Registered", err)
+		}
+	})
+
+	t.Run("failed lifecycle returns error", func(t *testing.T) {
+		ms := testutil.NewMockServer()
+		defer ms.Close()
+		ms.AddHandler("GET", testK8sStatus, k8sStatusHandler("Not Connected", "Failed", "control plane bootstrap failed"))
+
+		_, err := newKubernetesTestClient(t, ms).WaitForKubernetesReady(context.Background(), testK8sName, time.Minute)
+		if err == nil || !strings.Contains(err.Error(), "control plane bootstrap failed") {
+			t.Fatalf("error = %v, want failedStateError", err)
+		}
+	})
 }
 
 func TestWaitForKubernetesDeleted(t *testing.T) {
 	ms := testutil.NewMockServer()
 	defer ms.Close()
 
-	ms.AddHandler("GET", testK8sHostGroups, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, models.KubernetesClusterList{Count: 0, Items: []models.KubernetesCluster{}})
+	ms.AddHandler("GET", testK8sStatus, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":5,"message":"Cluster not found"}`))
 	})
 
-	if err := newKubernetesTestClient(t, ms).WaitForKubernetesDeleted(context.Background(), testK8sName, []string{testK8sHostGroup}, time.Minute); err != nil {
+	if err := newKubernetesTestClient(t, ms).WaitForKubernetesDeleted(context.Background(), testK8sName, time.Minute); err != nil {
 		t.Fatalf("WaitForKubernetesDeleted() error = %v", err)
 	}
 }

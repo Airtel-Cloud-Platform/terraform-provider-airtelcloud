@@ -15,6 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -29,6 +31,7 @@ import (
 )
 
 const kubernetesDefaultTimeout = 45 * time.Minute
+const kubernetesDefaultMasterNodes = 3
 
 var kubernetesClusterNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
@@ -50,15 +53,14 @@ type KubernetesResourceModel struct {
 	Name                 types.String              `tfsdk:"name"`
 	Description          types.String              `tfsdk:"description"`
 	K8sName              types.String              `tfsdk:"k8s_name"`
-	K8sVersion           types.String              `tfsdk:"k8s_version"`
-	CNIName              types.String              `tfsdk:"cni_name"`
-	CNIVersion           types.String              `tfsdk:"cni_version"`
-	MasterNodes          types.Int64               `tfsdk:"master_nodes"`
+	KubernetesVersion    types.String              `tfsdk:"kubernetes_version"`
+	NetworkingName       types.String              `tfsdk:"networking_name"`
+	NetworkingVersion    types.String              `tfsdk:"networking_version"`
 	WorkerNodes          types.Int64               `tfsdk:"worker_nodes"`
 	AvailabilityZone     types.String              `tfsdk:"availability_zone"`
+	OSDistribution       types.String              `tfsdk:"os_distribution"`
 	ProviderType         types.String              `tfsdk:"provider_type"`
 	ControlPlaneProvider types.String              `tfsdk:"control_plane_provider"`
-	MasterHostGroup      types.String              `tfsdk:"master_host_group"`
 	VPCName              types.String              `tfsdk:"vpc_name"`
 	NodePools            []KubernetesNodePoolModel `tfsdk:"node_pools"`
 	State                types.String              `tfsdk:"state"`
@@ -67,13 +69,33 @@ type KubernetesResourceModel struct {
 }
 
 type KubernetesNodePoolModel struct {
-	Name             types.String `tfsdk:"name"`
-	HostGroup        types.String `tfsdk:"host_group"`
-	GroupName        types.String `tfsdk:"group_name"`
-	SubnetName       types.String `tfsdk:"subnet_name"`
-	OSDistribution   types.String `tfsdk:"os_distribution"`
-	AvailabilityZone types.String `tfsdk:"availability_zone"`
-	Count            types.Int64  `tfsdk:"count"`
+	Flavor           types.String                `tfsdk:"flavor"`
+	FlavorType       types.String                `tfsdk:"flavor_type"`
+	SubnetName       types.String                `tfsdk:"subnet_name"`
+	AvailabilityZone types.String                `tfsdk:"availability_zone"`
+	Count            types.Int64                 `tfsdk:"count"`
+	Autoscaling      *KubernetesAutoscalingModel `tfsdk:"autoscaling"`
+	Labels           []KubernetesMetaOpModel     `tfsdk:"labels"`
+	Annotations      []KubernetesMetaOpModel     `tfsdk:"annotations"`
+	Taints           []KubernetesTaintModel      `tfsdk:"taints"`
+}
+
+type KubernetesAutoscalingModel struct {
+	Enabled  types.Bool  `tfsdk:"enabled"`
+	MaxNodes types.Int64 `tfsdk:"max_nodes"`
+}
+
+type KubernetesMetaOpModel struct {
+	Key   types.String `tfsdk:"key"`
+	Value types.String `tfsdk:"value"`
+	Op    types.String `tfsdk:"op"`
+}
+
+type KubernetesTaintModel struct {
+	Key    types.String `tfsdk:"key"`
+	Value  types.String `tfsdk:"value"`
+	Effect types.String `tfsdk:"effect"`
+	Op     types.String `tfsdk:"op"`
 }
 
 func (r *KubernetesResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -119,35 +141,25 @@ func (r *KubernetesResource) Schema(ctx context.Context, req resource.SchemaRequ
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"k8s_version": schema.StringAttribute{
-				MarkdownDescription: "Kubernetes version (for example `v1.33.7`).",
+			"kubernetes_version": schema.StringAttribute{
+				MarkdownDescription: "Kubernetes version shown in Cloud Compass (for example `v1.33.7`). Sent as `k8sVersion`.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"cni_name": schema.StringAttribute{
-				MarkdownDescription: "CNI plugin name (for example `calico`).",
+			"networking_name": schema.StringAttribute{
+				MarkdownDescription: "Networking name shown in Cloud Compass (for example `calico`). Sent as `cniName`.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"cni_version": schema.StringAttribute{
-				MarkdownDescription: "CNI plugin version (for example `v3.30.6`).",
+			"networking_version": schema.StringAttribute{
+				MarkdownDescription: "Networking version shown in Cloud Compass (for example `v3.30.6`). Sent as `cniVersion`.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"master_nodes": schema.Int64Attribute{
-				MarkdownDescription: "Number of control-plane nodes.",
-				Required:            true,
-				Validators: []validator.Int64{
-					int64validator.AtLeast(1),
-				},
-				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.RequiresReplace(),
 				},
 			},
 			"worker_nodes": schema.Int64Attribute{
@@ -162,6 +174,16 @@ func (r *KubernetesResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"availability_zone": schema.StringAttribute{
 				MarkdownDescription: "Availability zone code (for example `S1`). Sent as `ce-availability-zone` and `requiredSchedulingTags.availabilityZone`.",
 				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"os_distribution": schema.StringAttribute{
+				MarkdownDescription: "Node configuration OS distribution. Applied to every node pool. One of `Ubuntu` or `Rhel`.",
+				Required:            true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("Ubuntu", "Rhel"),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -190,13 +212,6 @@ func (r *KubernetesResource) Schema(ctx context.Context, req resource.SchemaRequ
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"master_host_group": schema.StringAttribute{
-				MarkdownDescription: "Optional BYOH master host group. The console often sends an empty string when using Kamaji.",
-				Optional:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
 			"vpc_name": schema.StringAttribute{
 				MarkdownDescription: "VPC name used to resolve `node_pools.subnet_name` to a subnet UUID. Optional if the subnet name is unique in the project.",
 				Optional:            true,
@@ -205,7 +220,7 @@ func (r *KubernetesResource) Schema(ctx context.Context, req resource.SchemaRequ
 				},
 			},
 			"node_pools": schema.ListNestedAttribute{
-				MarkdownDescription: "BYOH worker node pools. Map keys in the API are `node_pools[].name`.",
+				MarkdownDescription: "BYOH worker node pools. API map keys are generated as `md0`, `md1`, and so on.",
 				Required:            true,
 				Validators: []validator.List{
 					listvalidator.SizeAtLeast(1),
@@ -215,28 +230,17 @@ func (r *KubernetesResource) Schema(ctx context.Context, req resource.SchemaRequ
 				},
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"name": schema.StringAttribute{
-							MarkdownDescription: "Node pool key (for example `md0`).",
+						"flavor": schema.StringAttribute{
+							MarkdownDescription: "Flavor shown in Cloud Compass (for example `ccd.xLarge`). Sent as `hostGroup`.",
 							Required:            true,
 						},
-						"host_group": schema.StringAttribute{
-							MarkdownDescription: "Host group identifier (for example `ccd.xLarge`).",
-							Required:            true,
-						},
-						"group_name": schema.StringAttribute{
-							MarkdownDescription: "Display name of the host group (for example `Compute dense`). Sent as `groupName`.",
+						"flavor_type": schema.StringAttribute{
+							MarkdownDescription: "Flavor type shown in Cloud Compass (for example `Compute dense`). Sent as `groupName`.",
 							Optional:            true,
 						},
 						"subnet_name": schema.StringAttribute{
 							MarkdownDescription: "Subnet name. Resolved to the subnet UUID the cluster API expects.",
 							Required:            true,
-						},
-						"os_distribution": schema.StringAttribute{
-							MarkdownDescription: "OS distribution. One of `Ubuntu` or `Rhel`.",
-							Required:            true,
-							Validators: []validator.String{
-								stringvalidator.OneOf("Ubuntu", "Rhel"),
-							},
 						},
 						"availability_zone": schema.StringAttribute{
 							MarkdownDescription: "Pool AZ. Defaults to the cluster `availability_zone`.",
@@ -247,10 +251,70 @@ func (r *KubernetesResource) Schema(ctx context.Context, req resource.SchemaRequ
 							},
 						},
 						"count": schema.Int64Attribute{
-							MarkdownDescription: "Number of machines in the pool.",
-							Required:            true,
+							MarkdownDescription: "Machines in the pool. Use `0` when autoscaling is enabled. Defaults to `0`.",
+							Optional:            true,
+							Computed:            true,
+							Default:             int64default.StaticInt64(0),
 							Validators: []validator.Int64{
-								int64validator.AtLeast(1),
+								int64validator.AtLeast(0),
+							},
+						},
+						"autoscaling": schema.SingleNestedAttribute{
+							Optional:            true,
+							MarkdownDescription: "Node pool autoscaling. When enabled, `count` may be `0` and `max_nodes` is the upper bound.",
+							Attributes: map[string]schema.Attribute{
+								"enabled": schema.BoolAttribute{
+									Optional:            true,
+									Computed:            true,
+									Default:             booldefault.StaticBool(true),
+									MarkdownDescription: "Enable autoscaling. Defaults to `true` when the `autoscaling` block is present.",
+								},
+								"max_nodes": schema.Int64Attribute{
+									Required:            true,
+									MarkdownDescription: "Maximum worker nodes for this pool. Sent as `maxNodes`.",
+									Validators: []validator.Int64{
+										int64validator.AtLeast(1),
+									},
+								},
+							},
+						},
+						"labels": schema.ListNestedAttribute{
+							Optional:            true,
+							MarkdownDescription: "Node labels. Each item is sent with `op` (default `MetaOpSet`).",
+							NestedObject:        kubernetesMetaOpNested(),
+						},
+						"annotations": schema.ListNestedAttribute{
+							Optional:            true,
+							MarkdownDescription: "Node annotations. Each item is sent with `op` (default `MetaOpSet`).",
+							NestedObject:        kubernetesMetaOpNested(),
+						},
+						"taints": schema.ListNestedAttribute{
+							Optional:            true,
+							MarkdownDescription: "Node taints. `effect` accepts `NoSchedule`, `PreferNoSchedule`, or `NoExecute`; default `op` is `MetaOpSet`.",
+							NestedObject: schema.NestedAttributeObject{
+								Attributes: map[string]schema.Attribute{
+									"key": schema.StringAttribute{
+										Required: true,
+									},
+									"value": schema.StringAttribute{
+										Optional: true,
+									},
+									"effect": schema.StringAttribute{
+										Optional:            true,
+										Computed:            true,
+										Default:             stringdefault.StaticString("PreferNoSchedule"),
+										MarkdownDescription: "Taint scheduling effect. One of `NoSchedule`, `PreferNoSchedule`, or `NoExecute`. Defaults to `PreferNoSchedule`.",
+										Validators: []validator.String{
+											stringvalidator.OneOf("NoSchedule", "PreferNoSchedule", "NoExecute"),
+										},
+									},
+									"op": schema.StringAttribute{
+										Optional:            true,
+										Computed:            true,
+										Default:             stringdefault.StaticString("MetaOpSet"),
+										MarkdownDescription: "Metadata operation. Defaults to `MetaOpSet`.",
+									},
+								},
 							},
 						},
 					},
@@ -258,7 +322,7 @@ func (r *KubernetesResource) Schema(ctx context.Context, req resource.SchemaRequ
 			},
 			"state": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Cluster lifecycle state (`Unknown`, `Creating`, `Deleting`, `Ready`).",
+				MarkdownDescription: "Compass cluster registration state. Successful provisioning is `Connected`.",
 			},
 			"created_by": schema.StringAttribute{
 				Computed:            true,
@@ -281,20 +345,25 @@ func (r *KubernetesResource) ValidateConfig(ctx context.Context, req resource.Va
 		return
 	}
 
-	seen := map[string]struct{}{}
 	for i, pool := range data.NodePools {
-		if pool.Name.IsUnknown() || pool.Name.IsNull() {
+		autoscalingEnabled := false
+		if pool.Autoscaling != nil {
+			if pool.Autoscaling.Enabled.IsUnknown() {
+				continue
+			}
+			autoscalingEnabled = pool.Autoscaling.Enabled.IsNull() || pool.Autoscaling.Enabled.ValueBool()
+		}
+		if pool.Count.IsUnknown() {
 			continue
 		}
-		name := pool.Name.ValueString()
-		if _, ok := seen[name]; ok {
+		count := pool.Count.ValueInt64()
+		if !autoscalingEnabled && count < 1 {
 			resp.Diagnostics.AddAttributeError(
-				path.Root("node_pools").AtListIndex(i).AtName("name"),
-				"Duplicate node pool name",
-				fmt.Sprintf("node pool name %q is used more than once.", name),
+				path.Root("node_pools").AtListIndex(i).AtName("count"),
+				"Invalid node pool count",
+				"count must be at least 1 unless autoscaling.enabled is true.",
 			)
 		}
-		seen[name] = struct{}{}
 	}
 }
 
@@ -341,7 +410,7 @@ func (r *KubernetesResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	ready, err := azClient.WaitForKubernetesReady(ctx, data.Name.ValueString(), kubernetesHostGroups(&data), createTimeout)
+	ready, err := azClient.WaitForKubernetesReady(ctx, data.Name.ValueString(), createTimeout)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error waiting for kubernetes cluster to be ready: %s", err))
 		return
@@ -370,7 +439,7 @@ func (r *KubernetesResource) Read(ctx context.Context, req resource.ReadRequest,
 		c = c.WithAvailabilityZone(az)
 	}
 
-	cluster, err := c.GetKubernetesCluster(ctx, name, kubernetesHostGroups(&data))
+	cluster, err := c.GetKubernetesCluster(ctx, name)
 	if err != nil {
 		if client.IsNotFoundError(err) {
 			resp.State.RemoveResource(ctx)
@@ -380,7 +449,9 @@ func (r *KubernetesResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	if cluster.IsDeleted || cluster.State == models.KubernetesStateDeleting {
+	if cluster.IsDeleted ||
+		strings.EqualFold(cluster.LifecycleState(), models.KubernetesStateDeleting) ||
+		strings.EqualFold(cluster.LifeCycleState, models.KubernetesStateDeleting) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -425,7 +496,7 @@ func (r *KubernetesResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 
-	if err := c.WaitForKubernetesDeleted(ctx, name, kubernetesHostGroups(&data), deleteTimeout); err != nil {
+	if err := c.WaitForKubernetesDeleted(ctx, name, deleteTimeout); err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Error waiting for kubernetes cluster deletion: %s", err))
 		return
 	}
@@ -456,7 +527,7 @@ func (r *KubernetesResource) resolveKubernetesSubnetIDs(ctx context.Context, dat
 			)
 			continue
 		}
-		ids[pool.Name.ValueString()] = id
+		ids[kubernetesNodePoolAPIName(i)] = id
 	}
 	return ids, diags
 }
@@ -465,7 +536,7 @@ func buildKubernetesCreateRequest(data *KubernetesResourceModel, subnetIDs map[s
 	az := data.AvailabilityZone.ValueString()
 	pools := make(map[string]models.KubernetesNodePool, len(data.NodePools))
 	workerSum := 0
-	for _, pool := range data.NodePools {
+	for i, pool := range data.NodePools {
 		poolAZ := az
 		if !pool.AvailabilityZone.IsNull() && !pool.AvailabilityZone.IsUnknown() && pool.AvailabilityZone.ValueString() != "" {
 			poolAZ = pool.AvailabilityZone.ValueString()
@@ -475,29 +546,42 @@ func buildKubernetesCreateRequest(data *KubernetesResourceModel, subnetIDs map[s
 		}
 		count := int(pool.Count.ValueInt64())
 		workerSum += count
+		poolKey := kubernetesNodePoolAPIName(i)
 		item := models.KubernetesNodePool{
-			HostGroup:      pool.HostGroup.ValueString(),
+			HostGroup:      pool.Flavor.ValueString(),
 			Count:          count,
-			Subnet:         subnetIDs[pool.Name.ValueString()],
+			Subnet:         subnetIDs[poolKey],
 			AZ:             poolAZ,
-			OSDistribution: pool.OSDistribution.ValueString(),
+			OSDistribution: data.OSDistribution.ValueString(),
 		}
-		if !pool.GroupName.IsNull() && !pool.GroupName.IsUnknown() {
-			item.GroupName = pool.GroupName.ValueString()
+		if !pool.FlavorType.IsNull() && !pool.FlavorType.IsUnknown() {
+			item.GroupName = pool.FlavorType.ValueString()
 		}
-		pools[pool.Name.ValueString()] = item
+		if pool.Autoscaling != nil && !pool.Autoscaling.MaxNodes.IsUnknown() {
+			enabled := true
+			if !pool.Autoscaling.Enabled.IsNull() && !pool.Autoscaling.Enabled.IsUnknown() {
+				enabled = pool.Autoscaling.Enabled.ValueBool()
+			}
+			item.Autoscaling = &models.KubernetesAutoscaling{
+				Enabled:  enabled,
+				MaxNodes: int(pool.Autoscaling.MaxNodes.ValueInt64()),
+			}
+		}
+		item.Labels = kubernetesMetaOpsFromModel(pool.Labels)
+		item.Annotations = kubernetesMetaOpsFromModel(pool.Annotations)
+		item.Taints = kubernetesTaintsFromModel(pool.Taints)
+		pools[poolKey] = item
 	}
 
+	hasAutoscalingFromZero := workerSum == 0
 	workerNodes := workerSum
+	if hasAutoscalingFromZero {
+		workerNodes = 1
+	}
 	if !data.WorkerNodes.IsNull() && !data.WorkerNodes.IsUnknown() {
 		workerNodes = int(data.WorkerNodes.ValueInt64())
 	} else {
-		data.WorkerNodes = types.Int64Value(int64(workerSum))
-	}
-
-	masterHostGroup := ""
-	if !data.MasterHostGroup.IsNull() && !data.MasterHostGroup.IsUnknown() {
-		masterHostGroup = data.MasterHostGroup.ValueString()
+		data.WorkerNodes = types.Int64Value(int64(workerNodes))
 	}
 
 	req := &models.CreateKubernetesClusterRequest{
@@ -505,16 +589,16 @@ func buildKubernetesCreateRequest(data *KubernetesResourceModel, subnetIDs map[s
 		Desc:    strings.TrimSpace(data.Description.ValueString()),
 		K8sInfo: models.KubernetesKubeInfo{
 			K8sName:     data.K8sName.ValueString(),
-			K8sVersion:  data.K8sVersion.ValueString(),
-			CNIName:     data.CNIName.ValueString(),
-			CNIVersion:  data.CNIVersion.ValueString(),
-			MasterNodes: int(data.MasterNodes.ValueInt64()),
+			K8sVersion:  data.KubernetesVersion.ValueString(),
+			CNIName:     data.NetworkingName.ValueString(),
+			CNIVersion:  data.NetworkingVersion.ValueString(),
+			MasterNodes: kubernetesDefaultMasterNodes,
 			WorkerNodes: workerNodes,
 		},
 		CKPProvider: models.KubernetesCKPProvider{
 			Provider: data.ProviderType.ValueString(),
 			BYOH: &models.KubernetesBYOHProvider{
-				MasterHostGroup:      masterHostGroup,
+				MasterHostGroup:      "",
 				ControlPlaneProvider: data.ControlPlaneProvider.ValueString(),
 				NodePools:            pools,
 			},
@@ -537,8 +621,10 @@ func applyKubernetesClusterToState(data *KubernetesResourceModel, cluster *model
 	}
 	if cluster.State != "" {
 		data.State = types.StringValue(cluster.State)
+	} else if cluster.Status != "" {
+		data.State = types.StringValue(cluster.Status)
 	} else if data.State.IsNull() || data.State.IsUnknown() {
-		data.State = types.StringValue(models.KubernetesStateReady)
+		data.State = types.StringValue(models.KubernetesStateConnected)
 	}
 	if cluster.CreatedBy != "" {
 		data.CreatedBy = types.StringValue(cluster.CreatedBy)
@@ -550,13 +636,19 @@ func applyKubernetesClusterToState(data *KubernetesResourceModel, cluster *model
 	}
 	if cluster.K8sInfo != nil {
 		if cluster.K8sInfo.K8sVersion != "" {
-			data.K8sVersion = types.StringValue(cluster.K8sInfo.K8sVersion)
+			data.KubernetesVersion = types.StringValue(cluster.K8sInfo.K8sVersion)
+		}
+		if cluster.K8sInfo.CNIName != "" {
+			data.NetworkingName = types.StringValue(cluster.K8sInfo.CNIName)
+		}
+		if cluster.K8sInfo.CNIVersion != "" {
+			data.NetworkingVersion = types.StringValue(cluster.K8sInfo.CNIVersion)
 		}
 		if cluster.K8sInfo.K8sName != "" {
 			data.K8sName = types.StringValue(cluster.K8sInfo.K8sName)
 		}
-	} else if cluster.K8sVersion != "" && (data.K8sVersion.IsNull() || data.K8sVersion.IsUnknown()) {
-		data.K8sVersion = types.StringValue(cluster.K8sVersion)
+	} else if cluster.K8sVersion != "" && (data.KubernetesVersion.IsNull() || data.KubernetesVersion.IsUnknown()) {
+		data.KubernetesVersion = types.StringValue(cluster.K8sVersion)
 	}
 
 	az := data.AvailabilityZone.ValueString()
@@ -571,26 +663,85 @@ func applyKubernetesClusterToState(data *KubernetesResourceModel, cluster *model
 		for _, pool := range data.NodePools {
 			sum += pool.Count.ValueInt64()
 		}
+		if sum == 0 {
+			sum = 1
+		}
 		data.WorkerNodes = types.Int64Value(sum)
 	}
 }
 
-func kubernetesHostGroups(data *KubernetesResourceModel) []string {
-	seen := make(map[string]struct{}, len(data.NodePools))
-	out := make([]string, 0, len(data.NodePools))
-	for _, pool := range data.NodePools {
-		if pool.HostGroup.IsNull() || pool.HostGroup.IsUnknown() {
-			continue
+func kubernetesMetaOpNested() schema.NestedAttributeObject {
+	return schema.NestedAttributeObject{
+		Attributes: map[string]schema.Attribute{
+			"key": schema.StringAttribute{
+				Required: true,
+			},
+			"value": schema.StringAttribute{
+				Optional: true,
+			},
+			"op": schema.StringAttribute{
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("MetaOpSet"),
+				MarkdownDescription: "Metadata operation. Defaults to `MetaOpSet`.",
+			},
+		},
+	}
+}
+
+func kubernetesMetaOpsFromModel(items []KubernetesMetaOpModel) []models.KubernetesMetaOp {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]models.KubernetesMetaOp, 0, len(items))
+	for _, item := range items {
+		op := item.Op.ValueString()
+		if op == "" {
+			op = "MetaOpSet"
 		}
-		name := pool.HostGroup.ValueString()
-		if name == "" {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		out = append(out, name)
+		out = append(out, models.KubernetesMetaOp{
+			Key:   item.Key.ValueString(),
+			Value: item.Value.ValueString(),
+			Op:    op,
+		})
 	}
 	return out
+}
+
+func kubernetesTaintsFromModel(items []KubernetesTaintModel) []models.KubernetesTaintOp {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]models.KubernetesTaintOp, 0, len(items))
+	for _, item := range items {
+		op := item.Op.ValueString()
+		if op == "" {
+			op = "MetaOpSet"
+		}
+		effect := kubernetesTaintEffectAPIValue(item.Effect.ValueString())
+		out = append(out, models.KubernetesTaintOp{
+			Key:    item.Key.ValueString(),
+			Value:  item.Value.ValueString(),
+			Effect: effect,
+			Op:     op,
+		})
+	}
+	return out
+}
+
+func kubernetesTaintEffectAPIValue(effect string) string {
+	switch effect {
+	case "NoSchedule":
+		return "TaintEffectNoSchedule"
+	case "NoExecute":
+		return "TaintEffectNoExecute"
+	case "PreferNoSchedule", "":
+		return "TaintEffectPreferNoSchedule"
+	default:
+		return effect
+	}
+}
+
+func kubernetesNodePoolAPIName(index int) string {
+	return fmt.Sprintf("md%d", index)
 }
