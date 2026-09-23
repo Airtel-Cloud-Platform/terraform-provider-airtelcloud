@@ -78,6 +78,35 @@ output "nat_mapping" {
 }
 ```
 
+### Detach a Resource from a Public IP
+
+There is no separate detach resource. Destroy the attachment: Terraform calls detach and the public IP returns to `reserved`. The reservation (`airtelcloud_public_ip`) is kept.
+
+Remove any `airtelcloud_public_ip_policy_rule` resources that use this address first, then remove the attachment from configuration:
+
+```terraform
+# Keep the reservation. Delete (or comment out) the attachment block below.
+resource "airtelcloud_public_ip" "web" {
+  object_name       = "web-public-ip"
+  description       = "public IP for the web tier"
+  availability_zone = "S1"
+}
+
+# Remove this resource to detach the VM, load balancer, or baremetal server.
+# resource "airtelcloud_public_ip_attachment" "vm" {
+#   public_ip_name = airtelcloud_public_ip.web.object_name
+#   resource_type  = "vm"
+#   resource_name  = airtelcloud_vm.web.instance_name
+# }
+```
+
+Or destroy only the attachment:
+
+```shell
+terraform destroy -target=airtelcloud_public_ip_policy_rule.web_traffic
+terraform destroy -target=airtelcloud_public_ip_attachment.vm
+```
+
 ## Argument Reference
 
 ### Required

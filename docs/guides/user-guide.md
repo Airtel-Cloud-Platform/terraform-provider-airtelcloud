@@ -264,6 +264,24 @@ resource "airtelcloud_public_ip_attachment" "web1_public" {
 }
 ```
 
+#### Detach a Resource
+
+Destroy the attachment to detach the public IP. The reservation stays allocated. Remove policy rules on this address first.
+
+```terraform
+resource "airtelcloud_public_ip" "web1_public" {
+  object_name       = "web1-public-ip"
+  description       = "web1 public IP"
+  availability_zone = "S1"
+}
+
+# Remove airtelcloud_public_ip_attachment.web1_public, then apply.
+```
+
+```shell
+terraform destroy -target=airtelcloud_public_ip_attachment.web1_public
+```
+
 #### Attachment Argument Reference
 
 | Argument | Type | Required | Description |

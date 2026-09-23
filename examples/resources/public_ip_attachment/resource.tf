@@ -67,6 +67,17 @@ resource "airtelcloud_public_ip_attachment" "baremetal" {
   resource_name  = "my-baremetal"
 }
 
+# Detach: remove the attachment resource (and any policy rules that use this
+# public IP), then apply. The public IP stays reserved.
+#
+#   terraform destroy -target=airtelcloud_public_ip_attachment.vm
+#
+# After detach, keep only the reservation:
+# resource "airtelcloud_public_ip" "web" {
+#   object_name       = "my-vm-public-ip"
+#   availability_zone = "S1"
+# }
+
 output "attachment_status" {
   description = "Status after attach (attached)"
   value       = airtelcloud_public_ip_attachment.vm.status
