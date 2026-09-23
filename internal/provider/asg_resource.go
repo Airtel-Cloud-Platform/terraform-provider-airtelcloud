@@ -180,26 +180,31 @@ func (r *ASGResource) ValidateConfig(ctx context.Context, req resource.ValidateC
 		resp.Diagnostics.AddError("Invalid Configuration", "desired_count must equal minimum_size.")
 	}
 	validateOneOfIntString(&resp.Diagnostics, "flavor_id", data.FlavorID, "flavor_name", data.FlavorName, true)
-	imageSet := intConfigured(data.ImageID) || stringConfigured(data.ImageName)
-	snapshotSet := stringConfigured(data.SnapshotName)
-	if imageSet == snapshotSet {
-		resp.Diagnostics.AddError("Invalid Configuration", "Exactly one image source (image_id or image_name) or snapshot_name must be configured.")
-	}
-	if intConfigured(data.ImageID) && stringConfigured(data.ImageName) {
-		resp.Diagnostics.AddError("Invalid Configuration", "image_id and image_name are mutually exclusive.")
+	imageUnknown := data.ImageID.IsUnknown() || data.ImageName.IsUnknown() || data.SnapshotName.IsUnknown()
+	if !imageUnknown {
+		imageSet := intSet(data.ImageID) || stringSet(data.ImageName)
+		snapshotSet := stringSet(data.SnapshotName)
+		if imageSet == snapshotSet {
+			resp.Diagnostics.AddError("Invalid Configuration", "Exactly one image source (image_id or image_name) or snapshot_name must be configured.")
+		}
+		if intSet(data.ImageID) && stringSet(data.ImageName) {
+			resp.Diagnostics.AddError("Invalid Configuration", "image_id and image_name are mutually exclusive.")
+		}
+		if snapshotSet && !data.KeypairID.IsUnknown() && !data.KeypairName.IsUnknown() && !stringSet(data.KeypairID) && !stringSet(data.KeypairName) {
+			resp.Diagnostics.AddError("Invalid Configuration", "keypair_id or keypair_name is required with snapshot_name.")
+		}
 	}
 	validateListXOR(&resp.Diagnostics, "security_group_ids", data.SecurityGroupIDs, "security_group_names", data.SecurityGroupNames, true)
-	validateOneOfString(&resp.Diagnostics, "keypair_id", data.KeypairID, "keypair_name", data.KeypairName, snapshotSet)
-	if snapshotSet && !stringConfigured(data.KeypairID) && !stringConfigured(data.KeypairName) {
-		resp.Diagnostics.AddError("Invalid Configuration", "keypair_id or keypair_name is required with snapshot_name.")
-	}
+	validateOneOfString(&resp.Diagnostics, "keypair_id", data.KeypairID, "keypair_name", data.KeypairName, false)
 	validateLBConfig(&resp.Diagnostics, &data)
-	up, d := rulesFromList(ctx, data.ScaleUpRules)
-	resp.Diagnostics.Append(d...)
-	down, d := rulesFromList(ctx, data.ScaleDownRules)
-	resp.Diagnostics.Append(d...)
-	if !resp.Diagnostics.HasError() {
-		validateRulePairs(&resp.Diagnostics, up, down)
+	if !data.ScaleUpRules.IsUnknown() && !data.ScaleDownRules.IsUnknown() {
+		up, d := rulesFromList(ctx, data.ScaleUpRules)
+		resp.Diagnostics.Append(d...)
+		down, d := rulesFromList(ctx, data.ScaleDownRules)
+		resp.Diagnostics.Append(d...)
+		if !resp.Diagnostics.HasError() {
+			validateRulePairs(&resp.Diagnostics, up, down)
+		}
 	}
 }
 
@@ -609,6 +614,9 @@ func settledList(v types.List, elem attr.Type) types.List {
 }
 
 func rulesFromList(ctx context.Context, list types.List) ([]models.ASGScalingRule, diag.Diagnostics) {
+	if list.IsNull() || list.IsUnknown() {
+		return nil, nil
+	}
 	var tf []ASGRuleModel
 	diags := list.ElementsAs(ctx, &tf, false)
 	out := make([]models.ASGScalingRule, 0, len(tf))
@@ -699,24 +707,33 @@ func validateRulePairs(diags *diag.Diagnostics, up, down []models.ASGScalingRule
 }
 
 func validateLBConfig(diags *diag.Diagnostics, data *ASGResourceModel) {
-	fields := map[string]bool{
-		"host_name": stringConfigured(data.HostName), "vip": stringConfigured(data.VIP), "protocol": stringConfigured(data.Protocol),
-		"port": intConfigured(data.Port), "routing_algorithm": stringConfigured(data.RoutingAlgorithm), "pool_name": stringConfigured(data.PoolName),
-		"pool_port": intConfigured(data.PoolPort), "max_connections": intConfigured(data.MaxConnections),
-		"health_check_interval": intConfigured(data.HealthCheckInterval), "health_check_timeout": intConfigured(data.HealthCheckTimeout),
-		"pool_monitor_protocol": stringConfigured(data.PoolMonitorProtocol),
+	if data.LoadBalancerName.IsUnknown() {
+		return
 	}
-	if !stringConfigured(data.LoadBalancerName) {
-		for name, set := range fields {
-			if set {
+	fields := map[string]attr.Value{
+		"host_name": data.HostName, "vip": data.VIP, "protocol": data.Protocol,
+		"port": data.Port, "routing_algorithm": data.RoutingAlgorithm, "pool_name": data.PoolName,
+		"pool_port": data.PoolPort, "max_connections": data.MaxConnections,
+		"health_check_interval": data.HealthCheckInterval, "health_check_timeout": data.HealthCheckTimeout,
+		"pool_monitor_protocol": data.PoolMonitorProtocol,
+	}
+	if !stringSet(data.LoadBalancerName) {
+		for name, value := range fields {
+			if value.IsUnknown() {
+				continue
+			}
+			if !value.IsNull() {
 				diags.AddError("Invalid Configuration", fmt.Sprintf("%s requires load_balancer_name.", name))
 			}
 		}
 		return
 	}
 	missing := []string{}
-	for name, set := range fields {
-		if !set {
+	for name, value := range fields {
+		if value.IsUnknown() {
+			return
+		}
+		if value.IsNull() {
 			missing = append(missing, name)
 		}
 	}
@@ -727,11 +744,14 @@ func validateLBConfig(diags *diag.Diagnostics, data *ASGResourceModel) {
 }
 
 func validateOneOfIntString(diags *diag.Diagnostics, intName string, i types.Int64, stringName string, s types.String, required bool) {
+	if i.IsUnknown() || s.IsUnknown() {
+		return
+	}
 	count := 0
-	if intConfigured(i) {
+	if intSet(i) {
 		count++
 	}
-	if stringConfigured(s) {
+	if stringSet(s) {
 		count++
 	}
 	if count > 1 || required && count != 1 {
@@ -740,11 +760,14 @@ func validateOneOfIntString(diags *diag.Diagnostics, intName string, i types.Int
 }
 
 func validateOneOfString(diags *diag.Diagnostics, aName string, a types.String, bName string, b types.String, required bool) {
+	if a.IsUnknown() || b.IsUnknown() {
+		return
+	}
 	count := 0
-	if stringConfigured(a) {
+	if stringSet(a) {
 		count++
 	}
-	if stringConfigured(b) {
+	if stringSet(b) {
 		count++
 	}
 	if count > 1 || required && count != 1 {
@@ -753,11 +776,14 @@ func validateOneOfString(diags *diag.Diagnostics, aName string, a types.String, 
 }
 
 func validateListXOR(diags *diag.Diagnostics, aName string, a types.List, bName string, b types.List, required bool) {
+	if a.IsUnknown() || b.IsUnknown() {
+		return
+	}
 	count := 0
-	if listConfigured(a) {
+	if listSet(a) {
 		count++
 	}
-	if listConfigured(b) {
+	if listSet(b) {
 		count++
 	}
 	if count > 1 || required && count != 1 {
@@ -771,13 +797,6 @@ func stringSet(v types.String) bool {
 func intSet(v types.Int64) bool { return !v.IsNull() && !v.IsUnknown() }
 func listSet(v types.List) bool { return !v.IsNull() && !v.IsUnknown() && len(v.Elements()) > 0 }
 func known(v types.Int64) bool  { return !v.IsNull() && !v.IsUnknown() }
-
-// Presence checks for ValidateConfig. Attributes built from variables or other
-// resources arrive unknown during validate and plan; unknown still means the
-// attribute was configured, so these must not report it as missing.
-func stringConfigured(v types.String) bool { return v.IsUnknown() || stringSet(v) }
-func intConfigured(v types.Int64) bool     { return v.IsUnknown() || intSet(v) }
-func listConfigured(v types.List) bool     { return v.IsUnknown() || listSet(v) }
 
 func defaultASGDiskSize(osType string) int64 {
 	if strings.Contains(strings.ToLower(osType), "windows") {
