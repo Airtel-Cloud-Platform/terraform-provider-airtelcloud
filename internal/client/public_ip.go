@@ -156,9 +156,9 @@ func NormalizePublicIPResourceType(resourceType string) (string, error) {
 }
 
 // FindPortForResource resolves the attach port ID for a named VM, load balancer,
-// or baremetal server. It always uses the resource's primary private IP/VIP
-// (first NIC, first LB VIP, or first baremetal ipAddr). It returns the port ID
-// and that private IP.
+// or baremetal server. For vm and baremetal, targetVIP may be empty and the
+// primary private IP is used. For lb, targetVIP is required so the public IP
+// is attached to that VIP. It returns the port ID and the private IP used.
 func (c *Client) FindPortForResource(ctx context.Context, resourceType, resourceName, targetVIP, availabilityZone string) (int, string, error) {
 	canonicalType, err := NormalizePublicIPResourceType(resourceType)
 	if err != nil {
@@ -188,6 +188,9 @@ func (c *Client) FindPortForResource(ctx context.Context, resourceType, resource
 	case PublicIPResourceTypeVM:
 		return scopedClient.findVMPortForResource(ctx, name, vip, availabilityZone)
 	case PublicIPResourceTypeLB:
+		if vip == "" {
+			return 0, "", fmt.Errorf("target_vip is required when resource_type is lb")
+		}
 		return scopedClient.findLBPortForResource(ctx, name, vip, availabilityZone)
 	default:
 		return scopedClient.findBaremetalPortForResource(ctx, name, vip, availabilityZone)

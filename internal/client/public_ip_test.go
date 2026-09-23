@@ -1377,6 +1377,10 @@ func TestFindPortForResource_LB(t *testing.T) {
 	if portID != 17664 || vip != "10.101.21.35" {
 		t.Fatalf("FindPortForResource() = (%d, %q), want (17664, 10.101.21.35)", portID, vip)
 	}
+
+	if _, _, err := client.FindPortForResource(context.Background(), "lb", "gardener-vip-lb", "", "S1"); err == nil {
+		t.Fatal("FindPortForResource() expected error when lb has no target_vip")
+	}
 }
 
 func TestIsPublicIPAttached(t *testing.T) {

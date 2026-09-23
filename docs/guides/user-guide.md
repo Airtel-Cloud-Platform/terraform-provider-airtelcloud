@@ -271,8 +271,9 @@ resource "airtelcloud_public_ip_attachment" "web1_public" {
 | `public_ip_name` | String | Yes | Object name of the reserved public IP. |
 | `resource_type` | String | Yes | `vm`, `lb`, or `baremetal`. |
 | `resource_name` | String | Yes | Name of the VM, load balancer, or baremetal server. |
+| `target_vip` | String | For `lb` | Load balancer VIP to attach to. Required when `resource_type` is `lb`. Do not set for `vm` or `baremetal`. |
 
-`availability_zone` and `target_vip` are looked up from the public IP and the named resource. They are not set in configuration.
+`availability_zone` is looked up from the public IP. For `vm` and `baremetal`, `target_vip` is looked up from the named resource. For `lb`, you must set `target_vip`.
 
 #### Argument Reference
 
