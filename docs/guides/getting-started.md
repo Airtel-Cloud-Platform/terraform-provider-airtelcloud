@@ -13,6 +13,8 @@ This guide walks you through building the Airtel Cloud Terraform provider from s
 The Airtel Cloud Terraform provider lets you manage infrastructure on Airtel Cloud Platform using declarative HCL configuration. Supported resources include:
 
 - **Virtual Machines** (`airtelcloud_vm`)
+- **Autoscaling Groups** (`airtelcloud_asg`)
+- **PostgreSQL Clusters** (`airtelcloud_postgres`)
 - **Block Storage Volumes** (`airtelcloud_volume`)
 - **Virtual Private Clouds** (`airtelcloud_vpc`)
 - **Subnets** (`airtelcloud_subnet`)

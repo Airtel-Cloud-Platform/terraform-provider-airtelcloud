@@ -54,7 +54,7 @@ func (r *PublicIPAttachmentResource) Metadata(ctx context.Context, req resource.
 
 func (r *PublicIPAttachmentResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Attaches a reserved Airtel Cloud Public IP to a virtual machine, load balancer, or baremetal server. Terraform takes names only: the availability zone is read from the public IP, and the target private IP is looked up from `resource_type` + `resource_name`.",
+		MarkdownDescription: "Attaches a reserved Airtel Cloud Public IP to a virtual machine, load balancer, or baremetal server. The availability zone is read from the public IP. For `vm` and `baremetal`, the private IP is looked up from `resource_name`. For `lb`, set `target_vip` to the load balancer VIP to attach to.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -86,8 +86,13 @@ func (r *PublicIPAttachmentResource) Schema(ctx context.Context, req resource.Sc
 				},
 			},
 			"target_vip": schema.StringAttribute{
-				MarkdownDescription: "The private IP (VIP) looked up from the named VM, load balancer, or baremetal server.",
+				MarkdownDescription: "The load balancer VIP to attach to. Required when `resource_type` is `lb`. Do not set this for `vm` or `baremetal`; those private IPs are looked up from the named resource and exported after attach.",
+				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"availability_zone": schema.StringAttribute{
 				MarkdownDescription: "The availability zone, read from the public IP.",
@@ -142,8 +147,17 @@ func (r *PublicIPAttachmentResource) ValidateConfig(ctx context.Context, req res
 		return
 	}
 
-	if _, err := client.NormalizePublicIPResourceType(data.ResourceType.ValueString()); err != nil {
+	canonicalType, err := client.NormalizePublicIPResourceType(data.ResourceType.ValueString())
+	if err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("resource_type"), "Invalid Configuration", err.Error())
+		return
+	}
+
+	targetVIPSet := !data.TargetVIP.IsNull()
+	targetVIPUnknown := data.TargetVIP.IsUnknown()
+	targetVIPNonEmpty := !targetVIPUnknown && strings.TrimSpace(data.TargetVIP.ValueString()) != ""
+	if err := validatePublicIPAttachmentTargetVIP(canonicalType, targetVIPSet, targetVIPUnknown, targetVIPNonEmpty); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("target_vip"), "Invalid Configuration", err.Error())
 	}
 }
 
@@ -175,7 +189,13 @@ func (r *PublicIPAttachmentResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	portID, resolvedVIP, err := r.client.FindPortForResource(ctx, data.ResourceType.ValueString(), data.ResourceName.ValueString(), "", az)
+	requestedVIP, err := publicIPAttachmentRequestedVIP(data.ResourceType.ValueString(), data.TargetVIP.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("target_vip"), "Invalid Configuration", err.Error())
+		return
+	}
+
+	portID, resolvedVIP, err := r.client.FindPortForResource(ctx, data.ResourceType.ValueString(), data.ResourceName.ValueString(), requestedVIP, az)
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve attach port for %s %q: %s", data.ResourceType.ValueString(), data.ResourceName.ValueString(), err))
 		return
@@ -282,7 +302,12 @@ func (r *PublicIPAttachmentResource) Delete(ctx context.Context, req resource.De
 	if current, err := r.client.GetPublicIP(ctx, uuid); err == nil && current != nil && current.PortID != 0 {
 		portID = current.PortID
 	} else {
-		resolved, _, resolveErr := r.client.FindPortForResource(ctx, data.ResourceType.ValueString(), data.ResourceName.ValueString(), "", az)
+		requestedVIP, resolveVIPErr := publicIPAttachmentRequestedVIP(data.ResourceType.ValueString(), data.TargetVIP.ValueString())
+		if resolveVIPErr != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve port for detach: %s", resolveVIPErr))
+			return
+		}
+		resolved, _, resolveErr := r.client.FindPortForResource(ctx, data.ResourceType.ValueString(), data.ResourceName.ValueString(), requestedVIP, az)
 		if resolveErr != nil {
 			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve port for detach: %s", resolveErr))
 			return
@@ -320,4 +345,38 @@ func (r *PublicIPAttachmentResource) Delete(ctx context.Context, req resource.De
 
 func (r *PublicIPAttachmentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func validatePublicIPAttachmentTargetVIP(canonicalType string, targetVIPSet, targetVIPUnknown, targetVIPNonEmpty bool) error {
+	switch canonicalType {
+	case client.PublicIPResourceTypeLB:
+		if targetVIPUnknown {
+			return nil
+		}
+		if !targetVIPNonEmpty {
+			return fmt.Errorf("target_vip is required when resource_type is lb")
+		}
+	default:
+		if targetVIPSet {
+			return fmt.Errorf("target_vip must not be set when resource_type is %s; it is looked up from the named resource", canonicalType)
+		}
+	}
+	return nil
+}
+
+func publicIPAttachmentRequestedVIP(resourceType, targetVIP string) (string, error) {
+	canonicalType, err := client.NormalizePublicIPResourceType(resourceType)
+	if err != nil {
+		return "", err
+	}
+
+	vip := strings.TrimSpace(targetVIP)
+	if canonicalType == client.PublicIPResourceTypeLB {
+		if vip == "" {
+			return "", fmt.Errorf("target_vip is required when resource_type is lb")
+		}
+		return vip, nil
+	}
+
+	return "", nil
 }

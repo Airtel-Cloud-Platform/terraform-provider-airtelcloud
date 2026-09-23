@@ -39,8 +39,8 @@ variable "project_name" {
 }
 
 # Step 2 of 3: attach the reserved public IP to a resource.
-# The availability zone and target private IP are looked up from the public IP
-# and the named resource. Terraform only takes names.
+# For vm and baremetal, the private IP is looked up from the named resource.
+# For lb, set target_vip to the VIP to attach to.
 resource "airtelcloud_public_ip_attachment" "vm" {
   public_ip_name = "my-vm-public-ip"
   resource_type  = "vm"
@@ -52,11 +52,12 @@ resource "airtelcloud_public_ip_attachment" "vm" {
   }
 }
 
-# Attach to a load balancer instead of a VM
+# Attach to a load balancer VIP
 resource "airtelcloud_public_ip_attachment" "lb" {
   public_ip_name = "my-lb-public-ip"
   resource_type  = "lb"
   resource_name  = "my-lb"
+  target_vip     = "10.101.21.35"
 }
 
 # Attach to a baremetal server
@@ -65,6 +66,17 @@ resource "airtelcloud_public_ip_attachment" "baremetal" {
   resource_type  = "baremetal"
   resource_name  = "my-baremetal"
 }
+
+# Detach: remove the attachment resource (and any policy rules that use this
+# public IP), then apply. The public IP stays reserved.
+#
+#   terraform destroy -target=airtelcloud_public_ip_attachment.vm
+#
+# After detach, keep only the reservation:
+# resource "airtelcloud_public_ip" "web" {
+#   object_name       = "my-vm-public-ip"
+#   availability_zone = "S1"
+# }
 
 output "attachment_status" {
   description = "Status after attach (attached)"

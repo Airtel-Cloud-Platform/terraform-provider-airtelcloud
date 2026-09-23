@@ -1015,3 +1015,19 @@ func (c *Client) WaitForOperation(ctx context.Context, operationID string, timeo
 
 	return fmt.Errorf("operation timed out after %v", timeout)
 }
+
+// waitBeforeNextPoll pauses between polling attempts. It reports false when the
+// context ends or when the deadline leaves no room for another attempt, so
+// callers stop instead of sleeping past their own timeout.
+func waitBeforeNextPoll(ctx context.Context, interval time.Duration, deadline time.Time) bool {
+	if !time.Now().Add(interval).Before(deadline) {
+		return false
+	}
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(interval):
+		return true
+	}
+}

@@ -2,7 +2,7 @@
 page_title: "Airtel Cloud Terraform Provider - User Guide"
 description: |-
   Complete user guide for managing Airtel Cloud infrastructure with Terraform.
-  Covers all 25 resources with examples, argument references, and import instructions.
+  Covers all 26 resources with examples, argument references, and import instructions.
 ---
 
 # Airtel Cloud Terraform Provider - User Guide
@@ -264,6 +264,24 @@ resource "airtelcloud_public_ip_attachment" "web1_public" {
 }
 ```
 
+#### Detach a Resource
+
+Destroy the attachment to detach the public IP. The reservation stays allocated. Remove policy rules on this address first.
+
+```terraform
+resource "airtelcloud_public_ip" "web1_public" {
+  object_name       = "web1-public-ip"
+  description       = "web1 public IP"
+  availability_zone = "S1"
+}
+
+# Remove airtelcloud_public_ip_attachment.web1_public, then apply.
+```
+
+```shell
+terraform destroy -target=airtelcloud_public_ip_attachment.web1_public
+```
+
 #### Attachment Argument Reference
 
 | Argument | Type | Required | Description |
@@ -271,8 +289,9 @@ resource "airtelcloud_public_ip_attachment" "web1_public" {
 | `public_ip_name` | String | Yes | Object name of the reserved public IP. |
 | `resource_type` | String | Yes | `vm`, `lb`, or `baremetal`. |
 | `resource_name` | String | Yes | Name of the VM, load balancer, or baremetal server. |
+| `target_vip` | String | For `lb` | Load balancer VIP to attach to. Required when `resource_type` is `lb`. Do not set for `vm` or `baremetal`. |
 
-`availability_zone` and `target_vip` are looked up from the public IP and the named resource. They are not set in configuration.
+`availability_zone` is looked up from the public IP. For `vm` and `baremetal`, `target_vip` is looked up from the named resource. For `lb`, you must set `target_vip`.
 
 #### Argument Reference
 
@@ -447,6 +466,98 @@ resource "airtelcloud_vm" "web1_keypair" {
 
 ```bash
 terraform import airtelcloud_vm.web1 <compute-id>
+```
+
+---
+
+### airtelcloud_asg
+
+Manages an autoscaling group. Create, read, import, and delete are supported. Changing configuration forces a new group.
+
+Provide exactly one of `flavor_id` / `flavor_name`, exactly one image source (`image_id`, `image_name`, or `snapshot_name`), and exactly one security group through `security_group_ids` or `security_group_names`. `desired_count` must equal `minimum_size`. The subnet must be in the same zone as `availability_zone`.
+
+#### Example Usage
+
+```terraform
+resource "airtelcloud_asg" "example" {
+  name              = "app-asg"
+  vpc_name          = "copper-vpc1"
+  subnet            = "subnet1213"
+  availability_zone = "S1"
+
+  flavor_name          = "ccd.Large"
+  image_name           = "Ubuntu22_04_Sep2026"
+  security_group_names = ["networksg-1"]
+  keypair_name         = "keypair-1"
+
+  minimum_size  = 1
+  maximum_size  = 3
+  desired_count = 1
+
+  scale_up_step_size   = 1
+  scale_down_step_size = 1
+  scaling_interval     = 2
+  cooloff_period       = 10
+  termination_policy   = "oldest"
+  drain_period         = 0
+
+  scaleup_rules = [{
+    metric_type      = "cpu"
+    aggregation_type = "avg"
+    target_value     = 60
+  }]
+  scaledown_rules = [{
+    metric_type      = "cpu"
+    aggregation_type = "avg"
+    target_value     = 30
+  }]
+}
+```
+
+-> **Note:** Set `load_balancer_name` to attach a virtual server. When it is set, also configure `host_name`, `vip`, `protocol`, `port`, `routing_algorithm`, `pool_name`, `pool_port`, `max_connections`, `health_check_interval`, `health_check_timeout`, and `pool_monitor_protocol`. The VIP is resolved from the load balancer service network.
+
+#### Argument Reference
+
+| Argument | Type | Required | Description |
+|---|---|---|---|
+| `name` | String | Yes | Group name (minimum 3 characters). Forces new resource. |
+| `vpc_name` | String | Yes | VPC name. Lowercase letters, digits, and hyphens. Forces new resource. |
+| `subnet` | String | Yes | Subnet name in that VPC. Must match `availability_zone`. Forces new resource. |
+| `availability_zone` | String | Yes | Zone code (for example `S1`). Forces new resource. |
+| `minimum_size` | Number | Yes | Minimum size. Must be less than `maximum_size`. Forces new resource. |
+| `maximum_size` | Number | Yes | Maximum size. Forces new resource. |
+| `desired_count` | Number | Yes | Desired count. Must equal `minimum_size`. Forces new resource. |
+| `scale_up_step_size` | Number | Yes | Scale-up step (`1`–`3`). Forces new resource. |
+| `scale_down_step_size` | Number | Yes | Scale-down step (`1`–`3`). Forces new resource. |
+| `scaling_interval` | Number | Yes | Interval in minutes (`2`–`30`). Forces new resource. |
+| `cooloff_period` | Number | Yes | Cool-off in seconds (`0`–`300`). Forces new resource. |
+| `termination_policy` | String | Yes | `oldest`, `newest`, or `random`. Forces new resource. |
+| `drain_period` | Number | Yes | Drain period in seconds (`0`–`300`). Forces new resource. |
+| `scaleup_rules` | List | Yes | Scale-up metric rules. Each metric must also appear in `scaledown_rules` with the same aggregation and a lower target. Forces new resource. |
+| `scaledown_rules` | List | Yes | Scale-down metric rules. Forces new resource. |
+| `flavor_id` / `flavor_name` | Number / String | Conditional | Exactly one. Forces new resource. |
+| `image_id` / `image_name` / `snapshot_name` | Number / String / String | Conditional | Exactly one image source. `snapshot_name` requires a keypair. Forces new resource. |
+| `security_group_ids` / `security_group_names` | List | Conditional | Exactly one security group. Forces new resource. |
+| `keypair_id` / `keypair_name` | String | No | Mutually exclusive. Required with `snapshot_name`. Forces new resource. |
+| `disk_size` | Number | No | Boot volume GB. Minimum `20`. Defaults to `100`, or `200` for Windows. Forces new resource. |
+| `labels` | List of String | No | Labels. Forces new resource. |
+| `load_balancer_name` | String | No | Existing LB service name. Enables virtual-server config. Forces new resource. |
+
+Timeouts: create (15m default), delete (15m default).
+
+#### Attribute Reference
+
+| Attribute | Type | Description |
+|---|---|---|
+| `id` | String | Autoscaling group UUID. |
+| `vpc_id` | String | Resolved VPC ID. |
+| `network_id` | String | Resolved subnet ID. |
+| `os_type` | String | Image OS family. Empty for snapshot-based groups. |
+
+#### Import
+
+```bash
+terraform import airtelcloud_asg.example <asg-uuid>
 ```
 
 ---
@@ -1281,6 +1392,7 @@ Security Group ──> Security Group Rules
 VPC ──> Subnet ──> VM ──────────────────────┤
                     │                               └──> Protection ──> Protection Plan
                     │
+                    ├──> Autoscaling Group (optional existing LB Service)
                     ├──> Volume (attach)
                     │
                     └──> Public IP ──> Policy Rule
@@ -1316,6 +1428,7 @@ terraform import <resource_type>.<name> <import_id>
 | `airtelcloud_public_ip` | `<uuid>` | `a1b2c3d4-...` |
 | `airtelcloud_public_ip_policy_rule` | `<public_ip_id>/<target_vip>/<public_ip>/<rule_id>` | `uuid/10.1.1.5/203.0.113.5/uuid` |
 | `airtelcloud_vm` | `<compute-id>` | `b603ccb5-...` |
+| `airtelcloud_asg` | `<asg-uuid>` | `a1b2c3d4-...` |
 | `airtelcloud_storage_bucket` | `<bucket-name>` | `my-bucket` |
 | `airtelcloud_volume` | `<numeric-id>` | `123` |
 | `airtelcloud_file_storage` | `<id>` | `fs-abc123` |
@@ -1346,7 +1459,7 @@ Ensure the `region` in your provider configuration matches the region where your
 
 ### Timeout Errors
 
-For resources that support timeouts (`subnet`, `lb_service`, `lb_virtual_server`, `public_ip`, `vpc_peering`, `compute_snapshot`), increase the timeout value:
+For resources that support timeouts (`subnet`, `lb_service`, `lb_virtual_server`, `public_ip`, `vpc_peering`, `compute_snapshot`, `asg`, `postgres`), increase the timeout value:
 
 ```terraform
 timeouts {

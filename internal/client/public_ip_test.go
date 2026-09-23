@@ -425,6 +425,8 @@ func TestCreatePublicIPPolicyRule(t *testing.T) {
 }
 
 func TestWaitForPublicIPPolicyRuleReady(t *testing.T) {
+	shortenPoll(t, &publicIPPolicyRuleReadyPollInterval)
+
 	ms := testutil.NewMockServer()
 	defer ms.Close()
 
@@ -812,6 +814,8 @@ func TestDeletePublicIPPolicyRule(t *testing.T) {
 
 func TestDeletePublicIPPolicyRuleWithWait(t *testing.T) {
 	t.Run("waits until rule is not found", func(t *testing.T) {
+		shortenPoll(t, &publicIPPolicyRuleDeletePollInterval)
+
 		ms := testutil.NewMockServer()
 		defer ms.Close()
 
@@ -1372,6 +1376,10 @@ func TestFindPortForResource_LB(t *testing.T) {
 	}
 	if portID != 17664 || vip != "10.101.21.35" {
 		t.Fatalf("FindPortForResource() = (%d, %q), want (17664, 10.101.21.35)", portID, vip)
+	}
+
+	if _, _, err := client.FindPortForResource(context.Background(), "lb", "gardener-vip-lb", "", "S1"); err == nil {
+		t.Fatal("FindPortForResource() expected error when lb has no target_vip")
 	}
 }
 

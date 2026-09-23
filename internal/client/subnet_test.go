@@ -91,3 +91,31 @@ func TestListSubnets(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveSubnet(t *testing.T) {
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	c, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	subnet, err := c.ResolveSubnet(context.Background(), "test-network-id", "subnet-a")
+	if err != nil {
+		t.Fatalf("ResolveSubnet() error = %v", err)
+	}
+	if subnet.SubnetID != "subnet-1" {
+		t.Fatalf("SubnetID = %q, want subnet-1", subnet.SubnetID)
+	}
+
+	id, err := c.ResolveSubnetID(context.Background(), "test-network-id", "subnet-b")
+	if err != nil {
+		t.Fatalf("ResolveSubnetID() error = %v", err)
+	}
+	if id != "subnet-2" {
+		t.Fatalf("id = %q, want subnet-2", id)
+	}
+
+	if _, err := c.ResolveSubnet(context.Background(), "test-network-id", "missing"); err == nil {
+		t.Fatal("expected error for missing subnet")
+	}
+}

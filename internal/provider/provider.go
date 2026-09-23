@@ -164,6 +164,7 @@ func (p *AirtelCloudProvider) Resources(ctx context.Context) []func() resource.R
 		NewPublicIPAttachmentResource,
 		NewPublicIPPolicyRuleResource,
 		NewPostgresResource,
+		NewASGResource,
 	}
 }
 
