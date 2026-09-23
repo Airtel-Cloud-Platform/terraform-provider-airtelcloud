@@ -61,16 +61,35 @@ func (c *Client) ResolveFlavorID(ctx context.Context, name string) (string, erro
 
 // ResolveImageID resolves an image name to its ID
 func (c *Client) ResolveImageID(ctx context.Context, name string) (string, error) {
+	img, err := c.ResolveImage(ctx, 0, name)
+	if err != nil {
+		return "", err
+	}
+	return strconv.Itoa(img.ID), nil
+}
+
+// ResolveImage finds an image by numeric ID or name.
+func (c *Client) ResolveImage(ctx context.Context, id int64, name string) (*models.Image, error) {
 	images, err := c.ListImages(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to list images: %w", err)
+		return nil, fmt.Errorf("failed to list images: %w", err)
 	}
-	for _, img := range images {
-		if img.Name == name {
-			return strconv.Itoa(img.ID), nil
+	for i := range images {
+		img := &images[i]
+		if id != 0 && int64(img.ID) == id {
+			return img, nil
+		}
+		if name != "" && img.Name == name {
+			return img, nil
 		}
 	}
-	return "", fmt.Errorf("image with name %q not found", name)
+	if name != "" {
+		return nil, fmt.Errorf("image with name %q not found", name)
+	}
+	if id != 0 {
+		return nil, fmt.Errorf("image with id %d not found", id)
+	}
+	return nil, fmt.Errorf("image id or name is required")
 }
 
 // ResolveKeypairID resolves a keypair name to its ID
@@ -119,18 +138,27 @@ func (c *Client) ResolveVPCID(ctx context.Context, name string) (string, error) 
 	return "", fmt.Errorf("VPC with name %q not found", name)
 }
 
-// ResolveSubnetID resolves a subnet name to its ID within a given VPC (network)
-func (c *Client) ResolveSubnetID(ctx context.Context, vpcID, name string) (string, error) {
+// ResolveSubnet finds a subnet by display name within a VPC.
+func (c *Client) ResolveSubnet(ctx context.Context, vpcID, name string) (*models.Subnet, error) {
 	resp, err := c.ListSubnets(ctx, vpcID)
 	if err != nil {
-		return "", fmt.Errorf("failed to list subnets: %w", err)
+		return nil, fmt.Errorf("failed to list subnets: %w", err)
 	}
-	for _, s := range resp.Items {
-		if s.Name == name {
-			return s.SubnetID, nil
+	for i := range resp.Items {
+		if resp.Items[i].Name == name {
+			return &resp.Items[i], nil
 		}
 	}
-	return "", fmt.Errorf("subnet with name %q not found in VPC %s", name, vpcID)
+	return nil, fmt.Errorf("subnet with name %q not found in VPC %s", name, vpcID)
+}
+
+// ResolveSubnetID resolves a subnet name to its ID within a given VPC (network)
+func (c *Client) ResolveSubnetID(ctx context.Context, vpcID, name string) (string, error) {
+	subnet, err := c.ResolveSubnet(ctx, vpcID, name)
+	if err != nil {
+		return "", err
+	}
+	return subnet.SubnetID, nil
 }
 
 // ResolveComputeID resolves a compute (VM) instance name to its ID

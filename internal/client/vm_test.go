@@ -190,6 +190,35 @@ func TestResolveImageID(t *testing.T) {
 	}
 }
 
+func TestResolveImage(t *testing.T) {
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	c, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	byName, err := c.ResolveImage(context.Background(), 0, "ubuntu-20.04")
+	if err != nil {
+		t.Fatalf("ResolveImage by name error = %v", err)
+	}
+	if byName.ID != 1 || byName.OSFamily() != "linux" {
+		t.Fatalf("ResolveImage by name = %+v", byName)
+	}
+
+	byID, err := c.ResolveImage(context.Background(), 2, "")
+	if err != nil {
+		t.Fatalf("ResolveImage by id error = %v", err)
+	}
+	if byID.Name != "centos-8" {
+		t.Fatalf("ResolveImage by id name = %q, want centos-8", byID.Name)
+	}
+
+	id, err := c.ResolveImageID(context.Background(), "ubuntu-20.04")
+	if err != nil || id != "1" {
+		t.Fatalf("ResolveImageID() = %q, %v, want 1", id, err)
+	}
+}
+
 func TestResolveKeypairID(t *testing.T) {
 	mockServer := testutil.NewMockServer()
 	defer mockServer.Close()
@@ -483,6 +512,8 @@ func TestWaitForComputeReady(t *testing.T) {
 	})
 
 	t.Run("transitions from BUILD to ACTIVE", func(t *testing.T) {
+		shortenPoll(t, &computePollInterval)
+
 		mockServer := testutil.NewMockServer()
 		defer mockServer.Close()
 
@@ -604,6 +635,8 @@ func TestWaitForComputeReadyWithPrivateIP(t *testing.T) {
 	computePath := "/api/v2.1/computes/domain/test-org/project/test-project/computes/test-id/"
 
 	t.Run("waits until private IP is available", func(t *testing.T) {
+		shortenPoll(t, &computePollInterval)
+
 		mockServer := testutil.NewMockServer()
 		defer mockServer.Close()
 

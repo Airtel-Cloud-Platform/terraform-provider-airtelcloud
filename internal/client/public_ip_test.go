@@ -425,6 +425,8 @@ func TestCreatePublicIPPolicyRule(t *testing.T) {
 }
 
 func TestWaitForPublicIPPolicyRuleReady(t *testing.T) {
+	shortenPoll(t, &publicIPPolicyRuleReadyPollInterval)
+
 	ms := testutil.NewMockServer()
 	defer ms.Close()
 
@@ -812,6 +814,8 @@ func TestDeletePublicIPPolicyRule(t *testing.T) {
 
 func TestDeletePublicIPPolicyRuleWithWait(t *testing.T) {
 	t.Run("waits until rule is not found", func(t *testing.T) {
+		shortenPoll(t, &publicIPPolicyRuleDeletePollInterval)
+
 		ms := testutil.NewMockServer()
 		defer ms.Close()
 

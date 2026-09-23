@@ -11,6 +11,9 @@ import (
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
 
+// computePollInterval is the delay between compute status polls. Tests shorten it.
+var computePollInterval = 10 * time.Second
+
 // computeAPIBase returns the v2.1 base path prefix for all compute-related endpoints
 func (c *Client) computeAPIBase() string {
 	return fmt.Sprintf("/api/v2.1/computes/domain/%s/project/%s",
@@ -110,7 +113,7 @@ func (c *Client) DeleteCompute(ctx context.Context, id string) error {
 		if compute.Status == "Deleted" || compute.Status == "deleted" || compute.Status == "soft-deleted" {
 			return nil
 		}
-		time.Sleep(10 * time.Second)
+		time.Sleep(computePollInterval)
 	}
 
 	return fmt.Errorf("compute deletion timed out")
@@ -156,7 +159,13 @@ func (c *Client) waitForCompute(ctx context.Context, id string, timeout time.Dur
 			return nil, fmt.Errorf("compute instance entered error state")
 		}
 
-		time.Sleep(10 * time.Second)
+		if !waitBeforeNextPoll(ctx, computePollInterval, deadline) {
+			break
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	if requirePrivateIP {

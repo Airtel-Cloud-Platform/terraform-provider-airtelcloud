@@ -161,6 +161,10 @@ resource "airtelcloud_baremetal" "app" {
   ]
   ```
 
+* `keypair_id` (String) - Optional keypair UUID sent as `keypairId` in the allocate API. Forces replacement on change.
+
+* `public_key` (String) - Optional SSH public key sent as `publicKey` in the allocate API. Forces replacement on change.
+
 * `storage` (List of Object) - Configures additional disks to be attached to the baremetal server.
 
   Each storage object supports:
