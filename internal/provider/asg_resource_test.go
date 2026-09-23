@@ -3,6 +3,7 @@ package provider
 import (
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -134,6 +135,18 @@ func TestImageOSFamily(t *testing.T) {
 	}
 	if got := (models.Image{OS: "windows"}).OSFamily(); got != "windows" {
 		t.Fatalf("OS fallback = %q, want windows", got)
+	}
+}
+
+func TestValidateOneOfSkipsUnknown(t *testing.T) {
+	var diags diag.Diagnostics
+	validateOneOfIntString(&diags, "flavor_id", types.Int64Unknown(), "flavor_name", types.StringValue("ccd.Large"), true)
+	if diags.HasError() {
+		t.Fatalf("unknown flavor_id should skip XOR, got %v", diags)
+	}
+	validateListXOR(&diags, "security_group_ids", types.ListUnknown(types.Int64Type), "security_group_names", types.ListValueMust(types.StringType, []attr.Value{types.StringValue("networksg-1")}), true)
+	if diags.HasError() {
+		t.Fatalf("unknown security_group_ids should skip XOR, got %v", diags)
 	}
 }
 
