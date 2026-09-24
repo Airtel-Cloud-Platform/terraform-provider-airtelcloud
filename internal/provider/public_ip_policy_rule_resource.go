@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,7 +35,7 @@ type PublicIPPolicyRuleResourceModel struct {
 	ID               types.String `tfsdk:"id"`
 	PublicIPID       types.String `tfsdk:"public_ip_id"`
 	PublicIPName     types.String `tfsdk:"public_ip_name"`
-	DisplayName      types.String `tfsdk:"display_name"`
+	RuleName         types.String `tfsdk:"rule_name"`
 	Source           types.String `tfsdk:"source"`
 	SourceConfig     types.List   `tfsdk:"source_config"`
 	Services         types.List   `tfsdk:"services"`
@@ -49,9 +50,15 @@ type PublicIPPolicyRuleResourceModel struct {
 }
 
 type PublicIPPolicyRuleSourceConfigModel struct {
-	CreateNew  types.Bool   `tfsdk:"create_new"`
-	IPCIDR     types.String `tfsdk:"ip_cidr"`
-	SourceType types.String `tfsdk:"source_type"`
+	CreateNew  types.Bool                         `tfsdk:"create_new"`
+	IPCIDR     types.String                       `tfsdk:"ip_cidr"`
+	SourceType types.String                       `tfsdk:"source_type"`
+	Geographic *PublicIPPolicyRuleGeographicModel `tfsdk:"geographic"`
+}
+
+type PublicIPPolicyRuleGeographicModel struct {
+	CountryCode types.String `tfsdk:"country_code"`
+	CountryName types.String `tfsdk:"country_name"`
 }
 
 type PublicIPPolicyRuleServiceConfigModel struct {
@@ -66,7 +73,7 @@ func (r *PublicIPPolicyRuleResource) Metadata(ctx context.Context, req resource.
 
 func (r *PublicIPPolicyRuleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages a policy rule on an Airtel Cloud Public IP (NAT Gateway). Policy rules control traffic allowed or denied through the public IP.",
+		MarkdownDescription: "Manages a policy rule on an Airtel Cloud Public IP (NAT Gateway). The parent public IP must already be attached to a VM, load balancer, or baremetal server.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -77,19 +84,21 @@ func (r *PublicIPPolicyRuleResource) Schema(ctx context.Context, req resource.Sc
 				},
 			},
 			"public_ip_id": schema.StringAttribute{
-				MarkdownDescription: "The UUID of the parent public IP resource. Either public_ip_id or public_ip_name must be specified.",
-				Optional:            true,
+				MarkdownDescription: "The UUID of the parent public IP, resolved from `public_ip_name`.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"public_ip_name": schema.StringAttribute{
+				MarkdownDescription: "The object name of the parent public IP resource.",
+				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"public_ip_name": schema.StringAttribute{
-				MarkdownDescription: "The name (object_name) of the parent public IP resource. If set, it is resolved to public_ip_id. Either public_ip_id or public_ip_name must be specified.",
-				Optional:            true,
-			},
-			"display_name": schema.StringAttribute{
-				MarkdownDescription: "The display name of the policy rule.",
+			"rule_name": schema.StringAttribute{
+				MarkdownDescription: "The name of the policy rule. Sent to the API as `rule_name`.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -108,16 +117,30 @@ func (r *PublicIPPolicyRuleResource) Schema(ctx context.Context, req resource.Sc
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"create_new": schema.BoolAttribute{
-							MarkdownDescription: "Whether to create/use a new source selector. Defaults to `true` when omitted.",
+							MarkdownDescription: "Whether to create a new source selector. Defaults to `false` when omitted.",
 							Optional:            true,
 						},
 						"ip_cidr": schema.StringAttribute{
-							MarkdownDescription: "Source CIDR, for example `1.2.1.0/24`.",
+							MarkdownDescription: "Source CIDR, for example `182.77.78.18/32`.",
 							Optional:            true,
 						},
 						"source_type": schema.StringAttribute{
-							MarkdownDescription: "Source type such as `ip_cidr` or `all`.",
+							MarkdownDescription: "Source type: `ip_cidr`, `geographic`, or `all`.",
 							Optional:            true,
+						},
+						"geographic": schema.SingleNestedAttribute{
+							MarkdownDescription: "Country selector when `source_type` is `geographic`.",
+							Optional:            true,
+							Attributes: map[string]schema.Attribute{
+								"country_code": schema.StringAttribute{
+									MarkdownDescription: "ISO country code, for example `IN`.",
+									Optional:            true,
+								},
+								"country_name": schema.StringAttribute{
+									MarkdownDescription: "Country name, for example `India`.",
+									Optional:            true,
+								},
+							},
 						},
 					},
 				},
@@ -167,24 +190,30 @@ func (r *PublicIPPolicyRuleResource) Schema(ctx context.Context, req resource.Sc
 				Optional:            true,
 			},
 			"target_vip": schema.StringAttribute{
-				MarkdownDescription: "The target private IP (from the parent public IP resource).",
-				Required:            true,
+				MarkdownDescription: "The target private IP. Read from the parent public IP when omitted.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"public_ip": schema.StringAttribute{
-				MarkdownDescription: "The public IP address (from the parent public IP resource).",
-				Required:            true,
+				MarkdownDescription: "The public IP address. Read from the parent public IP when omitted.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"availability_zone": schema.StringAttribute{
-				MarkdownDescription: "The availability zone (e.g., `S1`, `S2`).",
-				Required:            true,
+				MarkdownDescription: "The availability zone (e.g., `S1`, `S2`). Read from the parent public IP when omitted.",
+				Optional:            true,
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"state": schema.StringAttribute{
@@ -220,13 +249,9 @@ func (r *PublicIPPolicyRuleResource) ValidateConfig(ctx context.Context, req res
 		return
 	}
 
-	if !data.PublicIPID.IsNull() && !data.PublicIPName.IsNull() {
+	if !data.PublicIPName.IsNull() && !data.PublicIPName.IsUnknown() && strings.TrimSpace(data.PublicIPName.ValueString()) == "" {
 		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of public_ip_id or public_ip_name may be specified, not both.")
-	}
-	if data.PublicIPID.IsNull() && data.PublicIPName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"One of public_ip_id or public_ip_name must be specified.")
+			"public_ip_name must be set.")
 	}
 
 	hasSource := !data.Source.IsNull() && strings.TrimSpace(data.Source.ValueString()) != ""
@@ -252,17 +277,48 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	// Resolve public_ip_name -> public_ip_id (UUID) and persist into the Computed attribute.
-	publicIPID := data.PublicIPID.ValueString()
-	if publicIPID == "" && !data.PublicIPName.IsNull() {
-		resolved, err := r.client.ResolvePublicIPID(ctx, data.PublicIPName.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Public IP Resolution Error", err.Error())
+	// Resolve public_ip_name -> UUID, then refuse policy create unless attached.
+	resolved, err := r.client.ResolvePublicIPID(ctx, data.PublicIPName.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve public IP name %q: %s", data.PublicIPName.ValueString(), err))
+		return
+	}
+	pip, err := r.client.RequirePublicIPAttached(ctx, resolved)
+	if err != nil {
+		status := ""
+		if pip != nil {
+			status = pip.Status
+		}
+		if errors.Is(err, client.ErrPublicIPNotAttached) {
+			resp.Diagnostics.AddError(
+				"Public IP Not Attached",
+				fmt.Sprintf("Cannot add a policy on public IP %q until it is attached to a VM, load balancer, or baremetal server (current status %q). Create airtelcloud_public_ip_attachment first, then add the policy.", data.PublicIPName.ValueString(), status),
+			)
 			return
 		}
-		publicIPID = resolved
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to verify public IP %q is attached: %s", data.PublicIPName.ValueString(), err))
+		return
 	}
-	data.PublicIPID = types.StringValue(publicIPID)
+	data.PublicIPID = types.StringValue(pip.UUID)
+
+	// target_vip, public_ip, and availability_zone default to the parent public IP.
+	if data.TargetVIP.IsNull() || data.TargetVIP.IsUnknown() || data.TargetVIP.ValueString() == "" {
+		data.TargetVIP = types.StringValue(pip.TargetVIP)
+	}
+	if data.PublicIP.IsNull() || data.PublicIP.IsUnknown() || data.PublicIP.ValueString() == "" {
+		data.PublicIP = types.StringValue(getPublicIPAddr(pip))
+	}
+	if data.AvailabilityZone.IsNull() || data.AvailabilityZone.IsUnknown() || data.AvailabilityZone.ValueString() == "" {
+		data.AvailabilityZone = types.StringValue(getPublicIPAZName(pip))
+	}
+
+	if data.TargetVIP.ValueString() == "" || data.PublicIP.ValueString() == "" || data.AvailabilityZone.ValueString() == "" {
+		resp.Diagnostics.AddError(
+			"Incomplete Public IP Details",
+			fmt.Sprintf("Public IP %q did not report target_vip, public_ip, and availability zone. Set them explicitly on the policy rule.", data.PublicIPName.ValueString()),
+		)
+		return
+	}
 
 	// Get service names from the plan
 	var serviceNames []string
@@ -302,6 +358,18 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 		if !item.SourceType.IsNull() && !item.SourceType.IsUnknown() {
 			entry.SourceType = item.SourceType.ValueString()
 		}
+		if item.Geographic != nil {
+			geo := &models.PublicIPPolicyRuleGeographicInput{}
+			if !item.Geographic.CountryCode.IsNull() && !item.Geographic.CountryCode.IsUnknown() {
+				geo.CountryCode = item.Geographic.CountryCode.ValueString()
+			}
+			if !item.Geographic.CountryName.IsNull() && !item.Geographic.CountryName.IsUnknown() {
+				geo.CountryName = item.Geographic.CountryName.ValueString()
+			}
+			if geo.CountryCode != "" || geo.CountryName != "" {
+				entry.Geographic = geo
+			}
+		}
 		sourceConfig = append(sourceConfig, entry)
 	}
 
@@ -329,6 +397,10 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 		switch sourceType {
 		case "all", "any":
 			sourceValue = "any"
+		case "geographic":
+			if first.Geographic != nil && first.Geographic.CountryCode != "" {
+				sourceValue = first.Geographic.CountryCode
+			}
 		default:
 			sourceValue = strings.TrimSpace(first.IPCIDR)
 		}
@@ -347,7 +419,7 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 	az := data.AvailabilityZone.ValueString()
 
 	createReq := &models.CreatePublicIPPolicyRuleRequest{
-		DisplayName:   data.DisplayName.ValueString(),
+		DisplayName:   data.RuleName.ValueString(),
 		Source:        sourceValue,
 		SourceConfig:  sourceConfig,
 		ServiceList:   serviceNames,
@@ -378,7 +450,7 @@ func (r *PublicIPPolicyRuleResource) Create(ctx context.Context, req resource.Cr
 		data.State = types.StringValue(readyRule.State)
 	}
 	if readyRule != nil && readyRule.DisplayName != "" {
-		data.DisplayName = types.StringValue(readyRule.DisplayName)
+		data.RuleName = types.StringValue(readyRule.DisplayName)
 	}
 
 	tflog.Trace(ctx, "created public IP policy rule resource")
@@ -409,15 +481,25 @@ func (r *PublicIPPolicyRuleResource) Read(ctx context.Context, req resource.Read
 		return
 	}
 
-	data.DisplayName = types.StringValue(rule.DisplayName)
-	if rule.SourceIP != "" {
-		data.Source = types.StringValue(rule.SourceIP)
+	if rule.DisplayName != "" {
+		data.RuleName = types.StringValue(rule.DisplayName)
 	}
-	data.Action = types.StringValue(rule.Action)
+	if rule.Action != "" {
+		data.Action = types.StringValue(rule.Action)
+	}
 	data.State = types.StringValue(rule.State)
 
-	// Update services from the API response
-	if len(rule.Services) > 0 {
+	// source/services are only refreshed when the rule is managed through the
+	// flat attributes. When source_config/service_config drive the payload, the
+	// API shape does not round-trip into them and refreshing would show a
+	// permanent diff against a null configuration value.
+	usesSourceConfig := !data.SourceConfig.IsNull() && len(data.SourceConfig.Elements()) > 0
+	if !usesSourceConfig && rule.SourceIP != "" {
+		data.Source = types.StringValue(rule.SourceIP)
+	}
+
+	usesServiceConfig := !data.ServiceConfig.IsNull() && len(data.ServiceConfig.Elements()) > 0
+	if !usesServiceConfig && len(rule.Services) > 0 {
 		servicesList, diags := types.ListValueFrom(ctx, types.StringType, rule.Services)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {

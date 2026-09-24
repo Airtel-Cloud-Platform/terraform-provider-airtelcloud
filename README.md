@@ -4,6 +4,7 @@ This repository contains a Terraform provider for managing Airtel Public Cloud r
 
 ## Supported Resources
 - **Virtual Machine (VM)**: Create and manage Virtual machines
+- **Autoscaling Group (ASG)**: Create and manage autoscaling groups
 - **Volumes**: Manage block storage volumes and attachments
 - **Virtual Private Cloud (VPC)**: Create and manage VPCs and VPC Peering
 - **Subnets**: Manage VPC subnets
@@ -142,4 +143,3 @@ make testacc
 ```shell
 make docs-generate
 ```
-

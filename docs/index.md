@@ -10,7 +10,7 @@ The Airtel Cloud provider allows Terraform to manage Airtel Cloud infrastructure
 
 -> **New to this provider?** See the [Getting Started Guide](guides/getting-started) for a full walkthrough.
 
--> **Complete Resource Guide:** See the [User Guide](guides/user-guide) for all 25 resources with examples, argument references, and import instructions.
+-> **Complete Resource Guide:** See the [User Guide](guides/user-guide) for all 26 resources with examples, argument references, and import instructions.
 
 ## Example Usage
 
@@ -108,6 +108,7 @@ The provider supports the following 26 resources:
 
 **Compute:**
 - [`airtelcloud_vm`](resources/vm) - Virtual Machine
+- [`airtelcloud_asg`](resources/asg) - Autoscaling Group
 - [`airtelcloud_baremetal`](resources/baremetal) - Baremetal Server
 - [`airtelcloud_kubernetes`](resources/kubernetes) - Kubernetes Cluster (CKP)
 - [`airtelcloud_compute_snapshot`](resources/compute_snapshot) - Compute Snapshot
@@ -135,7 +136,8 @@ The provider supports the following 26 resources:
 - [`airtelcloud_lb_virtual_server`](resources/lb_virtual_server) - Load Balancer Virtual Server
 
 **Security:**
-- [`airtelcloud_public_ip`](resources/public_ip) - Public IP
+- [`airtelcloud_public_ip`](resources/public_ip) - Public IP reservation
+- [`airtelcloud_public_ip_attachment`](resources/public_ip_attachment) - Public IP attach to VM or LB
 - [`airtelcloud_public_ip_policy_rule`](resources/public_ip_policy_rule) - Public IP Policy Rule
 
 **DNS:**

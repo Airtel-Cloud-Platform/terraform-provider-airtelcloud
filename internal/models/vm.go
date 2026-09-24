@@ -136,7 +136,15 @@ type Image struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
 	OSType      string `json:"os_type,omitempty"`
+	OS          string `json:"os,omitempty"`
 	Description string `json:"description,omitempty"`
+}
+
+func (img Image) OSFamily() string {
+	if img.OSType != "" {
+		return img.OSType
+	}
+	return img.OS
 }
 
 // Keypair represents an SSH keypair (from list API)

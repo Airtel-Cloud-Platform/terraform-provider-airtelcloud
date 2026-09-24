@@ -152,7 +152,7 @@ resource "airtelcloud_vm" "windows_server" {
   enable_backup = true
   # Use the protection plan UUID/id, not the plan name.
   protection_plan = "4cb5b1b6-f62f-4fea-b348-d17aa407d64d"
-  weekday      = "friday"
+  weekday         = "friday"
   start_time      = "1:33 PM"
 
   labels = ["example", "windows", "backup"]
@@ -161,7 +161,7 @@ resource "airtelcloud_vm" "windows_server" {
 resource "airtelcloud_public_ip" "windows_vm_nat" {
   count             = var.create_public_ip_and_policy ? 1 : 0
   object_name       = "${var.resource_prefix}-windows-public-ip-57"
-  vip               = airtelcloud_vm.windows_server.private_ip
+  description       = "windows vm public IP"
   availability_zone = var.availability_zone
 
   depends_on = [airtelcloud_vm.windows_server]
@@ -172,26 +172,28 @@ resource "airtelcloud_public_ip" "windows_vm_nat" {
   }
 }
 
-resource "airtelcloud_public_ip_policy_rule" "allow_rdp" {
-  count        = var.create_public_ip_and_policy ? 1 : 0
-  public_ip_id = airtelcloud_public_ip.windows_vm_nat[0].id
-  display_name = "allow-rdp"
+resource "airtelcloud_public_ip_attachment" "windows_vm_nat" {
+  count          = var.create_public_ip_and_policy ? 1 : 0
+  public_ip_name = airtelcloud_public_ip.windows_vm_nat[0].object_name
+  resource_type  = "vm"
+  resource_name  = airtelcloud_vm.windows_server.instance_name
+}
 
-  depends_on = [airtelcloud_public_ip.windows_vm_nat]
+resource "airtelcloud_public_ip_policy_rule" "allow_rdp" {
+  count          = var.create_public_ip_and_policy ? 1 : 0
+  public_ip_name = airtelcloud_public_ip_attachment.windows_vm_nat[0].public_ip_name
+  rule_name      = "allow-rdp"
 
   source_config = [
     {
-      create_new  = true
+      create_new  = false
       ip_cidr     = var.rdp_source_cidr
       source_type = "ip_cidr"
     }
   ]
 
-  services          = ["RDP"]
-  action            = "accept"
-  target_vip        = airtelcloud_public_ip.windows_vm_nat[0].vip
-  public_ip         = airtelcloud_public_ip.windows_vm_nat[0].public_ip
-  availability_zone = var.availability_zone
+  services = ["RDP"]
+  action   = "accept"
 }
 
 output "windows_vm_id" {
