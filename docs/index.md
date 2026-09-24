@@ -110,6 +110,7 @@ The provider supports the following 26 resources:
 - [`airtelcloud_vm`](resources/vm) - Virtual Machine
 - [`airtelcloud_asg`](resources/asg) - Autoscaling Group
 - [`airtelcloud_baremetal`](resources/baremetal) - Baremetal Server
+- [`airtelcloud_kubernetes`](resources/kubernetes) - Kubernetes Cluster (CKP)
 - [`airtelcloud_compute_snapshot`](resources/compute_snapshot) - Compute Snapshot
 
 **Storage:**
