@@ -332,7 +332,13 @@ terraform import airtelcloud_public_ip.web1_public <uuid>
 
 Manages a NAT policy rule on a public IP. The public IP must already be in `attached` state; reserved IPs cannot receive policies.
 
+Use **either** `source` **or** `source_config`, and **either** `services` **or** `service_config`. Simple form is one CIDR/`any` plus service names. Detailed form is multiple CIDRs, countries, and per-service flags.
+
+`source = "any"` is sent as CIDR `0.0.0.0/0` (`create_new = true`). The API does not accept `source_type = "all"`.
+
 #### Example Usage
+
+Simple:
 
 ```terraform
 resource "airtelcloud_public_ip_policy_rule" "web_traffic" {
@@ -344,15 +350,32 @@ resource "airtelcloud_public_ip_policy_rule" "web_traffic" {
 }
 ```
 
+Detailed (`for_each` + `source_config` / `service_config`):
+
+```terraform
+resource "airtelcloud_public_ip_policy_rule" "this" {
+  for_each = var.public_ip_policy_rules
+
+  public_ip_name = each.value.public_ip_name
+  rule_name      = each.value.rule_name
+  action         = each.value.action
+
+  source_config  = each.value.source_config
+  service_config = each.value.service_config
+}
+```
+
 #### Argument Reference
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
 | `public_ip_name` | String | Yes | Object name of the parent public IP. Must be attached. Forces new resource. |
-| `rule_name` | String | Yes | Name of the policy rule (`rule_name` in the API). Forces new resource. |
-| `source` | String | Yes | Source IP or `any`. Forces new resource. |
-| `services` | List of String | Yes | Service names (e.g., `HTTP`, `HTTPS`, `SSH`). |
-| `action` | String | Yes | Action: `accept` or `deny`. Forces new resource. |
+| `rule_name` | String | Yes | Name of the policy rule. Forces new resource. |
+| `action` | String | Yes | `accept` or `deny`. Forces new resource. |
+| `source` | String | One of `source` / `source_config` | `any`, `all`, or a CIDR. `any`/`all` → `0.0.0.0/0`. |
+| `source_config` | List of Object | One of `source` / `source_config` | CIDR and/or `geographic` entries. `source_type` is `ip_cidr` or `geographic`. |
+| `services` | List of String | One of `services` / `service_config` | Service names (`HTTP`, `HTTPS`, `SSH`). |
+| `service_config` | List of Object | One of `services` / `service_config` | `{ name, create_new, is_default }`. Set `create_new = true` for catalog-missing names. |
 | `target_vip` | String | No | Target private IP (VIP). Read from the public IP when omitted. |
 | `public_ip` | String | No | Public IP address. Read from the public IP when omitted. |
 | `availability_zone` | String | No | Availability zone. Read from the public IP when omitted. |
