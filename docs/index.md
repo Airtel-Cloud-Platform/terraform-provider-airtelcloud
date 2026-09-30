@@ -19,7 +19,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.6"
+      version = "1.2.7"
     }
   }
 }
@@ -110,6 +110,7 @@ The provider supports the following 26 resources:
 - [`airtelcloud_vm`](resources/vm) - Virtual Machine
 - [`airtelcloud_asg`](resources/asg) - Autoscaling Group
 - [`airtelcloud_baremetal`](resources/baremetal) - Baremetal Server
+- [`airtelcloud_kubernetes`](resources/kubernetes) - Kubernetes Cluster (CKP)
 - [`airtelcloud_compute_snapshot`](resources/compute_snapshot) - Compute Snapshot
 
 **Storage:**
