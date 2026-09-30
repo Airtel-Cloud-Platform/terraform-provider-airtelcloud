@@ -523,11 +523,14 @@ func TestCreatePublicIPPolicyRule_SourceOfTruthPayload(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload source[0] = %T, want object", sourceRaw[0])
 	}
-	if got, ok := sourceObj["create_new"].(bool); !ok || got {
-		t.Fatalf("payload source[0].create_new = %v, want false", sourceObj["create_new"])
+	if got, ok := sourceObj["create_new"].(bool); !ok || !got {
+		t.Fatalf("payload source[0].create_new = %v, want true", sourceObj["create_new"])
 	}
-	if got, ok := sourceObj["source_type"].(string); !ok || got != "all" {
-		t.Fatalf("payload source[0].source_type = %v, want all", sourceObj["source_type"])
+	if got, ok := sourceObj["source_type"].(string); !ok || got != "ip_cidr" {
+		t.Fatalf("payload source[0].source_type = %v, want ip_cidr", sourceObj["source_type"])
+	}
+	if got, ok := sourceObj["ip_cidr"].(string); !ok || got != "0.0.0.0/0" {
+		t.Fatalf("payload source[0].ip_cidr = %v, want 0.0.0.0/0", sourceObj["ip_cidr"])
 	}
 	servicesRaw, ok := payload["services"].([]any)
 	if !ok || len(servicesRaw) != 1 {

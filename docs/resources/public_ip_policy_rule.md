@@ -15,8 +15,10 @@ Sources and services can be declared in two ways:
 
 | Form | Arguments | Use when |
 | --- | --- | --- |
-| Simple | `source`, `services` | A single source and a plain list of service names. |
-| Detailed | `source_config`, `service_config` | Multiple sources, CIDR plus country selectors, or explicit service flags. |
+| Simple | `source`, `services` | One source (`any` or a CIDR) and a list of existing service names. |
+| Detailed | `source_config`, `service_config` | Several sources, CIDR plus countries, or per-service `create_new` / `is_default`. |
+
+You can mix one source form with one service form (for example `source_config` + `services`). If both source forms or both service forms are set, the detailed form wins.
 
 ## Example Usage
 
@@ -111,6 +113,23 @@ resource "airtelcloud_public_ip_policy_rule" "block_country" {
 }
 ```
 
+### Multiple Rules with `for_each`
+
+```terraform
+resource "airtelcloud_public_ip_policy_rule" "this" {
+  for_each = var.public_ip_policy_rules
+
+  public_ip_name = each.value.public_ip_name
+  rule_name      = each.value.rule_name
+  action         = each.value.action
+
+  source_config  = each.value.source_config
+  service_config = each.value.service_config
+}
+```
+
+`public_ip_name` must be an **attached** public IP `object_name`.
+
 ## Argument Reference
 
 ### Required
@@ -123,7 +142,7 @@ One of `source` or `source_config` is required. One of `services` or `service_co
 
 ### Optional
 
-- `source` (String) - A single source: `any`, `all`, or a CIDR such as `182.77.78.18/32`. Forces replacement if changed.
+- `source` (String) - A single source: `any`, `all`, or a CIDR such as `182.77.78.18/32`. `any`/`all` is sent as `0.0.0.0/0` with `create_new = true`. Forces replacement if changed.
 - `source_config` (List of Object) - Detailed source entries. Takes precedence over `source`. See [source_config](#source_config).
 - `services` (List of String) - Service names to match, such as `["HTTP", "HTTPS"]`. Use `["ALL"]` for every service.
 - `service_config` (List of Object) - Detailed service entries. Takes precedence over `services`. See [service_config](#service_config).
@@ -137,21 +156,21 @@ One of `source` or `source_config` is required. One of `services` or `service_co
 
 Each element supports:
 
-- `source_type` (String) - `ip_cidr`, `geographic`, or `all`.
+- `source_type` (String) - `ip_cidr` or `geographic`. The API rejects `all`. Values `any`/`all` are rewritten to `ip_cidr` `0.0.0.0/0`.
 - `ip_cidr` (String) - The source CIDR. Required when `source_type` is `ip_cidr`.
 - `geographic` (Object) - Country selector. Required when `source_type` is `geographic`.
   - `country_code` (String) - ISO 3166-1 alpha-2 code, such as `IN`. See [Country Codes](#country-codes).
   - `country_name` (String) - Country name, such as `India`.
-- `create_new` (Boolean) - Whether the API should create a new source selector. Defaults to `false`. Sent for `ip_cidr` and `all` sources only; it is omitted for `geographic` sources.
+- `create_new` (Boolean) - Set `true` when the CIDR object does not already exist in the catalog (needed for `0.0.0.0/0` the first time). Defaults to `true` for `0.0.0.0/0`, otherwise `false`. Omitted for `geographic` sources.
 
-When `source_type` is omitted, the provider infers it: `geographic` if a `geographic` block is present, `ip_cidr` if `ip_cidr` is set, otherwise `all`.
+When `source_type` is omitted, the provider infers it: `geographic` if a `geographic` block is present, otherwise `ip_cidr`. Empty/`any`/`all` CIDR becomes `0.0.0.0/0`.
 
 ### service_config
 
 Each element supports:
 
 - `name` (String, Required) - The service name, such as `HTTPS`, `SSH`, or a port-range service like `tcp-5601-5601`.
-- `create_new` (Boolean) - Whether the API should create a new service selector. Defaults to `false`.
+- `create_new` (Boolean) - Set `true` when the service name is not already in the NAT catalog (custom names such as `tcp-5601-5601`). Defaults to `false`.
 - `is_default` (Boolean) - Whether the service is marked as default. Defaults to `false`.
 
 ## Attribute Reference
@@ -177,6 +196,7 @@ terraform import airtelcloud_public_ip_policy_rule.web_traffic <public_ip_id>/<t
 - `public_ip`, `target_vip`, and `availability_zone` default to the values on the parent public IP, so you rarely set them.
 - When both forms are supplied, `source_config` and `service_config` win over `source` and `services`.
 - `country_code` is what the API matches on. `country_name` is the label shown alongside it and should match the portal's spelling.
+- `for_each` is supported. The provider skips source/service required-attribute checks until `source_config` / `service_config` are known.
 
 ## Country Codes
 
