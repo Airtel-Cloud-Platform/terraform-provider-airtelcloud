@@ -254,16 +254,16 @@ func (r *PublicIPPolicyRuleResource) ValidateConfig(ctx context.Context, req res
 			"public_ip_name must be set.")
 	}
 
-	hasSource := !data.Source.IsNull() && strings.TrimSpace(data.Source.ValueString()) != ""
+	hasSource := !data.Source.IsNull() && !data.Source.IsUnknown() && strings.TrimSpace(data.Source.ValueString()) != ""
 	hasSourceConfig := !data.SourceConfig.IsNull() && !data.SourceConfig.IsUnknown() && len(data.SourceConfig.Elements()) > 0
-	if !hasSource && !hasSourceConfig {
+	if !data.Source.IsUnknown() && !data.SourceConfig.IsUnknown() && !hasSource && !hasSourceConfig {
 		resp.Diagnostics.AddError("Invalid Configuration",
 			"One of source or source_config must be specified.")
 	}
 
 	hasServices := !data.Services.IsNull() && !data.Services.IsUnknown() && len(data.Services.Elements()) > 0
 	hasServiceConfig := !data.ServiceConfig.IsNull() && !data.ServiceConfig.IsUnknown() && len(data.ServiceConfig.Elements()) > 0
-	if !hasServices && !hasServiceConfig {
+	if !data.Services.IsUnknown() && !data.ServiceConfig.IsUnknown() && !hasServices && !hasServiceConfig {
 		resp.Diagnostics.AddError("Invalid Configuration",
 			"One of services or service_config must be specified.")
 	}

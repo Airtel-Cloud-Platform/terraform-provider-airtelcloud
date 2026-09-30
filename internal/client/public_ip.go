@@ -754,6 +754,7 @@ func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.Creat
 	scopedClient := c.WithAvailabilityZone(availabilityZone)
 
 	falseVal := false
+	trueVal := true
 	policySource := make([]publicIPPolicySourceEntry, 0, len(req.SourceConfig)+1)
 	for _, source := range req.SourceConfig {
 		sourceType := strings.TrimSpace(strings.ToLower(source.SourceType))
@@ -773,13 +774,17 @@ func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.Creat
 			case geographic != nil:
 				sourceType = "geographic"
 			case ipCIDR == "" || strings.EqualFold(ipCIDR, "any") || strings.EqualFold(ipCIDR, "all"):
-				sourceType = "all"
+				sourceType = "ip_cidr"
+				ipCIDR = "0.0.0.0/0"
 			default:
 				sourceType = "ip_cidr"
 			}
 		}
-		if sourceType == "any" {
-			sourceType = "all"
+		if sourceType == "any" || sourceType == "all" {
+			sourceType = "ip_cidr"
+			if ipCIDR == "" || strings.EqualFold(ipCIDR, "any") || strings.EqualFold(ipCIDR, "all") {
+				ipCIDR = "0.0.0.0/0"
+			}
 		}
 
 		if sourceType == "ip_cidr" && ipCIDR == "" {
@@ -789,18 +794,18 @@ func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.Creat
 			continue
 		}
 
+		anyCIDR := sourceType == "ip_cidr" && ipCIDR == "0.0.0.0/0"
 		entry := publicIPPolicySourceEntry{SourceType: sourceType}
 		switch sourceType {
 		case "geographic":
 			entry.Geographic = geographic
 		case "ip_cidr":
 			entry.IPCIDR = ipCIDR
-			entry.CreateNew = &falseVal
-			if source.CreateNew != nil {
-				entry.CreateNew = source.CreateNew
+			if anyCIDR {
+				entry.CreateNew = &trueVal
+			} else {
+				entry.CreateNew = &falseVal
 			}
-		case "all":
-			entry.CreateNew = &falseVal
 			if source.CreateNew != nil {
 				entry.CreateNew = source.CreateNew
 			}
@@ -823,8 +828,9 @@ func (c *Client) CreatePublicIPPolicyRule(ctx context.Context, req *models.Creat
 		lower := strings.ToLower(source)
 		if source == "" || lower == "any" || lower == "all" {
 			policySource = []publicIPPolicySourceEntry{{
-				CreateNew:  &falseVal,
-				SourceType: "all",
+				CreateNew:  &trueVal,
+				SourceType: "ip_cidr",
+				IPCIDR:     "0.0.0.0/0",
 			}}
 		} else {
 			policySource = []publicIPPolicySourceEntry{{
