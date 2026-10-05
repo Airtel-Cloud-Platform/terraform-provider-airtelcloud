@@ -51,35 +51,32 @@ func TestAccProtectionResource(t *testing.T) {
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
-			// Create and Read testing
 			{
-				Config: testAccProtectionResourceConfig("test-protection"),
+				Config: testAccProtectionResourceConfig(),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("airtelcloud_protection.test", "id"),
-					resource.TestCheckResourceAttr("airtelcloud_protection.test", "name", "test-protection"),
-					resource.TestCheckResourceAttr("airtelcloud_protection.test", "compute_id", "test-compute-id"),
+					resource.TestCheckResourceAttr("airtelcloud_protection.test", "vm_name", "test-vm"),
+					resource.TestCheckResourceAttrSet("airtelcloud_protection.test", "compute_id"),
 					resource.TestCheckResourceAttr("airtelcloud_protection.test", "protection_plan", "daily-plan"),
-					resource.TestCheckResourceAttr("airtelcloud_protection.test", "enable_scheduler", "true"),
 					resource.TestCheckResourceAttrSet("airtelcloud_protection.test", "status"),
 				),
 			},
-			// ImportState testing
 			{
 				ResourceName:      "airtelcloud_protection.test",
 				ImportState:       true,
 				ImportStateVerify: true,
 				ImportStateVerifyIgnore: []string{
+					"vm_name",
 					"enable_scheduler",
 					"start_date",
 					"end_date",
 					"start_time",
+					"weekday",
 				},
 			},
-			// Update testing
 			{
-				Config: testAccProtectionResourceConfigUpdated("updated-protection"),
+				Config: testAccProtectionResourceConfigUpdated(),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("airtelcloud_protection.test", "name", "updated-protection"),
 					resource.TestCheckResourceAttr("airtelcloud_protection.test", "description", "Updated description"),
 				),
 			},
@@ -87,26 +84,26 @@ func TestAccProtectionResource(t *testing.T) {
 	})
 }
 
-func testAccProtectionResourceConfig(name string) string {
-	return fmt.Sprintf(`
+func testAccProtectionResourceConfig() string {
+	return `
 resource "airtelcloud_protection" "test" {
-  name             = %[1]q
   description      = "Test protection"
-  compute_id       = "test-compute-id"
+  vm_name          = "test-vm"
   protection_plan  = "daily-plan"
-  enable_scheduler = "true"
+  start_date       = "10/06/2026"
+  start_time       = "02:00 AM"
 }
-`, name)
+`
 }
 
-func testAccProtectionResourceConfigUpdated(name string) string {
-	return fmt.Sprintf(`
+func testAccProtectionResourceConfigUpdated() string {
+	return `
 resource "airtelcloud_protection" "test" {
-  name             = %[1]q
   description      = "Updated description"
-  compute_id       = "test-compute-id"
+  vm_name          = "test-vm"
   protection_plan  = "daily-plan"
-  enable_scheduler = "true"
+  start_date       = "10/06/2026"
+  start_time       = "02:00 AM"
 }
-`, name)
+`
 }

@@ -1251,30 +1251,29 @@ Manages a backup protection policy for a compute instance. Links a VM to a prote
 
 ```terraform
 resource "airtelcloud_protection" "web_server" {
-  name             = "web-backup"
-  description      = "Backup policy for web server"
-  compute_id       = airtelcloud_vm.web1.id
-  protection_plan  = airtelcloud_protection_plan.daily.name
-  enable_scheduler = "true"
-  start_date       = "2026-04-01"
-  start_time       = "02:00"
+  description     = "Backup policy for web server"
+  vm_name         = airtelcloud_vm.web1.instance_name
+  protection_plan = airtelcloud_protection_plan.daily.id
+  start_date      = "10/06/2026"
+  start_time      = "02:00 AM"
 }
 ```
+
+Policy `name` is the VM name. `compute_id` is looked up from `vm_name`.
 
 #### Argument Reference
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `name` | String | Yes | Protection policy name. Updatable. |
-| `compute_id` | String | Yes | Compute instance ID. Forces new resource. |
-| `protection_plan` | String | Yes | Protection plan name. Updatable. |
+| `vm_name` | String | Yes | VM `instance_name`. Sent as form `name`. Forces new resource. |
+| `protection_plan` | String | Yes | Plan UUID or console name. Prefer `.id`. |
 | `description` | String | No | Policy description. Updatable. |
 | `policy_type_id` | String | No | Policy type ID. |
-| `enable_scheduler` | String | No | Enable scheduled backups. Default: `"true"`. Updatable. |
-| `start_date` | String | No | Schedule start date (e.g., `2026-04-01`). Mutually exclusive with `weekday`. Updatable. |
+| `enable_scheduler` | String | No | Compatibility only; console create does not send this. |
+| `start_date` | String | No | `YYYY-MM-DD` or `MM/DD/YYYY`. Mutually exclusive with `weekday`. |
 | `end_date` | String | No | Schedule end date. Updatable. |
-| `start_time` | String | No | Schedule start time in IST (`Asia/Kolkata`). Accepts `HH:MM` (e.g., `02:00`) or `H:MM AM/PM` (e.g., `1:15 AM`). Sent to API as `H:MM AM/PM`. Updatable. |
-| `weekday` | String | No | Optional weekday convenience input (`monday`..`sunday` or `mon`..`sun`). Mutually exclusive with `start_date`. Converted to the next matching date in IST (`Asia/Kolkata`). |
+| `start_time` | String | No | IST `HH:MM` or `H:MM AM/PM`. |
+| `weekday` | String | No | `monday`..`sunday`. Mutually exclusive with `start_date`. |
 
 #### Attribute Reference
 

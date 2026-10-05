@@ -304,14 +304,11 @@ resource "airtelcloud_protection_plan" "daily" {
 
 #Create a protection policy for web server 1
 resource "airtelcloud_protection" "web_server" {
-  name        = "${var.resource_prefix}-web-backup-schedule"
-  description = "Backup policy for web server"
-  compute_id  = airtelcloud_vm.web1.id
-  # protection_plan accepts either the plan name (recommended for readability) or UUID
-  protection_plan  = airtelcloud_protection_plan.daily.name
-  enable_scheduler = "true"
-  start_date       = "2026-04-01"
-  start_time       = "02:00"
+  description     = "Backup policy for web server"
+  vm_name         = airtelcloud_vm.web1.instance_name
+  protection_plan = airtelcloud_protection_plan.daily.id
+  start_date      = "2026-04-01"
+  start_time      = "02:00"
 }
 
 # =============================================================================
