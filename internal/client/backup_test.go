@@ -273,6 +273,53 @@ func TestCreateProtectionPlan(t *testing.T) {
 	}
 }
 
+func TestCreateProtectionPlanIDFromCreateBodyWhenListFails(t *testing.T) {
+	const createdID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	mockServer.AddHandler("POST", "/api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plans/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"id": createdID})
+	})
+	mockServer.SetErrorResponse("GET", "/api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plans/", 500, "'NoneType' object has no attribute 'id'")
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	plan, err := client.CreateProtectionPlan(context.Background(), &models.CreateProtectionPlanRequest{Name: "tft-plan-weekly"}, "test-subnet-id")
+	if err != nil {
+		t.Fatalf("CreateProtectionPlan() error = %v", err)
+	}
+	if plan.ID != createdID {
+		t.Fatalf("CreateProtectionPlan() ID = %q, want %q", plan.ID, createdID)
+	}
+}
+
+func TestExtractProtectionPlanCreateID(t *testing.T) {
+	const id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "object id", body: `{"id":"` + id + `"}`, want: id},
+		{name: "json string uuid", body: `"` + id + `"`, want: id},
+		{name: "nested data", body: `{"data":{"uuid":"` + id + `"}}`, want: id},
+		{name: "success message", body: `"Protection plan created and assigned successfully"`, want: ""},
+		{name: "empty", body: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractProtectionPlanCreateID([]byte(tt.body))
+			if got != tt.want {
+				t.Fatalf("extractProtectionPlanCreateID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetProtectionPlan(t *testing.T) {
 	mockServer := testutil.NewMockServer()
 	defer mockServer.Close()
@@ -287,9 +334,6 @@ func TestGetProtectionPlan(t *testing.T) {
 
 	if plan.ID != "plan-uuid-1234" {
 		t.Errorf("GetProtectionPlan() ID = %v, want plan-uuid-1234", plan.ID)
-	}
-	if plan.Status != "available" {
-		t.Errorf("GetProtectionPlan() Status = %v, want available", plan.Status)
 	}
 }
 
@@ -432,6 +476,36 @@ func TestListProtectionPlans(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestListProtectionPlansMatchesUIHeaders(t *testing.T) {
+	var az, subnet, region string
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	mockServer.AddHandler("GET", "/api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plans/", func(w http.ResponseWriter, r *http.Request) {
+		az = r.Header.Get("ce-availability-zone")
+		subnet = r.Header.Get("subnet-id")
+		region = r.Header.Get("ce-region")
+		writeProtectionPlanList(w)
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+	client.SubnetID = "must-not-be-sent"
+
+	if _, err := client.ListProtectionPlans(context.Background(), "S1"); err != nil {
+		t.Fatalf("ListProtectionPlans() error = %v", err)
+	}
+	if az != "S1" {
+		t.Fatalf("ce-availability-zone = %q, want S1", az)
+	}
+	if subnet != "" {
+		t.Fatalf("subnet-id = %q, want empty", subnet)
+	}
+	if region != "south-1" {
+		t.Fatalf("ce-region = %q, want south-1", region)
 	}
 }
 

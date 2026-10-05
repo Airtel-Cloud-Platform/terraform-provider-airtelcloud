@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -84,33 +85,41 @@ func (c *Client) DisableProtectionScheduler(ctx context.Context, computeID int) 
 // --- Protection Plan CRUD ---
 
 // CreateProtectionPlan creates a new protection plan.
-// The API returns a success message string, so after creation we list plans to find the newly created one by name.
+// POST uses subnet-id (create form). UUID is taken from the create body when
+// present; otherwise GET list with ce-availability-zone (UI list), not subnet-id.
 func (c *Client) CreateProtectionPlan(ctx context.Context, req *models.CreateProtectionPlanRequest, subnetID string) (*models.ProtectionPlan, error) {
 	scopedClient := c.WithSubnetID(subnetID)
 	formData := structToFormData(req)
 
-	// The API returns a success message string, not a plan object — pass nil to skip unmarshal
-	err := scopedClient.PostURLEncodedForm(ctx, fmt.Sprintf("%s/protection_plans/", c.backupBasePath()), formData, nil)
+	var raw json.RawMessage
+	err := scopedClient.PostURLEncodedForm(ctx, fmt.Sprintf("%s/protection_plans/", c.backupBasePath()), formData, &raw)
 	if err != nil {
-		return nil, err
+		var syn *json.SyntaxError
+		var typ *json.UnmarshalTypeError
+		if !errors.As(err, &syn) && !errors.As(err, &typ) {
+			return nil, err
+		}
+		tflog.Warn(ctx, "Protection plan create returned a non-JSON body; recovering ID from list", map[string]interface{}{
+			"error": err.Error(),
+		})
+		raw = nil
 	}
 
-	// After successful creation, list plans and find the one matching the requested name
-	plans, err := c.ListProtectionPlans(ctx, subnetID)
-	if err != nil {
-		return nil, fmt.Errorf("protection plan %q was created on the backend but could not be retrieved after retries "+
-			"(the backend list endpoint timed out); it may need to be imported or removed manually: %w", req.Name, err)
+	if id := extractProtectionPlanCreateID(raw); id != "" {
+		return &models.ProtectionPlan{ID: id, Name: req.Name}, nil
+	}
+
+	plans, listErr := c.ListProtectionPlans(ctx, req.SelectorValue)
+	if listErr != nil {
+		return nil, fmt.Errorf("protection plan %q was created on the backend but could not be retrieved after retries; import it by id from the UI: %w", req.Name, listErr)
 	}
 
 	for _, plan := range plans {
-		// The API transforms the name into a pattern like S1-PERFTEST-CELL-1-{NAME}-BKP-PP
-		// but also stores the original input. Match by suffix containing the input name (case-insensitive).
 		if plan.Name != "" && containsIgnoreCase(plan.Name, req.Name) {
 			return &plan, nil
 		}
 	}
 
-	// If exact match not found, return the most recently created plan
 	if len(plans) > 0 {
 		return &plans[len(plans)-1], nil
 	}
@@ -118,22 +127,65 @@ func (c *Client) CreateProtectionPlan(ctx context.Context, req *models.CreatePro
 	return nil, fmt.Errorf("protection plan created but could not find it in the list")
 }
 
-// GetProtectionPlan retrieves a single protection plan by ID via the dedicated
-// GET endpoint (.../protection_plan/{id}, singular). This avoids the expensive and
-// intermittently slow full-list call on every read. A missing plan returns HTTP 404,
-// which surfaces as a not-found *APIError.
-func (c *Client) GetProtectionPlan(ctx context.Context, id string, subnetID string) (*models.ProtectionPlan, error) {
-	scopedClient := c.WithSubnetID(subnetID)
-	path := fmt.Sprintf("%s/protection_plan/%s", c.backupBasePath(), id)
+func extractProtectionPlanCreateID(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var asString string
+	if err := json.Unmarshal(body, &asString); err == nil {
+		if isUUID(asString) {
+			return asString
+		}
+		return ""
+	}
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return ""
+	}
+	return findUUIDValue(v)
+}
 
-	var resp models.ProtectionPlanDetailResponse
-	err := c.doProtectionPlanRequestWithRetry(ctx, func() error {
-		return scopedClient.Get(ctx, path, &resp)
-	})
+func findUUIDValue(v any) string {
+	switch t := v.(type) {
+	case string:
+		if isUUID(t) {
+			return t
+		}
+	case map[string]any:
+		for _, key := range []string{"id", "uuid", "plan_id"} {
+			if s, ok := t[key].(string); ok && isUUID(s) {
+				return s
+			}
+		}
+		for _, key := range []string{"data", "policy_attribute"} {
+			if nested, ok := t[key]; ok {
+				if id := findUUIDValue(nested); id != "" {
+					return id
+				}
+			}
+		}
+		for _, val := range t {
+			if id := findUUIDValue(val); id != "" {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// GetProtectionPlan finds a plan by ID from the AZ-scoped list. The singular GET
+// with subnet-id 500s ('NoneType'.id); missing IDs are reported as 404.
+func (c *Client) GetProtectionPlan(ctx context.Context, id string, az string) (*models.ProtectionPlan, error) {
+	plans, err := c.ListProtectionPlans(ctx, az)
 	if err != nil {
 		return nil, err
 	}
-	return &resp.PolicyAttribute, nil
+	for i := range plans {
+		if plans[i].ID == id {
+			return &plans[i], nil
+		}
+	}
+	return nil, &APIError{StatusCode: 404, Message: fmt.Sprintf("protection plan %q not found", id)}
 }
 
 // Retry parameters for the protection plan backend endpoints, which are intermittently
@@ -182,8 +234,9 @@ func (c *Client) doProtectionPlanRequestWithRetry(ctx context.Context, fn func()
 // create-time ID recovery (the create POST returns only a success message, so the new
 // plan's ID must be discovered by name from the list). The backend list endpoint
 // intermittently times out (HTTP 500), so transient failures are retried with backoff.
-func (c *Client) ListProtectionPlans(ctx context.Context, subnetID string) ([]models.ProtectionPlan, error) {
-	scopedClient := c.WithSubnetID(subnetID)
+func (c *Client) ListProtectionPlans(ctx context.Context, az string) ([]models.ProtectionPlan, error) {
+	// UI GET uses ce-availability-zone + ce-region and omits subnet-id.
+	scopedClient := c.WithAvailabilityZone(az).WithSubnetID("")
 	path := fmt.Sprintf("%s/protection_plans/", c.backupBasePath())
 
 	var resp models.ProtectionPlanListResponse
@@ -215,11 +268,11 @@ func isRetryableError(err error) bool {
 // If nameOrID already looks like a UUID it is returned unchanged.
 // Otherwise the plans list is searched for a plan whose name matches nameOrID (exact,
 // case-insensitive first, then substring).
-func (c *Client) ResolveProtectionPlanID(ctx context.Context, nameOrID, subnetID string) (string, error) {
+func (c *Client) ResolveProtectionPlanID(ctx context.Context, nameOrID, az string) (string, error) {
 	if isUUID(nameOrID) {
 		return nameOrID, nil
 	}
-	plans, err := c.ListProtectionPlans(ctx, subnetID)
+	plans, err := c.ListProtectionPlans(ctx, az)
 	if err != nil {
 		return "", fmt.Errorf("listing protection plans to resolve %q: %w", nameOrID, err)
 	}

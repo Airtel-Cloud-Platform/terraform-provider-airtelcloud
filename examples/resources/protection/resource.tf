@@ -46,15 +46,12 @@ variable "resource_prefix" {
 
 # Create a protection plan with daily schedule and 30-day retention
 resource "airtelcloud_protection_plan" "daily" {
-  name           = "${var.resource_prefix}-daily-backup"
-  description    = "Daily backup with 30-day retention"
-  retention      = 1
-  retention_unit = "DAYS"
-  recurrence     = 86400
-  selector_key   = "AZ"
-  selector_value = "N1"
-  subnet_name    = "subnet1213"
-  vpc_name       = "copper-vpc1"
+  name              = "${var.resource_prefix}-backup"
+  description       = "Daily backup with 30-day retention"
+  vm_name           = "Test_VM2K22A18-2"
+  recurrence        = 1
+  recurrence_period = "daily"
+  retention         = 1
 }
 
 # Create a protection policy for a compute instance
@@ -76,15 +73,12 @@ resource "airtelcloud_protection" "web_server" {
 
 # Weekly backup plan (alternative configuration)
 resource "airtelcloud_protection_plan" "weekly" {
-  name           = "${var.resource_prefix}-weekly-backup"
-  description    = "Weekly backup with 12-week retention"
-  retention      = 12
-  retention_unit = "WEEKS"
-  recurrence     = 604800
-  selector_key   = "AZ"
-  selector_value = "S1"
-  subnet_name    = "subnet1213"
-  vpc_name       = "copper-vpc1"
+  name              = "${var.resource_prefix}-backup"
+  description       = "Weekly backup with 84-day retention"
+  vm_name           = "Test_VM2K22A18-2"
+  recurrence        = 1
+  recurrence_period = "weekly"
+  retention         = 84
 }
 
 # Output protection details

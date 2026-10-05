@@ -294,14 +294,12 @@ resource "airtelcloud_vm" "web1" {
 
 # Create a protection plan with daily schedule and 30-day retention
 resource "airtelcloud_protection_plan" "daily" {
-  name           = "${var.resource_prefix}-daily-backup-plan"
-  description    = "Daily backup with 30-day retention"
-  retention      = 1
-  retention_unit = "DAYS"
-  recurrence     = 86400
-  selector_key   = "AZ"
-  selector_value = "S1"
-  subnet_id      = "35df162d-5211-4d58-84ed-6a499626949c"
+  name              = "${var.resource_prefix}-backup-plan"
+  description       = "Daily backup with 30-day retention"
+  vm_name           = airtelcloud_vm.web1.instance_name
+  recurrence        = 1
+  recurrence_period = "daily"
+  retention         = 1
 }
 
 #Create a protection policy for web server 1

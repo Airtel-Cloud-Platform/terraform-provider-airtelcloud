@@ -1201,16 +1201,18 @@ Manages a backup protection plan that defines schedule and retention policies.
 
 ~> **Warning:** The Airtel Cloud API does not support deletion of protection plans. Running `terraform destroy` will only remove the plan from Terraform state -- the plan will continue to exist in the Airtel Cloud platform.
 
+Set `vm_name` to an existing VM. AZ (`selector_value`) and subnet header come from that VM. `selector_key` is always `AZ`; `retention_unit` is always `DAYS`. The API name is `{name}-daily` or `{name}-weekly`.
+
 #### Example Usage
 
 ```terraform
 resource "airtelcloud_protection_plan" "daily" {
-  name           = "daily-backup"
-  description    = "Daily backup with 30-day retention"
-  schedule_type  = "daily"
-  retention      = 30
-  retention_unit = "days"
-  recurrence     = 1
+  name              = "test"
+  description       = "Daily backup with 30-day retention"
+  vm_name           = airtelcloud_vm.web1.instance_name
+  recurrence        = 1
+  recurrence_period = "daily"
+  retention         = 30
 }
 ```
 
@@ -1220,14 +1222,12 @@ All arguments force replacement on change (protection plans are immutable).
 
 | Argument | Type | Required | Description |
 |---|---|---|---|
-| `name` | String | Yes | Plan name. |
-| `description` | String | No | Plan description. |
-| `schedule_type` | String | No | Schedule type (e.g., `daily`, `weekly`). |
-| `selector_key` | String | No | Selector key for filtering. |
-| `selector_value` | String | No | Selector value. |
-| `retention` | Int64 | No | Number of backups to retain. |
-| `retention_unit` | String | No | Retention unit (e.g., `days`). |
-| `recurrence` | Int64 | No | Recurrence interval. |
+| `name` | String | Yes | Plan name (API suffix `-daily` / `-weekly` is added). |
+| `description` | String | Yes | Plan description. |
+| `vm_name` | String | Yes | Existing VM instance name. AZ and subnet are read from it. |
+| `recurrence` | Number | Yes | Count of period units, 1–30. |
+| `recurrence_period` | String | Yes | `daily` or `weekly`. |
+| `retention` | Number | Yes | Retention in days, 1–365. |
 
 #### Attribute Reference
 

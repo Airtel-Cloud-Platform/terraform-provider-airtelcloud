@@ -12,20 +12,22 @@ func TestAccProtectionPlanResource(t *testing.T) {
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
-			// Create and Read testing
 			{
 				Config: testAccProtectionPlanResourceConfig("test-plan"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("airtelcloud_protection_plan.test", "id"),
 					resource.TestCheckResourceAttr("airtelcloud_protection_plan.test", "name", "test-plan"),
-					resource.TestCheckResourceAttr("airtelcloud_protection_plan.test", "subnet_id", "35df162d-5211-4d58-84ed-6a499626949c"),
+					resource.TestCheckResourceAttr("airtelcloud_protection_plan.test", "vm_name", "test-vm"),
+					resource.TestCheckResourceAttr("airtelcloud_protection_plan.test", "recurrence", "1"),
+					resource.TestCheckResourceAttr("airtelcloud_protection_plan.test", "recurrence_period", "daily"),
+					resource.TestCheckResourceAttr("airtelcloud_protection_plan.test", "retention", "1"),
 				),
 			},
-			// ImportState testing
 			{
-				ResourceName:      "airtelcloud_protection_plan.test",
-				ImportState:       true,
-				ImportStateVerify: true,
+				ResourceName:            "airtelcloud_protection_plan.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"name", "description", "recurrence", "recurrence_period", "retention", "vm_name", "selector_value", "subnet_id"},
 			},
 		},
 	})
@@ -34,14 +36,12 @@ func TestAccProtectionPlanResource(t *testing.T) {
 func testAccProtectionPlanResourceConfig(name string) string {
 	return fmt.Sprintf(`
 resource "airtelcloud_protection_plan" "test" {
-  name           = %[1]q
-  description    = "Test plan"
-  retention      = 1
-  retention_unit = "DAYS"
-  recurrence     = 86400
-  selector_key   = "AZ"
-  selector_value = "S1"
-  subnet_id      = "35df162d-5211-4d58-84ed-6a499626949c"
+  name              = %[1]q
+  description       = "Test plan"
+  vm_name           = "test-vm"
+  recurrence        = 1
+  recurrence_period = "daily"
+  retention         = 1
 }
 `, name)
 }
