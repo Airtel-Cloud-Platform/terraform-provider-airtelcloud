@@ -126,14 +126,12 @@ variable "create_public_ip_and_policy" {
 
 # Protection plan used by VM backup settings.
 #resource "airtelcloud_protection_plan" "windows_daily" {
-#  name           = "${var.resource_prefix}-windows-daily-backup"
-#  description    = "Daily backup plan for Windows VM example"
-#  retention      = 7
-#  retention_unit = "DAYS"
-#  recurrence     = 86400
-#  selector_key   = "AZ"
-#  selector_value = var.availability_zone
-#  subnet_id      = var.protection_subnet_id
+#  name              = "${var.resource_prefix}-windows-backup"
+#  description       = "Daily backup plan for Windows VM example"
+#  vm_name           = airtelcloud_vm.windows_server.instance_name
+#  recurrence        = 1
+#  recurrence_period = "daily"
+#  retention         = 7
 #}
 
 resource "airtelcloud_vm" "windows_server" {

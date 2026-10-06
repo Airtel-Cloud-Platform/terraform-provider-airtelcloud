@@ -71,7 +71,7 @@ func TestProtectionPlanIntegration_CreateGetList(t *testing.T) {
 	t.Logf("NOTE: the protection-plan API has no delete endpoint; plan %s (%s) is left as an orphan", plan.ID, plan.Name)
 
 	// Get by ID (implemented as a filtered list) must return the plan.
-	got, err := client.GetProtectionPlan(ctx, plan.ID, subnetID)
+	got, err := client.GetProtectionPlan(ctx, plan.ID, protectionTestAvailabilityZone())
 	if err != nil {
 		t.Fatalf("GetProtectionPlan failed: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestProtectionPlanIntegration_CreateGetList(t *testing.T) {
 	}
 
 	// The full list must include the new plan.
-	plans, err := client.ListProtectionPlans(ctx, subnetID)
+	plans, err := client.ListProtectionPlans(ctx, protectionTestAvailabilityZone())
 	if err != nil {
 		t.Fatalf("ListProtectionPlans failed: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestProtectionPlanIntegration_List(t *testing.T) {
 	subnetID := getProtectionTestSubnetID(t)
 	ctx := context.Background()
 
-	plans, err := client.ListProtectionPlans(ctx, subnetID)
+	plans, err := client.ListProtectionPlans(ctx, protectionTestAvailabilityZone())
 	if err != nil {
 		t.Fatalf("ListProtectionPlans failed: %v", err)
 	}

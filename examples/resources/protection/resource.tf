@@ -44,47 +44,38 @@ variable "resource_prefix" {
   default     = "tft"
 }
 
+variable "vm_name" {
+  description = "Existing VM instance_name"
+  type        = string
+}
+
 # Create a protection plan with daily schedule and 30-day retention
 resource "airtelcloud_protection_plan" "daily" {
-  name           = "${var.resource_prefix}-daily-backup"
-  description    = "Daily backup with 30-day retention"
-  retention      = 1
-  retention_unit = "DAYS"
-  recurrence     = 86400
-  selector_key   = "AZ"
-  selector_value = "N1"
-  subnet_name    = "subnet1213"
-  vpc_name       = "copper-vpc1"
+  name              = "${var.resource_prefix}-backup"
+  description       = "Daily backup with 30-day retention"
+  vm_name           = var.vm_name
+  recurrence        = 1
+  recurrence_period = "daily"
+  retention         = 1
 }
 
 # Create a protection policy for a compute instance
 resource "airtelcloud_protection" "web_server" {
-  name        = "${var.resource_prefix}-web-backup"
-  description = "Backup policy for web server"
-  #compute_id       = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
-  # Or reference the instance by name instead of id (mutually exclusive with compute_id):
-  compute_name = "Test_VM2K22A18-2"
-  # protection_plan must be the plan UUID; reference the plan's id (not its name).
-  enable_scheduler = "true"
-  protection_plan  = airtelcloud_protection_plan.daily.id
-  # start_date accepts ISO (YYYY-MM-DD); start_time accepts 24-hour HH:MM.
-  # The provider converts them to the API's MM/DD/YYYY and 12-hour AM/PM formats.
-  # start_date = "2026-07-20"
-  start_time = "11:30 AM"
-  weekday    = "thursday"
+  description     = "Backup policy for web server"
+  vm_name         = var.vm_name
+  protection_plan = airtelcloud_protection_plan.daily.id
+  start_date      = "10/06/2026"
+  start_time      = "02:00 AM"
 }
 
 # Weekly backup plan (alternative configuration)
 resource "airtelcloud_protection_plan" "weekly" {
-  name           = "${var.resource_prefix}-weekly-backup"
-  description    = "Weekly backup with 12-week retention"
-  retention      = 12
-  retention_unit = "WEEKS"
-  recurrence     = 604800
-  selector_key   = "AZ"
-  selector_value = "S1"
-  subnet_name    = "subnet1213"
-  vpc_name       = "copper-vpc1"
+  name              = "${var.resource_prefix}-backup"
+  description       = "Weekly backup with 84-day retention"
+  vm_name           = var.vm_name
+  recurrence        = 1
+  recurrence_period = "weekly"
+  retention         = 84
 }
 
 # Output protection details

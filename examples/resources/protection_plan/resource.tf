@@ -44,30 +44,31 @@ variable "resource_prefix" {
   default     = "tft"
 }
 
+variable "vm_name" {
+  description = "Existing VM instance_name used to read AZ and subnet"
+  type        = string
+}
+
 # Create a daily backup protection plan with 30-day retention.
 # Note: the API does not support deletion of protection plans.
 # Destroying this resource only removes it from Terraform state.
 resource "airtelcloud_protection_plan" "daily" {
-  name           = "${var.resource_prefix}-daily-backup"
-  description    = "Daily backup with 30-day retention"
-  retention      = 30
-  retention_unit = "DAYS"
-  recurrence     = 86400
-  selector_key   = "AZ"
-  selector_value = "S1"
-  subnet_id      = "35df162d-5211-4d58-84ed-6a499626949c"
+  name              = "${var.resource_prefix}-backup"
+  description       = "Daily backup with 30-day retention"
+  vm_name           = var.vm_name
+  recurrence        = 1
+  recurrence_period = "daily"
+  retention         = 30
 }
 
 # Weekly backup plan
 resource "airtelcloud_protection_plan" "weekly" {
-  name           = "${var.resource_prefix}-weekly-backup"
-  description    = "Weekly backup with 12-week retention"
-  retention      = 12
-  retention_unit = "WEEKS"
-  recurrence     = 604800
-  selector_key   = "AZ"
-  selector_value = "S1"
-  subnet_id      = "35df162d-5211-4d58-84ed-6a499626949c"
+  name              = "${var.resource_prefix}-backup"
+  description       = "Weekly backup with 84-day retention"
+  vm_name           = var.vm_name
+  recurrence        = 1
+  recurrence_period = "weekly"
+  retention         = 84
 }
 
 output "daily_plan_id" {

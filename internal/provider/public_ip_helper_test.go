@@ -14,8 +14,8 @@ func TestGetPublicIPAddr(t *testing.T) {
 	}{
 		{"nil_input", nil, ""},
 		{"public_ip_set", &models.PublicIP{PublicIP: "203.0.113.5", IP: ""}, "203.0.113.5"},
-		{"ip_set_only", &models.PublicIP{PublicIP: "", IP: "103.239.168.100"}, "103.239.168.100"},
-		{"both_set_prefers_public_ip", &models.PublicIP{PublicIP: "203.0.113.5", IP: "103.239.168.100"}, "203.0.113.5"},
+		{"ip_set_only", &models.PublicIP{PublicIP: "", IP: "xxx.xxx.xxx.xxx"}, "xxx.xxx.xxx.xxx"},
+		{"both_set_prefers_public_ip", &models.PublicIP{PublicIP: "203.0.113.5", IP: "xxx.xxx.xxx.xxx"}, "203.0.113.5"},
 		{"none_set", &models.PublicIP{PublicIP: "", IP: ""}, ""},
 	}
 

@@ -1162,7 +1162,7 @@ func (ms *MockServer) createPublicIPHandler(w http.ResponseWriter, r *http.Reque
 
 	response := models.PublicIP{
 		UUID:     "test-public-ip-uuid",
-		PublicIP: "103.239.168.100",
+		PublicIP: "xxx.xxx.xxx.xxx",
 	}
 	json.NewEncoder(w).Encode(response)
 }
@@ -1172,7 +1172,7 @@ func (ms *MockServer) getPublicIPHandler(w http.ResponseWriter, r *http.Request)
 
 	response := models.PublicIP{
 		UUID:          "test-public-ip-uuid",
-		IP:            "103.239.168.100",
+		IP:            "xxx.xxx.xxx.xxx",
 		Domain:        "airtelcloud.itm",
 		ObjectName:    "test-public-ip",
 		TargetVIP:     "10.1.99.172",
@@ -1192,7 +1192,7 @@ func (ms *MockServer) listPublicIPsHandler(w http.ResponseWriter, r *http.Reques
 		Items: []models.PublicIP{
 			{
 				UUID:          "test-public-ip-uuid",
-				IP:            "103.239.168.100",
+				IP:            "xxx.xxx.xxx.xxx",
 				Domain:        "airtelcloud.itm",
 				ObjectName:    "test-public-ip",
 				TargetVIP:     "10.1.99.172",

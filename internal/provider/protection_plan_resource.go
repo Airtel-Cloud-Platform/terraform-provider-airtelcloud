@@ -3,18 +3,31 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client"
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
+)
+
+const (
+	protectionPlanSelectorKey   = "AZ"
+	protectionPlanRetentionUnit = "DAYS"
+	secondsPerDay               = 86400
+	protectionPlanRecurrenceMin = 1
+	protectionPlanRecurrenceMax = 30
+	protectionPlanRetentionMin  = 1
+	protectionPlanRetentionMax  = 365
 )
 
 var _ resource.Resource = &ProtectionPlanResource{}
@@ -30,19 +43,103 @@ type ProtectionPlanResource struct {
 }
 
 type ProtectionPlanResourceModel struct {
-	ID            types.String `tfsdk:"id"`
-	Name          types.String `tfsdk:"name"`
-	Description   types.String `tfsdk:"description"`
-	ScheduleType  types.String `tfsdk:"schedule_type"`
-	SelectorKey   types.String `tfsdk:"selector_key"`
-	SelectorValue types.String `tfsdk:"selector_value"`
-	Retention     types.Int64  `tfsdk:"retention"`
-	RetentionUnit types.String `tfsdk:"retention_unit"`
-	Recurrence    types.Int64  `tfsdk:"recurrence"`
-	VPCID         types.String `tfsdk:"vpc_id"`
-	VPCName       types.String `tfsdk:"vpc_name"`
-	SubnetID      types.String `tfsdk:"subnet_id"`
-	SubnetName    types.String `tfsdk:"subnet_name"`
+	ID               types.String `tfsdk:"id"`
+	Name             types.String `tfsdk:"name"`
+	Description      types.String `tfsdk:"description"`
+	Recurrence       types.Int64  `tfsdk:"recurrence"`
+	RecurrencePeriod types.String `tfsdk:"recurrence_period"`
+	Retention        types.Int64  `tfsdk:"retention"`
+	VMName           types.String `tfsdk:"vm_name"`
+	SelectorValue    types.String `tfsdk:"selector_value"`
+	SubnetID         types.String `tfsdk:"subnet_id"`
+}
+
+func protectionPlanAPIName(name, period string) string {
+	n := strings.TrimSpace(name)
+	p := strings.ToLower(strings.TrimSpace(period))
+	if n == "" || p == "" {
+		return n
+	}
+	suffix := "-" + p
+	if strings.HasSuffix(strings.ToLower(n), suffix) {
+		return n
+	}
+	return n + suffix
+}
+
+func protectionPlanRecurrenceSeconds(n int64, period string) int {
+	switch strings.ToLower(strings.TrimSpace(period)) {
+	case "weekly":
+		return int(n) * 7 * secondsPerDay
+	default:
+		return int(n) * secondsPerDay
+	}
+}
+
+func protectionPlanOutOfRange(got, min, max int64) bool {
+	return got < min || got > max
+}
+
+func protectionPlanRangeError(attr string, got, min, max int64, unit string) string {
+	suffix := ""
+	if unit != "" {
+		suffix = " " + unit
+	}
+	return fmt.Sprintf("%s must be between %d and %d%s (got %d). Fix the value; the backup API is not called.", attr, min, max, suffix, got)
+}
+
+type protectionPlanIntRangeValidator struct {
+	min, max int64
+	attr     string
+	unit     string
+}
+
+func (v protectionPlanIntRangeValidator) Description(_ context.Context) string {
+	return fmt.Sprintf("%s must be between %d and %d", v.attr, v.min, v.max)
+}
+
+func (v protectionPlanIntRangeValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v protectionPlanIntRangeValidator) ValidateInt64(_ context.Context, req validator.Int64Request, resp *validator.Int64Response) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	got := req.ConfigValue.ValueInt64()
+	if protectionPlanOutOfRange(got, v.min, v.max) {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid "+v.attr, protectionPlanRangeError(v.attr, got, v.min, v.max, v.unit))
+	}
+}
+
+func protectionPlanVMLocation(vm *models.Compute) (az, subnet string) {
+	if vm == nil {
+		return "", ""
+	}
+	az = strings.TrimSpace(vm.AZName)
+	if az == "" {
+		az = strings.TrimSpace(vm.AvailabilityZone)
+	}
+	subnet = strings.TrimSpace(vm.NetworkID)
+	if subnet == "" {
+		subnet = strings.TrimSpace(vm.SubnetID)
+	}
+	return az, subnet
+}
+
+func (r *ProtectionPlanResource) lookupProtectionPlanVM(ctx context.Context, vmName string) (az, subnet string, err error) {
+	vm, err := r.client.ResolveComputeNode(ctx, "", strings.TrimSpace(vmName))
+	if err != nil {
+		return "", "", err
+	}
+	az, subnet = protectionPlanVMLocation(vm)
+	if az == "" {
+		return "", "", fmt.Errorf("VM %q has no availability zone (az_name)", vmName)
+	}
+	if subnet == "" {
+		return "", "", fmt.Errorf("VM %q has no subnet (network_id)", vmName)
+	}
+	return az, subnet, nil
 }
 
 func (r *ProtectionPlanResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -51,7 +148,7 @@ func (r *ProtectionPlanResource) Metadata(ctx context.Context, req resource.Meta
 
 func (r *ProtectionPlanResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages an Airtel Cloud Protection Plan. Protection plans define backup schedules and retention policies. Note: the API does not support deletion of protection plans; destroying this resource will only remove it from Terraform state.",
+		MarkdownDescription: "Manages an Airtel Cloud Protection Plan (backup schedule and retention). The API does not support deletion; destroying this resource only removes it from Terraform state. Set `vm_name`; AZ (`selector_value`) and subnet-id header are read from that VM. `selector_key` is always `AZ` and `retention_unit` is always `DAYS`.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -62,84 +159,87 @@ func (r *ProtectionPlanResource) Schema(ctx context.Context, req resource.Schema
 				},
 			},
 			"name": schema.StringAttribute{
-				MarkdownDescription: "The name of the protection plan.",
+				MarkdownDescription: "Plan name. The API is sent `{name}-daily` or `{name}-weekly` from `recurrence_period`. Do not include that suffix unless you want it unchanged.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 			"description": schema.StringAttribute{
-				MarkdownDescription: "A description of the protection plan.",
-				Optional:            true,
+				MarkdownDescription: "A description of the protection plan. Sent as form `description`.",
+				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
-			},
-			"schedule_type": schema.StringAttribute{
-				MarkdownDescription: "The schedule type for the protection plan.",
-				Optional:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"selector_key": schema.StringAttribute{
-				MarkdownDescription: "The selector key for matching resources (e.g., `AZ` for availability zone).",
-				Optional:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"selector_value": schema.StringAttribute{
-				MarkdownDescription: "The selector value to match (e.g., `S1`, `S2` for availability zone names).",
-				Optional:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"retention": schema.Int64Attribute{
-				MarkdownDescription: "The retention period value.",
-				Optional:            true,
-				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.RequiresReplace(),
-				},
-			},
-			"retention_unit": schema.StringAttribute{
-				MarkdownDescription: "The unit for the retention period. Must be uppercase: `DAYS`, `WEEKS`, or `MONTHS`.",
-				Optional:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
 				},
 			},
 			"recurrence": schema.Int64Attribute{
-				MarkdownDescription: "The recurrence interval in seconds (e.g., `86400` for daily, `604800` for weekly).",
-				Optional:            true,
+				MarkdownDescription: "How often the plan runs, as a count of `recurrence_period` units. Must be 1–30. Converted to seconds for the API (`daily` × 86400, `weekly` × 604800).",
+				Required:            true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
+				Validators: []validator.Int64{
+					protectionPlanIntRangeValidator{
+						min:  protectionPlanRecurrenceMin,
+						max:  protectionPlanRecurrenceMax,
+						attr: "recurrence",
+					},
+				},
 			},
-			"vpc_id": schema.StringAttribute{
-				MarkdownDescription: "The VPC ID used to scope subnet_name resolution. Only needed when subnet_name is set. Mutually exclusive with vpc_name.",
-				Optional:            true,
-				Computed:            true,
+			"recurrence_period": schema.StringAttribute{
+				MarkdownDescription: "Unit for `recurrence`. One of `daily` or `weekly`.",
+				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("daily", "weekly"),
+				},
 			},
-			"vpc_name": schema.StringAttribute{
-				MarkdownDescription: "The name of the VPC used to scope subnet_name resolution. If set, it is resolved to vpc_id. Only needed when subnet_name is set. Mutually exclusive with vpc_id.",
-				Optional:            true,
+			"retention": schema.Int64Attribute{
+				MarkdownDescription: "Retention in days. Must be 1–365. Sent with `retention_unit=DAYS`.",
+				Required:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+				},
+				Validators: []validator.Int64{
+					protectionPlanIntRangeValidator{
+						min:  protectionPlanRetentionMin,
+						max:  protectionPlanRetentionMax,
+						attr: "retention",
+						unit: "days",
+					},
+				},
+			},
+			"vm_name": schema.StringAttribute{
+				MarkdownDescription: "Existing VM `instance_name`. Its AZ becomes `selector_value` and its subnet is sent as the `subnet-id` header.",
+				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
+			},
+			"selector_value": schema.StringAttribute{
+				MarkdownDescription: "Availability zone taken from the named VM. `selector_key` is always `AZ`.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"subnet_id": schema.StringAttribute{
-				MarkdownDescription: "The subnet ID used for routing backup API requests. Either subnet_id or subnet_name must be specified.",
-				Optional:            true,
+				MarkdownDescription: "Subnet ID taken from the named VM (`network_id`). Used as the API `subnet-id` header. Not set by the user.",
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
-			},
-			"subnet_name": schema.StringAttribute{
-				MarkdownDescription: "The name of the subnet used for routing backup API requests. If set, it is resolved to subnet_id (requires vpc_id or vpc_name). Either subnet_id or subnet_name must be specified.",
-				Optional:            true,
 			},
 		},
 	}
@@ -162,9 +262,6 @@ func (r *ProtectionPlanResource) Configure(ctx context.Context, req resource.Con
 	r.client = c
 }
 
-// ValidateConfig enforces that exactly one of subnet_id or subnet_name is set, that
-// vpc_id and vpc_name are not both set, and that a VPC reference is present when
-// subnet_name is used (needed to scope the subnet lookup).
 func (r *ProtectionPlanResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var data ProtectionPlanResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
@@ -172,22 +269,26 @@ func (r *ProtectionPlanResource) ValidateConfig(ctx context.Context, req resourc
 		return
 	}
 
-	if !data.SubnetID.IsNull() && !data.SubnetName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of subnet_id or subnet_name may be specified, not both.")
+	if !data.Recurrence.IsNull() && !data.Recurrence.IsUnknown() {
+		n := data.Recurrence.ValueInt64()
+		if protectionPlanOutOfRange(n, protectionPlanRecurrenceMin, protectionPlanRecurrenceMax) {
+			resp.Diagnostics.AddAttributeError(path.Root("recurrence"), "Invalid recurrence",
+				protectionPlanRangeError("recurrence", n, protectionPlanRecurrenceMin, protectionPlanRecurrenceMax, ""))
+		}
 	}
-	if data.SubnetID.IsNull() && data.SubnetName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"One of subnet_id or subnet_name must be specified.")
+	if !data.Retention.IsNull() && !data.Retention.IsUnknown() {
+		n := data.Retention.ValueInt64()
+		if protectionPlanOutOfRange(n, protectionPlanRetentionMin, protectionPlanRetentionMax) {
+			resp.Diagnostics.AddAttributeError(path.Root("retention"), "Invalid retention",
+				protectionPlanRangeError("retention", n, protectionPlanRetentionMin, protectionPlanRetentionMax, "days"))
+		}
 	}
-
-	if !data.VPCID.IsNull() && !data.VPCName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of vpc_id or vpc_name may be specified, not both.")
-	}
-	if !data.SubnetName.IsNull() && data.VPCID.IsNull() && data.VPCName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"subnet_name requires one of vpc_id or vpc_name to be specified.")
+	if !data.RecurrencePeriod.IsNull() && !data.RecurrencePeriod.IsUnknown() {
+		p := strings.ToLower(strings.TrimSpace(data.RecurrencePeriod.ValueString()))
+		if p != "daily" && p != "weekly" {
+			resp.Diagnostics.AddAttributeError(path.Root("recurrence_period"), "Invalid recurrence_period",
+				"recurrence_period must be \"daily\" or \"weekly\".")
+		}
 	}
 }
 
@@ -199,44 +300,35 @@ func (r *ProtectionPlanResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	createReq := &models.CreateProtectionPlanRequest{
-		Name:          data.Name.ValueString(),
-		Description:   data.Description.ValueString(),
-		ScheduleType:  data.ScheduleType.ValueString(),
-		SelectorKey:   data.SelectorKey.ValueString(),
-		SelectorValue: data.SelectorValue.ValueString(),
-		Retention:     int(data.Retention.ValueInt64()),
-		RetentionUnit: data.RetentionUnit.ValueString(),
-		Recurrence:    int(data.Recurrence.ValueInt64()),
+	if protectionPlanOutOfRange(data.Recurrence.ValueInt64(), protectionPlanRecurrenceMin, protectionPlanRecurrenceMax) {
+		resp.Diagnostics.AddAttributeError(path.Root("recurrence"), "Invalid recurrence",
+			protectionPlanRangeError("recurrence", data.Recurrence.ValueInt64(), protectionPlanRecurrenceMin, protectionPlanRecurrenceMax, ""))
+		return
+	}
+	if protectionPlanOutOfRange(data.Retention.ValueInt64(), protectionPlanRetentionMin, protectionPlanRetentionMax) {
+		resp.Diagnostics.AddAttributeError(path.Root("retention"), "Invalid retention",
+			protectionPlanRangeError("retention", data.Retention.ValueInt64(), protectionPlanRetentionMin, protectionPlanRetentionMax, "days"))
+		return
 	}
 
-	// Resolve vpc_name -> vpc_id (needed for subnet resolution), then
-	// subnet_name -> subnet_id. Persist resolved values into the Computed attributes.
-	vpcID := data.VPCID.ValueString()
-	if vpcID == "" && !data.VPCName.IsNull() {
-		resolved, err := r.client.ResolveVPCID(ctx, data.VPCName.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("VPC Resolution Error", err.Error())
-			return
-		}
-		vpcID = resolved
+	az, subnetID, err := r.lookupProtectionPlanVM(ctx, data.VMName.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("VM Lookup Error", fmt.Sprintf("Unable to resolve vm_name %q: %s", data.VMName.ValueString(), err))
+		return
 	}
-	if vpcID == "" {
-		data.VPCID = types.StringNull()
-	} else {
-		data.VPCID = types.StringValue(vpcID)
-	}
-
-	subnetID := data.SubnetID.ValueString()
-	if subnetID == "" && !data.SubnetName.IsNull() {
-		resolved, err := r.client.ResolveSubnetID(ctx, vpcID, data.SubnetName.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Subnet Resolution Error", err.Error())
-			return
-		}
-		subnetID = resolved
-	}
+	data.SelectorValue = types.StringValue(az)
 	data.SubnetID = types.StringValue(subnetID)
+
+	period := strings.ToLower(strings.TrimSpace(data.RecurrencePeriod.ValueString()))
+	createReq := &models.CreateProtectionPlanRequest{
+		Name:          protectionPlanAPIName(data.Name.ValueString(), period),
+		Description:   data.Description.ValueString(),
+		SelectorKey:   protectionPlanSelectorKey,
+		SelectorValue: az,
+		Retention:     int(data.Retention.ValueInt64()),
+		RetentionUnit: protectionPlanRetentionUnit,
+		Recurrence:    protectionPlanRecurrenceSeconds(data.Recurrence.ValueInt64(), period),
+	}
 
 	plan, err := r.client.CreateProtectionPlan(ctx, createReq, subnetID)
 	if err != nil {
@@ -244,9 +336,7 @@ func (r *ProtectionPlanResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	// The API returns a UUID id and a server-generated name
 	data.ID = types.StringValue(plan.ID)
-	// Keep the user-specified input values in state (the API does not echo them back)
 
 	tflog.Trace(ctx, "created protection plan resource")
 
@@ -261,9 +351,18 @@ func (r *ProtectionPlanResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
-	subnetID := data.SubnetID.ValueString()
+	az := data.SelectorValue.ValueString()
+	if az == "" && data.VMName.ValueString() != "" {
+		var err error
+		az, _, err = r.lookupProtectionPlanVM(ctx, data.VMName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("VM Lookup Error", fmt.Sprintf("Unable to resolve vm_name %q: %s", data.VMName.ValueString(), err))
+			return
+		}
+		data.SelectorValue = types.StringValue(az)
+	}
 
-	plan, err := r.client.GetProtectionPlan(ctx, data.ID.ValueString(), subnetID)
+	plan, err := r.client.GetProtectionPlan(ctx, data.ID.ValueString(), az)
 	if err != nil {
 		if client.IsNotFoundError(err) {
 			resp.State.RemoveResource(ctx)
@@ -274,8 +373,6 @@ func (r *ProtectionPlanResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 
 	data.ID = types.StringValue(plan.ID)
-	// The list API only returns id, name, project_id, project_name, version, created_at.
-	// Retain user-specified input values for attributes not returned by the API.
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -285,8 +382,6 @@ func (r *ProtectionPlanResource) Update(ctx context.Context, req resource.Update
 }
 
 func (r *ProtectionPlanResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	// API does not support deletion of protection plans.
-	// Remove from Terraform state only.
 	tflog.Warn(ctx, "Protection plan deletion is not supported by the API. Removing from Terraform state only.")
 }
 
