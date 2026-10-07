@@ -71,15 +71,17 @@ type PostgresResourceModel struct {
 	StorageSize      types.Int64                 `tfsdk:"storage_size"`
 	StorageType      types.String                `tfsdk:"storage_type"`
 	AvailabilityZone types.String                `tfsdk:"availability_zone"`
-	PGExtensions     types.List                  `tfsdk:"pg_extensions"`
-	Labels           types.List                  `tfsdk:"labels"`
-	Topology         types.String                `tfsdk:"topology"`
-	ConnectionString types.String                `tfsdk:"connection_string"`
-	CreatedAt        types.String                `tfsdk:"created_at"`
-	Status           types.String                `tfsdk:"status"`
-	Backup           *PostgresBackupModel        `tfsdk:"backup"`
-	SecurityGroup    *PostgresSecurityGroupModel `tfsdk:"security_group"`
-	Timeouts         timeouts.Value              `tfsdk:"timeouts"`
+	VPC              types.String         `tfsdk:"vpc"`
+	Subnet           types.String         `tfsdk:"subnet"`
+	CustomCIDR       types.List           `tfsdk:"custom_cidr"`
+	PGExtensions     types.List           `tfsdk:"pg_extensions"`
+	Labels           types.List           `tfsdk:"labels"`
+	Topology         types.String         `tfsdk:"topology"`
+	ConnectionString types.String         `tfsdk:"connection_string"`
+	CreatedAt        types.String         `tfsdk:"created_at"`
+	Status           types.String         `tfsdk:"status"`
+	Backup           *PostgresBackupModel `tfsdk:"backup"`
+	Timeouts         timeouts.Value       `tfsdk:"timeouts"`
 }
 
 // PostgresBackupModel is the nested backup block.
@@ -90,11 +92,6 @@ type PostgresBackupModel struct {
 	Retention        types.Int64  `tfsdk:"retention"`
 	ScheduleTime     types.String `tfsdk:"schedule_time"`
 	ScheduleDay      types.String `tfsdk:"schedule_day"`
-}
-
-// PostgresSecurityGroupModel is the nested security_group block.
-type PostgresSecurityGroupModel struct {
-	AllowedIPs types.List `tfsdk:"allowed_ips"`
 }
 
 func (r *PostgresResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -237,6 +234,28 @@ func (r *PostgresResource) Schema(ctx context.Context, req resource.SchemaReques
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			"vpc": schema.StringAttribute{
+				MarkdownDescription: "VPC name used to resolve `subnet`. Required with `subnet` when `custom_cidr` is omitted. Not sent on create.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"subnet": schema.StringAttribute{
+				MarkdownDescription: "Subnet name within `vpc`. Required with `vpc` when `custom_cidr` is omitted. Resolved `ipv4AddressSpace` is sent as an allowed IP. Not sent on create.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"custom_cidr": schema.ListAttribute{
+				ElementType:         types.StringType,
+				MarkdownDescription: "Custom CIDR blocks sent as `security_group.allowed_ips`. Required when `vpc` and `subnet` are omitted. Can be set together with `vpc`/`subnet`.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
+				},
+			},
 			"pg_extensions": schema.ListAttribute{
 				ElementType:         types.StringType,
 				MarkdownDescription: "PostgreSQL extensions to enable (for example `pgvector`).",
@@ -326,20 +345,6 @@ func (r *PostgresResource) Schema(ctx context.Context, req resource.SchemaReques
 					},
 				},
 			},
-			"security_group": schema.SingleNestedAttribute{
-				MarkdownDescription: "Allowed client CIDRs. Changes force a new cluster.",
-				Required:            true,
-				PlanModifiers: []planmodifier.Object{
-					objectplanmodifier.RequiresReplace(),
-				},
-				Attributes: map[string]schema.Attribute{
-					"allowed_ips": schema.ListAttribute{
-						ElementType:         types.StringType,
-						MarkdownDescription: "CIDR blocks allowed to connect (for example `192.168.1.0/24`).",
-						Required:            true,
-					},
-				},
-			},
 		},
 		Blocks: map[string]schema.Block{
 			"timeouts": timeouts.Block(ctx, timeouts.Opts{
@@ -393,31 +398,37 @@ func (r *PostgresResource) ValidateConfig(ctx context.Context, req resource.Vali
 		}
 	}
 
-	if data.SecurityGroup != nil {
-		if msg := validatePostgresSecurityGroup(data.SecurityGroup); msg != "" {
-			resp.Diagnostics.AddAttributeError(path.Root("security_group"), "Invalid security_group", msg)
-		}
+	if msg := validatePostgresNetworkAccess(data.VPC, data.Subnet, data.CustomCIDR); msg != "" {
+		resp.Diagnostics.AddError("Invalid Configuration", msg)
 	}
 }
 
-func validatePostgresSecurityGroup(group *PostgresSecurityGroupModel) string {
-	if group == nil {
-		return "security_group is required."
+func validatePostgresNetworkAccess(vpc, subnet types.String, customCIDR types.List) string {
+	if vpc.IsUnknown() || subnet.IsUnknown() || customCIDR.IsUnknown() {
+		return ""
 	}
-	if group.AllowedIPs.IsNull() || group.AllowedIPs.IsUnknown() {
-		return "security_group.allowed_ips is required."
+
+	hasVPC := !vpc.IsNull() && strings.TrimSpace(vpc.ValueString()) != ""
+	hasSubnet := !subnet.IsNull() && strings.TrimSpace(subnet.ValueString()) != ""
+	if hasVPC != hasSubnet {
+		return "vpc and subnet must be set together."
 	}
-	var ips []string
-	if diags := group.AllowedIPs.ElementsAs(context.Background(), &ips, false); diags.HasError() {
-		return "security_group.allowed_ips is invalid."
-	}
-	if len(ips) == 0 {
-		return "security_group.allowed_ips must contain at least one CIDR."
-	}
-	for _, ip := range ips {
-		if strings.TrimSpace(ip) == "" {
-			return "security_group.allowed_ips cannot contain empty values."
+
+	var cidrs []string
+	if !customCIDR.IsNull() {
+		if diags := customCIDR.ElementsAs(context.Background(), &cidrs, false); diags.HasError() {
+			return "custom_cidr is invalid."
 		}
+	}
+	for _, cidr := range cidrs {
+		if strings.TrimSpace(cidr) == "" {
+			return "custom_cidr cannot contain empty values."
+		}
+	}
+	hasCustomCIDR := len(cidrs) > 0
+
+	if !hasVPC && !hasCustomCIDR {
+		return "set custom_cidr, or set both vpc and subnet, or set both."
 	}
 	return ""
 }
@@ -806,16 +817,49 @@ func (r *PostgresResource) buildPostgresCreateRequest(ctx context.Context, data 
 		createReq.Backup = backup
 	}
 
-	if data.SecurityGroup != nil {
-		allowedIPs, ipDiags := stringSliceFromList(ctx, data.SecurityGroup.AllowedIPs)
-		diags.Append(ipDiags...)
-		if diags.HasError() {
-			return nil, diags
-		}
-		createReq.SecurityGroup = &models.PostgresSecurityGroup{AllowedIPs: allowedIPs}
+	allowedIPs, ipDiags := stringSliceFromList(ctx, data.CustomCIDR)
+	diags.Append(ipDiags...)
+	if diags.HasError() {
+		return nil, diags
 	}
 
+	hasNetwork := !data.VPC.IsNull() && strings.TrimSpace(data.VPC.ValueString()) != "" &&
+		!data.Subnet.IsNull() && strings.TrimSpace(data.Subnet.ValueString()) != ""
+	if hasNetwork {
+		vpcID, err := r.client.ResolveVPCID(ctx, data.VPC.ValueString())
+		if err != nil {
+			diags.AddError("VPC Resolution Error", err.Error())
+			return nil, diags
+		}
+		subnet, err := r.client.ResolveSubnet(ctx, vpcID, data.Subnet.ValueString())
+		if err != nil {
+			diags.AddError("Subnet Resolution Error", err.Error())
+			return nil, diags
+		}
+		subnetCIDR := strings.TrimSpace(subnet.IPv4AddressSpace)
+		if subnetCIDR == "" {
+			diags.AddError("Subnet Resolution Error", fmt.Sprintf("subnet %q has empty ipv4AddressSpace", data.Subnet.ValueString()))
+			return nil, diags
+		}
+		allowedIPs = appendUniqueString(allowedIPs, subnetCIDR)
+	}
+
+	if len(allowedIPs) == 0 {
+		diags.AddError("Invalid Configuration", "set custom_cidr, or set both vpc and subnet, or set both.")
+		return nil, diags
+	}
+	createReq.SecurityGroup = &models.PostgresSecurityGroup{AllowedIPs: allowedIPs}
+
 	return createReq, diags
+}
+
+func appendUniqueString(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func applyPostgresClusterToState(ctx context.Context, data *PostgresResourceModel, cluster *models.PostgresCluster, refreshConfig bool) diag.Diagnostics {

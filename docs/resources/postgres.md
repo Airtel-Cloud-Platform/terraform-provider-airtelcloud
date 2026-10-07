@@ -28,6 +28,9 @@ resource "airtelcloud_postgres" "app" {
   compute_size       = "db.postgres.uhper.ccs.xlarge"
   storage_size       = 200
   availability_zone  = "S1"
+  vpc                = "copper-vpc1"
+  subnet             = "vlan-dbaas-91"
+  custom_cidr        = ["192.168.1.0/24"]
   high_availability  = true
   num_replicas       = 1
 
@@ -36,10 +39,6 @@ resource "airtelcloud_postgres" "app" {
     protection_plan  = "weekly-full-daily-incr"
     schedule_time    = "02:00"
     schedule_day     = "Monday"
-  }
-
-  security_group = {
-    allowed_ips = ["192.168.1.0/24"]
   }
 }
 ```
@@ -56,12 +55,13 @@ resource "airtelcloud_postgres" "app" {
 - `compute_size` (String) - Flavor name from the postgres flavors catalog (for example `db.postgres.uhper.ccs.xlarge`). Resolved to flavor ID and RAM internally. Forces new resource.
 - `storage_size` (Number) - Data volume size in GB. Must be at least 200. Forces new resource.
 - `availability_zone` (String) - Availability zone code (for example `S1`). Forces new resource.
-- `security_group` (Attributes) - Allowed client CIDRs. Forces new resource.
-  - `allowed_ips` (List of String) - CIDR blocks allowed to connect. Must contain at least one IP range.
 
 ### Optional
 
-- `description` (String) - Cluster description. Forces new resource.
+- `description` (String) - Cluster description. Optional.
+- `vpc` (String) - VPC name used to resolve `subnet`. Required with `subnet` when `custom_cidr` is omitted. Not sent on create. Forces new resource.
+- `subnet` (String) - Subnet name within `vpc`. Required with `vpc` when `custom_cidr` is omitted. Resolved `ipv4AddressSpace` is sent as an allowed IP. Not sent on create. Forces new resource.
+- `custom_cidr` (List of String) - Custom CIDRs sent as API `security_group.allowed_ips`. Required when `vpc`/`subnet` are omitted. Can be set together with `vpc`/`subnet`. Forces new resource.
 - `high_availability` (Boolean) - When true, creates primary-standby topology. Defaults to `false`. Forces new resource.
 - `num_replicas` (Number) - Standby replica count. Required and must be between `1` and `10` when `high_availability` is true. Defaults to `0`. Forces new resource.
 - `is_superuser` (Boolean) - Whether the admin user is a superuser. Defaults to `false`. Forces new resource.
@@ -92,7 +92,7 @@ In addition to all arguments above, the following attributes are exported:
 
 ## Import
 
-Clusters can be imported using the cluster UUID. The admin password is not returned by the API, so import cannot populate `password`.
+Clusters can be imported using the cluster UUID. The admin password, VPC, and subnet are not returned by the API, so a following plan will want to set them.
 
 ```shell
 terraform import airtelcloud_postgres.app <cluster-uuid>

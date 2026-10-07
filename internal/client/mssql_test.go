@@ -164,6 +164,9 @@ func TestCreateMSSQLBody(t *testing.T) {
 		if err := json.Unmarshal(body, &raw); err != nil {
 			t.Fatal(err)
 		}
+		if string(raw["description"]) != `""` {
+			t.Fatalf("description = %s, want empty string", raw["description"])
+		}
 		if _, exists := raw["vpc"]; exists {
 			t.Fatal("vpc must not be sent")
 		}
