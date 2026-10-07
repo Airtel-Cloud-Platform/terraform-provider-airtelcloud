@@ -56,21 +56,21 @@ type PostgresResource struct {
 
 // PostgresResourceModel is the Terraform state model. It is separate from API structs.
 type PostgresResourceModel struct {
-	ID               types.String                `tfsdk:"id"`
-	ClusterName      types.String                `tfsdk:"cluster_name"`
-	Description      types.String                `tfsdk:"description"`
-	Version          types.String                `tfsdk:"version"`
-	HighAvailability types.Bool                  `tfsdk:"high_availability"`
-	NumReplicas      types.Int64                 `tfsdk:"num_replicas"`
-	DatabaseName     types.String                `tfsdk:"database_name"`
-	PostgresUsername types.String                `tfsdk:"postgres_username"`
-	Password         types.String                `tfsdk:"password"`
-	IsSuperuser      types.Bool                  `tfsdk:"is_superuser"`
-	NetworkType      types.String                `tfsdk:"network_type"`
-	ComputeSize      types.String                `tfsdk:"compute_size"`
-	StorageSize      types.Int64                 `tfsdk:"storage_size"`
-	StorageType      types.String                `tfsdk:"storage_type"`
-	AvailabilityZone types.String                `tfsdk:"availability_zone"`
+	ID               types.String         `tfsdk:"id"`
+	ClusterName      types.String         `tfsdk:"cluster_name"`
+	Description      types.String         `tfsdk:"description"`
+	Version          types.String         `tfsdk:"version"`
+	HighAvailability types.Bool           `tfsdk:"high_availability"`
+	NumReplicas      types.Int64          `tfsdk:"num_replicas"`
+	DatabaseName     types.String         `tfsdk:"database_name"`
+	PostgresUsername types.String         `tfsdk:"postgres_username"`
+	Password         types.String         `tfsdk:"password"`
+	IsSuperuser      types.Bool           `tfsdk:"is_superuser"`
+	NetworkType      types.String         `tfsdk:"network_type"`
+	ComputeSize      types.String         `tfsdk:"compute_size"`
+	StorageSize      types.Int64          `tfsdk:"storage_size"`
+	StorageType      types.String         `tfsdk:"storage_type"`
+	AvailabilityZone types.String         `tfsdk:"availability_zone"`
 	VPC              types.String         `tfsdk:"vpc"`
 	Subnet           types.String         `tfsdk:"subnet"`
 	CustomCIDR       types.List           `tfsdk:"custom_cidr"`

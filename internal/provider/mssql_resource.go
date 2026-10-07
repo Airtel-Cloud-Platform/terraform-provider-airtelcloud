@@ -679,4 +679,3 @@ func mssqlProtectionPlan(ctx context.Context, obj types.Object) (string, bool, d
 	}
 	return model.ProtectionPlan.ValueString(), true, diags
 }
-
