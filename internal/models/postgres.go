@@ -24,7 +24,7 @@ const (
 // CreatePostgresClusterRequest is the POST body for creating a PostgreSQL cluster.
 type CreatePostgresClusterRequest struct {
 	Name                 string                       `json:"name"`
-	Description          string                       `json:"description,omitempty"`
+	Description          string                       `json:"description"`
 	Version              string                       `json:"version"`
 	Topology             string                       `json:"topology"`
 	NumReplicas          int                          `json:"num_replicas,omitempty"`

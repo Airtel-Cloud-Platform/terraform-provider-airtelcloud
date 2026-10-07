@@ -11,21 +11,117 @@ import (
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
 
-func TestPostgresSchemaRequiredSecurityGroup(t *testing.T) {
+func TestPostgresSchemaNetworkAccess(t *testing.T) {
 	t.Parallel()
 
 	var resp resource.SchemaResponse
 	(&PostgresResource{}).Schema(context.Background(), resource.SchemaRequest{}, &resp)
 
-	securityGroupAttr, ok := resp.Schema.Attributes["security_group"].(schema.SingleNestedAttribute)
-	if !ok {
-		t.Fatal("security_group attribute not found or not a single nested attribute")
+	vpcAttr, ok := resp.Schema.Attributes["vpc"].(schema.StringAttribute)
+	if !ok || !vpcAttr.IsOptional() {
+		t.Fatal("vpc must be an optional string attribute")
 	}
-	if !securityGroupAttr.IsRequired() {
-		t.Fatal("security_group must be required")
+	subnetAttr, ok := resp.Schema.Attributes["subnet"].(schema.StringAttribute)
+	if !ok || !subnetAttr.IsOptional() {
+		t.Fatal("subnet must be an optional string attribute")
 	}
-	if !securityGroupAttr.Attributes["allowed_ips"].IsRequired() {
-		t.Fatal("security_group.allowed_ips must be required")
+	customCIDRAttr, ok := resp.Schema.Attributes["custom_cidr"].(schema.ListAttribute)
+	if !ok || !customCIDRAttr.IsOptional() {
+		t.Fatal("custom_cidr must be an optional list attribute")
+	}
+	if _, exists := resp.Schema.Attributes["security_group"]; exists {
+		t.Fatal("security_group must not be a Terraform attribute")
+	}
+}
+
+func TestValidatePostgresNetworkAccess(t *testing.T) {
+	t.Parallel()
+
+	cidr, diags := types.ListValueFrom(context.Background(), types.StringType, []string{"192.168.1.0/24"})
+	if diags.HasError() {
+		t.Fatalf("ListValueFrom diagnostics = %v", diags)
+	}
+	emptyCIDR, diags := types.ListValueFrom(context.Background(), types.StringType, []string{})
+	if diags.HasError() {
+		t.Fatalf("ListValueFrom diagnostics = %v", diags)
+	}
+
+	tests := []struct {
+		name       string
+		vpc        types.String
+		subnet     types.String
+		customCIDR types.List
+		wantErr    bool
+	}{
+		{
+			name:       "custom cidr only",
+			vpc:        types.StringNull(),
+			subnet:     types.StringNull(),
+			customCIDR: cidr,
+		},
+		{
+			name:       "vpc and subnet only",
+			vpc:        types.StringValue("copper-vpc1"),
+			subnet:     types.StringValue("vlan-dbaas-91"),
+			customCIDR: types.ListNull(types.StringType),
+		},
+		{
+			name:       "both custom cidr and network",
+			vpc:        types.StringValue("copper-vpc1"),
+			subnet:     types.StringValue("vlan-dbaas-91"),
+			customCIDR: cidr,
+		},
+		{
+			name:       "neither set",
+			vpc:        types.StringNull(),
+			subnet:     types.StringNull(),
+			customCIDR: types.ListNull(types.StringType),
+			wantErr:    true,
+		},
+		{
+			name:       "empty custom cidr without network",
+			vpc:        types.StringNull(),
+			subnet:     types.StringNull(),
+			customCIDR: emptyCIDR,
+			wantErr:    true,
+		},
+		{
+			name:       "vpc without subnet",
+			vpc:        types.StringValue("copper-vpc1"),
+			subnet:     types.StringNull(),
+			customCIDR: cidr,
+			wantErr:    true,
+		},
+		{
+			name:       "subnet without vpc",
+			vpc:        types.StringNull(),
+			subnet:     types.StringValue("vlan-dbaas-91"),
+			customCIDR: cidr,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := validatePostgresNetworkAccess(tt.vpc, tt.subnet, tt.customCIDR)
+			gotErr := msg != ""
+			if gotErr != tt.wantErr {
+				t.Fatalf("validatePostgresNetworkAccess() error = %v (%q), wantErr %v", gotErr, msg, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAppendUniqueString(t *testing.T) {
+	t.Parallel()
+
+	got := appendUniqueString([]string{"10.0.0.0/24"}, "10.0.0.0/24")
+	if len(got) != 1 || got[0] != "10.0.0.0/24" {
+		t.Fatalf("duplicate append = %#v", got)
+	}
+	got = appendUniqueString(got, "192.168.1.0/24")
+	if len(got) != 2 || got[1] != "192.168.1.0/24" {
+		t.Fatalf("append = %#v", got)
 	}
 }
 

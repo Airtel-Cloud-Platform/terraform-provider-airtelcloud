@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -67,6 +67,7 @@ type MSSQLResourceModel struct {
 	AvailabilityZone        types.String   `tfsdk:"availability_zone"`
 	VPC                     types.String   `tfsdk:"vpc"`
 	Subnet                  types.String   `tfsdk:"subnet"`
+	CustomCIDR              types.List     `tfsdk:"custom_cidr"`
 	DBName                  types.String   `tfsdk:"db_name"`
 	MSSQLUsername           types.String   `tfsdk:"mssql_username"`
 	Password                types.String   `tfsdk:"password"`
@@ -79,7 +80,6 @@ type MSSQLResourceModel struct {
 	Port                    types.Int64    `tfsdk:"port"`
 	Status                  types.String   `tfsdk:"status"`
 	Backup                  types.Object   `tfsdk:"backup"`
-	SecurityGroup           types.Object   `tfsdk:"security_group"`
 	Timeouts                timeouts.Value `tfsdk:"timeouts"`
 }
 
@@ -88,18 +88,13 @@ type MSSQLBackupModel struct {
 	ProtectionPlan types.String `tfsdk:"protection_plan"`
 }
 
-// MSSQLSecurityGroupModel is the nested security_group attribute.
-type MSSQLSecurityGroupModel struct {
-	AllowedIPs types.List `tfsdk:"allowed_ips"`
-}
-
 func (r *MSSQLResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_mssql"
 }
 
 func (r *MSSQLResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages an Airtel Cloud MSSQL instance. Create, read, import, and delete are supported. Changes force a new instance. `vpc` and `subnet` are stored for later use and are not sent to the API.",
+		MarkdownDescription: "Manages an Airtel Cloud MSSQL instance. Create, read, import, and delete are supported. Changes force a new instance. Set `custom_cidr`, or `vpc` and `subnet`, or both. Network names are not sent on create; subnet CIDR is resolved into API `security_group.allowed_ips`.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -186,17 +181,25 @@ func (r *MSSQLResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				},
 			},
 			"vpc": schema.StringAttribute{
-				MarkdownDescription: "VPC name collected for later use. Not sent on create.",
-				Required:            true,
+				MarkdownDescription: "VPC name used to resolve `subnet`. Required with `subnet` when `custom_cidr` is omitted. Not sent on create.",
+				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"subnet": schema.StringAttribute{
-				MarkdownDescription: "Subnet name collected for later use. Not sent on create.",
-				Required:            true,
+				MarkdownDescription: "Subnet name within `vpc`. Required with `vpc` when `custom_cidr` is omitted. Resolved `ipv4AddressSpace` is sent as an allowed IP. Not sent on create.",
+				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"custom_cidr": schema.ListAttribute{
+				ElementType:         types.StringType,
+				MarkdownDescription: "Custom CIDR blocks sent as `security_group.allowed_ips`. Required when `vpc` and `subnet` are omitted. Can be set together with `vpc`/`subnet`.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
 				},
 			},
 			"db_name": schema.StringAttribute{
@@ -293,26 +296,6 @@ func (r *MSSQLResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 					},
 				},
 			},
-			"security_group": schema.SingleNestedAttribute{
-				Optional:            true,
-				MarkdownDescription: "Client addresses allowed to connect.",
-				PlanModifiers: []planmodifier.Object{
-					objectplanmodifier.RequiresReplace(),
-				},
-				Attributes: map[string]schema.Attribute{
-					"allowed_ips": schema.ListAttribute{
-						ElementType:         types.StringType,
-						Required:            true,
-						MarkdownDescription: "CIDR blocks allowed to connect, for example `192.168.1.0/24`.",
-						Validators: []validator.List{
-							listvalidator.SizeAtLeast(1),
-						},
-						PlanModifiers: []planmodifier.List{
-							listplanmodifier.RequiresReplace(),
-						},
-					},
-				},
-			},
 		},
 		Blocks: map[string]schema.Block{
 			"timeouts": timeouts.Block(ctx, timeouts.Opts{
@@ -336,6 +319,10 @@ func (r *MSSQLResource) ValidateConfig(ctx context.Context, req resource.Validat
 			"Invalid Configuration",
 			fmt.Sprintf("storage_size must be from %d to %d GiB in steps of %d starting at %d.", models.MSSQLStorageMinGiB, models.MSSQLStorageMaxGiB, models.MSSQLStorageStepGiB, models.MSSQLStorageMinGiB),
 		)
+	}
+
+	if msg := validatePostgresNetworkAccess(data.VPC, data.Subnet, data.CustomCIDR); msg != "" {
+		resp.Diagnostics.AddError("Invalid Configuration", msg)
 	}
 }
 
@@ -574,14 +561,38 @@ func (r *MSSQLResource) buildMSSQLCreateRequest(ctx context.Context, data *MSSQL
 		}
 	}
 
-	allowedIPs, hasSecurityGroup, sgDiags := mssqlAllowedIPs(ctx, data.SecurityGroup)
-	diags.Append(sgDiags...)
+	allowedIPs, ipDiags := stringSliceFromList(ctx, data.CustomCIDR)
+	diags.Append(ipDiags...)
 	if diags.HasError() {
 		return nil, "", diags
 	}
-	if hasSecurityGroup {
-		createReq.SecurityGroup = &models.MSSQLSecurityGroup{AllowedIPs: allowedIPs}
+
+	hasNetwork := !data.VPC.IsNull() && strings.TrimSpace(data.VPC.ValueString()) != "" &&
+		!data.Subnet.IsNull() && strings.TrimSpace(data.Subnet.ValueString()) != ""
+	if hasNetwork {
+		vpcID, err := r.client.ResolveVPCID(ctx, data.VPC.ValueString())
+		if err != nil {
+			diags.AddError("VPC Resolution Error", err.Error())
+			return nil, "", diags
+		}
+		subnet, err := r.client.ResolveSubnet(ctx, vpcID, data.Subnet.ValueString())
+		if err != nil {
+			diags.AddError("Subnet Resolution Error", err.Error())
+			return nil, "", diags
+		}
+		subnetCIDR := strings.TrimSpace(subnet.IPv4AddressSpace)
+		if subnetCIDR == "" {
+			diags.AddError("Subnet Resolution Error", fmt.Sprintf("subnet %q has empty ipv4AddressSpace", data.Subnet.ValueString()))
+			return nil, "", diags
+		}
+		allowedIPs = appendUniqueString(allowedIPs, subnetCIDR)
 	}
+
+	if len(allowedIPs) == 0 {
+		diags.AddError("Invalid Configuration", "set custom_cidr, or set both vpc and subnet, or set both.")
+		return nil, "", diags
+	}
+	createReq.SecurityGroup = &models.MSSQLSecurityGroup{AllowedIPs: allowedIPs}
 
 	return createReq, version, diags
 }
@@ -644,17 +655,6 @@ func applyMSSQLToState(ctx context.Context, data *MSSQLResourceModel, instance *
 		diags.Append(labelDiags...)
 		data.Labels = labels
 	}
-	if !data.SecurityGroup.IsNull() && !data.SecurityGroup.IsUnknown() && instance.AllowedIPs != nil {
-		ips, ipDiags := types.ListValueFrom(ctx, types.StringType, instance.AllowedIPs)
-		diags.Append(ipDiags...)
-		if !ipDiags.HasError() {
-			obj, objDiags := types.ObjectValue(mssqlSecurityGroupAttrTypes(), map[string]attr.Value{
-				"allowed_ips": ips,
-			})
-			diags.Append(objDiags...)
-			data.SecurityGroup = obj
-		}
-	}
 
 	return diags
 }
@@ -678,30 +678,4 @@ func mssqlProtectionPlan(ctx context.Context, obj types.Object) (string, bool, d
 		return "", false, diags
 	}
 	return model.ProtectionPlan.ValueString(), true, diags
-}
-
-func mssqlAllowedIPs(ctx context.Context, obj types.Object) ([]string, bool, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	if obj.IsNull() {
-		return nil, false, diags
-	}
-	if obj.IsUnknown() {
-		diags.AddError("Invalid Configuration", "security_group is unknown.")
-		return nil, false, diags
-	}
-
-	var model MSSQLSecurityGroupModel
-	diags.Append(obj.As(ctx, &model, basetypes.ObjectAsOptions{})...)
-	if diags.HasError() {
-		return nil, false, diags
-	}
-	ips, ipDiags := stringSliceFromList(ctx, model.AllowedIPs)
-	diags.Append(ipDiags...)
-	return ips, true, diags
-}
-
-func mssqlSecurityGroupAttrTypes() map[string]attr.Type {
-	return map[string]attr.Type{
-		"allowed_ips": types.ListType{ElemType: types.StringType},
-	}
 }

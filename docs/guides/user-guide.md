@@ -756,6 +756,9 @@ resource "airtelcloud_postgres" "app" {
   compute_size      = "db.postgres.uhper.ccs.xlarge"
   storage_size      = 200
   availability_zone = "S1"
+  vpc               = "copper-vpc1"
+  subnet            = "vlan-dbaas-91"
+  custom_cidr       = ["192.168.1.0/24"]
   high_availability = true
   num_replicas      = 1
 
@@ -781,6 +784,9 @@ resource "airtelcloud_postgres" "app" {
 | `storage_size` | Number | Yes | Size in GB (minimum 200). Forces new resource. |
 | `availability_zone` | String | Yes | Zone code (for example `S1`). Forces new resource. |
 | `description` | String | No | Description. Forces new resource. |
+| `vpc` | String | No | With `subnet`, required when `custom_cidr` is omitted. Not sent on create. Forces new resource. |
+| `subnet` | String | No | With `vpc`, required when `custom_cidr` is omitted. Subnet CIDR is sent as an allowed IP. Forces new resource. |
+| `custom_cidr` | List of String | No | Custom CIDRs for API `security_group.allowed_ips`. Required when `vpc`/`subnet` omitted. Can be combined with them. Forces new resource. |
 | `high_availability` | Boolean | No | Primary-standby topology when true. Default: `false`. Forces new resource. |
 | `num_replicas` | Number | No | `1` to `10` when HA is true. Default: `0`. Forces new resource. |
 | `is_superuser` | Boolean | No | Default: `false`. Forces new resource. |
@@ -795,7 +801,6 @@ resource "airtelcloud_postgres" "app" {
 | `backup.retention` | Number | No | Retention in days. Default: `15`. |
 | `backup.schedule_time` | String | No | Backup schedule time in `HH:MM` format. Required when `backup.enabled` is true. |
 | `backup.schedule_day` | String | No | Backup schedule day. Must be `Monday` through `Sunday`. Required when `backup.enabled` is true. |
-| `security_group` | Object | No | `allowed_ips` CIDRs. Forces new resource. |
 
 #### Attribute Reference
 
@@ -813,7 +818,7 @@ resource "airtelcloud_postgres" "app" {
 terraform import airtelcloud_postgres.app <cluster-uuid>
 ```
 
--> **Note:** The API does not return the admin password. Import cannot populate `password`.
+-> **Note:** The API does not return the admin password, VPC, or subnet. Import cannot populate those values.
 
 ---
 
