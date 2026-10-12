@@ -55,17 +55,14 @@ resource "airtelcloud_mssql" "app" {
   storage_type      = "High Performance"
   availability_zone = "S1"
   vpc               = "copper-vpc1"
-  subnet            = "vlan-dbaas-91"
+  subnet            = "temporal-subnet"
+  custom_cidr       = ["192.168.1.0/24"]
   db_name           = "AppDb"
   mssql_username    = "DbAdmin"
   password          = var.mssql_password
 
   backup = {
     protection_plan = "CH26_AZ1_PaaS_MSSQLIP_DAILY_FULL_2100_PP"
-  }
-
-  security_group = {
-    allowed_ips = ["192.168.1.0/24"]
   }
 }
 

@@ -60,6 +60,9 @@ resource "airtelcloud_postgres" "app" {
   compute_size      = "db.postgres.uhper.ccs.xlarge"
   storage_size      = 200
   availability_zone = "S1"
+  vpc               = "copper-vpc1"
+  subnet            = "temporal-subnet"
+  custom_cidr       = ["192.168.1.0/24"]
   high_availability = true
   num_replicas      = 1
   pg_extensions     = ["pgvector"]
@@ -70,10 +73,6 @@ resource "airtelcloud_postgres" "app" {
     protection_plan = "weekly-full-daily-incr"
     schedule_time   = "02:00"
     schedule_day    = "Monday"
-  }
-
-  security_group = {
-    allowed_ips = ["192.168.1.0/24"]
   }
 }
 

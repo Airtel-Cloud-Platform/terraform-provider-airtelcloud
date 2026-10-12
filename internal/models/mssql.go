@@ -30,7 +30,7 @@ const (
 type CreateMSSQLRequest struct {
 	Name                 string                    `json:"name"`
 	User                 string                    `json:"user"`
-	Description          string                    `json:"description,omitempty"`
+	Description          string                    `json:"description"`
 	AZName               string                    `json:"az_name"`
 	AZIDs                []string                  `json:"az_ids"`
 	CollationFeatures    MSSQLCollationFeatures    `json:"collation_features"`
