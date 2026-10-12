@@ -79,9 +79,10 @@ func TestAccVMResourceWithProtectionPlanName(t *testing.T) {
 				Config: testAccVMResourceConfigWithProtectionPlanName("test-vm-plan-name", "test-plan-for-vm-name-resolution"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("airtelcloud_vm.test", "instance_name", "test-vm-plan-name"),
-					resource.TestCheckResourceAttr("airtelcloud_vm.test", "enable_backup", "true"),
-					resource.TestCheckResourceAttr("airtelcloud_vm.test", "protection_plan", "test-plan-for-vm-name-resolution"),
+					resource.TestCheckResourceAttr("airtelcloud_protection_plan.test", "name", "test-plan-for-vm-name-resolution"),
+					resource.TestCheckResourceAttr("airtelcloud_protection_plan.test", "vm_name", "test-vm-plan-name"),
 					resource.TestCheckResourceAttrSet("airtelcloud_vm.test", "id"),
+					resource.TestCheckResourceAttrSet("airtelcloud_protection_plan.test", "id"),
 				),
 			},
 		},
@@ -109,19 +110,8 @@ resource "airtelcloud_vm" "test" {
 
 func testAccVMResourceConfigWithProtectionPlanName(vmName, planName string) string {
 	return fmt.Sprintf(`
-resource "airtelcloud_protection_plan" "test" {
-	name           = %[1]q
-	description    = "Acceptance test plan for VM by name"
-	retention      = 1
-	retention_unit = "DAYS"
-	recurrence     = 86400
-	selector_key   = "AZ"
-	selector_value = "S2"
-	subnet_id      = "35df162d-5211-4d58-84ed-6a499626949c"
-}
-
 resource "airtelcloud_vm" "test" {
-	instance_name     = %[2]q
+	instance_name     = %[1]q
 	os_type           = "linux"
 	flavor_name       = "t2.micro"
 	image_name        = "ubuntu-20.04"
@@ -132,10 +122,17 @@ resource "airtelcloud_vm" "test" {
 	availability_zone = "S2"
 	admin_username    = %[3]q
 	admin_password    = %[4]q
-	enable_backup     = true
-	protection_plan   = airtelcloud_protection_plan.test.name
 }
-`, planName, vmName, testAccVMAdminUsername, testAccVMAdminPassword)
+
+resource "airtelcloud_protection_plan" "test" {
+	name              = %[2]q
+	description       = "Acceptance test plan for VM by name"
+	vm_name           = airtelcloud_vm.test.instance_name
+	recurrence        = 1
+	recurrence_period = "daily"
+	retention         = 1
+}
+`, vmName, planName, testAccVMAdminUsername, testAccVMAdminPassword)
 }
 
 func testAccVMResourceConfigUpdated(name string) string {

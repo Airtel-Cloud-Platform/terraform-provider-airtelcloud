@@ -52,8 +52,8 @@ type ProtectionResourceModel struct {
 	Name            types.String `tfsdk:"name"`
 	Description     types.String `tfsdk:"description"`
 	PolicyTypeID    types.String `tfsdk:"policy_type_id"`
+	VMName          types.String `tfsdk:"vm_name"`
 	ComputeID       types.String `tfsdk:"compute_id"`
-	ComputeName     types.String `tfsdk:"compute_name"`
 	ProtectionPlan  types.String `tfsdk:"protection_plan"`
 	EnableScheduler types.String `tfsdk:"enable_scheduler"`
 	StartDate       types.String `tfsdk:"start_date"`
@@ -72,7 +72,7 @@ func (r *ProtectionResource) Metadata(ctx context.Context, req resource.Metadata
 
 func (r *ProtectionResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages an Airtel Cloud Veritas Backup Protection policy.",
+		MarkdownDescription: "Attaches a protection plan to a VM. Policy `name` is the VM name. `compute_id` is looked up from `vm_name`. Create matches the console form: `name`, `compute_id`, `protection_plan`, `start_date`, `start_time`, `description`.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -83,8 +83,11 @@ func (r *ProtectionResource) Schema(ctx context.Context, req resource.SchemaRequ
 				},
 			},
 			"name": schema.StringAttribute{
-				MarkdownDescription: "The name of the protection policy.",
-				Required:            true,
+				MarkdownDescription: "Protection policy name. Always the VM `instance_name` (`vm_name`). Not set by the user.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"description": schema.StringAttribute{
 				MarkdownDescription: "A description of the protection policy.",
@@ -94,23 +97,23 @@ func (r *ProtectionResource) Schema(ctx context.Context, req resource.SchemaRequ
 				MarkdownDescription: "The policy type ID.",
 				Optional:            true,
 			},
-			"compute_id": schema.StringAttribute{
-				MarkdownDescription: "The ID of the compute instance to protect. Either compute_id or compute_name must be specified.",
-				Optional:            true,
-				Computed:            true,
+			"vm_name": schema.StringAttribute{
+				MarkdownDescription: "Existing VM `instance_name`. Sent as form `name`. The VM UUID is sent as `compute_id`.",
+				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"compute_name": schema.StringAttribute{
-				MarkdownDescription: "The name of the compute instance to protect. If set, it is resolved to compute_id. Either compute_id or compute_name must be specified.",
-				Optional:            true,
+			"compute_id": schema.StringAttribute{
+				MarkdownDescription: "VM UUID looked up from `vm_name`. Sent as form `compute_id`.",
+				Computed:            true,
 				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"protection_plan": schema.StringAttribute{
-				MarkdownDescription: "The UUID of the protection plan to associate with this policy. Reference the plan's `id` (e.g. `airtelcloud_protection_plan.example.id`), not its name.",
+				MarkdownDescription: "Protection plan UUID or console name. Names are resolved to UUID at apply. Prefer `airtelcloud_protection_plan.example.id`.",
 				Required:            true,
 			},
 			"enable_scheduler": schema.StringAttribute{
@@ -172,7 +175,7 @@ func (r *ProtectionResource) Configure(ctx context.Context, req resource.Configu
 	r.client = c
 }
 
-// ValidateConfig enforces that exactly one of compute_id or compute_name is set.
+// ValidateConfig requires vm_name. start_date and weekday are mutually exclusive.
 func (r *ProtectionResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var data ProtectionResourceModel
 
@@ -181,13 +184,11 @@ func (r *ProtectionResource) ValidateConfig(ctx context.Context, req resource.Va
 		return
 	}
 
-	if !data.ComputeID.IsNull() && !data.ComputeName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of compute_id or compute_name may be specified, not both.")
+	if data.VMName.IsUnknown() {
+		return
 	}
-	if data.ComputeID.IsNull() && data.ComputeName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"One of compute_id or compute_name must be specified.")
+	if data.VMName.IsNull() || strings.TrimSpace(data.VMName.ValueString()) == "" {
+		resp.Diagnostics.AddAttributeError(path.Root("vm_name"), "Invalid Configuration", "vm_name is required.")
 	}
 
 	hasStartDate := !data.StartDate.IsNull() && strings.TrimSpace(data.StartDate.ValueString()) != ""
@@ -281,18 +282,29 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	// Resolve compute_name to compute_id when configured by name, and persist the
-	// resolved id into the Computed compute_id attribute so it is known in state.
-	computeID := data.ComputeID.ValueString()
-	if computeID == "" && !data.ComputeName.IsNull() {
-		resolved, err := r.client.ResolveComputeID(ctx, data.ComputeName.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to resolve compute name %q: %s", data.ComputeName.ValueString(), err))
-			return
-		}
-		computeID = resolved
+	vm, err := r.client.ResolveComputeNode(ctx, "", data.VMName.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError("VM Lookup Error", fmt.Sprintf("Unable to resolve vm_name %q: %s", data.VMName.ValueString(), err))
+		return
+	}
+	computeID := strings.TrimSpace(vm.ID)
+	if computeID == "" {
+		resp.Diagnostics.AddError("VM Lookup Error", fmt.Sprintf("VM %q has an empty id", data.VMName.ValueString()))
+		return
+	}
+	az, _ := protectionPlanVMLocation(vm)
+	policyName := strings.TrimSpace(vm.InstanceName)
+	if policyName == "" {
+		policyName = strings.TrimSpace(data.VMName.ValueString())
 	}
 	data.ComputeID = types.StringValue(computeID)
+	data.Name = types.StringValue(policyName)
+
+	planID, err := r.client.ResolveProtectionPlanID(ctx, data.ProtectionPlan.ValueString(), az)
+	if err != nil {
+		resp.Diagnostics.AddError("Protection Plan Error", fmt.Sprintf("Unable to resolve protection_plan %q: %s", data.ProtectionPlan.ValueString(), err))
+		return
+	}
 
 	// The API expects start_date as MM/DD/YYYY and start_time as 12-hour AM/PM.
 	startDateInput, err := resolveProtectionStartDateInput(data.StartDate.ValueString(), data.Weekday.ValueString(), time.Now())
@@ -317,20 +329,15 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	createReq := &models.CreateProtectionRequest{
-		Name:            data.Name.ValueString(),
-		Description:     data.Description.ValueString(),
-		PolicyTypeID:    data.PolicyTypeID.ValueString(),
-		ComputeID:       computeID,
-		ProtectionPlan:  data.ProtectionPlan.ValueString(),
-		EnableScheduler: data.EnableScheduler.ValueString(),
-		StartDate:       startDate,
-		EndDate:         endDate,
-		StartTime:       startTime,
+		Name:           policyName,
+		Description:    data.Description.ValueString(),
+		PolicyTypeID:   data.PolicyTypeID.ValueString(),
+		ComputeID:      computeID,
+		ProtectionPlan: planID,
+		StartDate:      startDate,
+		EndDate:        endDate,
+		StartTime:      startTime,
 	}
-
-	tflog.Debug(ctx, "-==----====------=---", map[string]interface{}{
-		"create": createReq,
-	})
 
 	protection, err := r.client.CreateProtection(ctx, createReq)
 	if err != nil {
@@ -339,7 +346,9 @@ func (r *ProtectionResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	data.ID = types.StringValue(strconv.Itoa(protection.ID))
-	data.Name = types.StringValue(protection.Name)
+	if protection.Name != "" {
+		data.Name = types.StringValue(protection.Name)
+	}
 	data.Status = types.StringValue(protection.Status)
 	data.Region = stringValueOrNull(protection.Region)
 	data.AZName = stringValueOrNull(protection.AZName)
@@ -374,19 +383,14 @@ func (r *ProtectionResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	data.Name = types.StringValue(protection.Name)
+	if protection.Name != "" {
+		data.Name = types.StringValue(protection.Name)
+	}
 	if protection.Description != "" {
 		data.Description = types.StringValue(protection.Description)
 	}
-	// Only refresh compute_id from the API when configured by id. When configured by
-	// name, compute_id is Computed from the resolved name; overwriting it here is
-	// harmless but the resolved value already in state is authoritative, and the API
-	// reports no compute name to refresh compute_name from.
-	if protection.ComputeID != "" && data.ComputeName.IsNull() {
+	if protection.ComputeID != "" {
 		data.ComputeID = types.StringValue(protection.ComputeID)
-	}
-	if protection.ProtectionPlan != "" {
-		data.ProtectionPlan = types.StringValue(protection.ProtectionPlan)
 	}
 	data.Status = types.StringValue(protection.Status)
 	data.Region = stringValueOrNull(protection.Region)
@@ -432,15 +436,21 @@ func (r *ProtectionResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
+	az := data.AZName.ValueString()
+	planID, err := r.client.ResolveProtectionPlanID(ctx, data.ProtectionPlan.ValueString(), az)
+	if err != nil {
+		resp.Diagnostics.AddError("Protection Plan Error", fmt.Sprintf("Unable to resolve protection_plan %q: %s", data.ProtectionPlan.ValueString(), err))
+		return
+	}
+
 	updateReq := &models.UpdateProtectionRequest{
-		Name:            data.Name.ValueString(),
-		Description:     data.Description.ValueString(),
-		PolicyTypeID:    data.PolicyTypeID.ValueString(),
-		ProtectionPlan:  data.ProtectionPlan.ValueString(),
-		EnableScheduler: data.EnableScheduler.ValueString(),
-		StartDate:       startDate,
-		EndDate:         endDate,
-		StartTime:       startTime,
+		Name:           data.VMName.ValueString(),
+		Description:    data.Description.ValueString(),
+		PolicyTypeID:   data.PolicyTypeID.ValueString(),
+		ProtectionPlan: planID,
+		StartDate:      startDate,
+		EndDate:        endDate,
+		StartTime:      startTime,
 	}
 
 	protection, err := r.client.UpdateProtection(ctx, id, updateReq)

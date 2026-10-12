@@ -42,7 +42,7 @@ func TestListPublicIPs(t *testing.T) {
 						Items: []models.PublicIP{{
 							UUID:       "test-public-ip-uuid",
 							ObjectName: "test-public-ip",
-							PublicIP:   "103.239.168.100",
+							PublicIP:   "xxx.xxx.xxx.xxx",
 							Status:     "Created",
 						}},
 						Count: 1,
@@ -62,7 +62,7 @@ func TestListPublicIPs(t *testing.T) {
 							"items": []map[string]any{{
 								"uuid":   "test-public-ip-uuid",
 								"name":   "test-public-ip",
-								"ip":     "103.239.168.100",
+								"ip":     "xxx.xxx.xxx.xxx",
 								"status": "reserved",
 							}},
 							"count": 1,
@@ -139,7 +139,7 @@ func TestDeletePublicIPWithWait(t *testing.T) {
 				"message": "Public IP deletion in progress",
 				"data": map[string]any{
 					"uuid":      "test-public-ip-uuid",
-					"public_ip": "103.239.168.100",
+					"public_ip": "xxx.xxx.xxx.xxx",
 					"status":    "deleting",
 				},
 			})
@@ -151,7 +151,7 @@ func TestDeletePublicIPWithWait(t *testing.T) {
 				"message": "",
 				"data": map[string]any{
 					"uuid":      "test-public-ip-uuid",
-					"public_ip": "103.239.168.100",
+					"public_ip": "xxx.xxx.xxx.xxx",
 					"status":    "Deleted",
 				},
 			})
@@ -176,7 +176,7 @@ func TestDeletePublicIPWithWait(t *testing.T) {
 				"message": "Public IP deletion in progress",
 				"data": map[string]any{
 					"uuid":      "test-public-ip-uuid",
-					"public_ip": "103.239.168.100",
+					"public_ip": "xxx.xxx.xxx.xxx",
 					"status":    "deleting",
 				},
 			})
@@ -188,7 +188,7 @@ func TestDeletePublicIPWithWait(t *testing.T) {
 				"message": "",
 				"data": map[string]any{
 					"uuid":      "test-public-ip-uuid",
-					"public_ip": "103.239.168.100",
+					"public_ip": "xxx.xxx.xxx.xxx",
 					"status":    "Failed",
 				},
 			})
@@ -217,7 +217,7 @@ func TestDeletePublicIPWithWait(t *testing.T) {
 				"message": "Public IP deletion in progress",
 				"data": map[string]any{
 					"uuid":      "test-public-ip-uuid",
-					"public_ip": "103.239.168.100",
+					"public_ip": "xxx.xxx.xxx.xxx",
 					"status":    "deleting",
 				},
 			})
@@ -229,7 +229,7 @@ func TestDeletePublicIPWithWait(t *testing.T) {
 				"message": "",
 				"data": map[string]any{
 					"uuid":      "test-public-ip-uuid",
-					"public_ip": "103.239.168.100",
+					"public_ip": "xxx.xxx.xxx.xxx",
 					"status":    "timed_out",
 				},
 			})
@@ -385,7 +385,7 @@ func TestCreatePublicIPPolicyRule(t *testing.T) {
 				ServiceList: []string{"uuid-http", "uuid-https"},
 				Action:      "accept",
 				TargetVIP:   "10.1.99.172",
-				PublicIP:    "103.239.168.100",
+				PublicIP:    "xxx.xxx.xxx.xxx",
 				UUID:        "test-public-ip-uuid",
 			},
 		},
@@ -400,7 +400,7 @@ func TestCreatePublicIPPolicyRule(t *testing.T) {
 				ServiceList: []string{"uuid-http"},
 				Action:      "accept",
 				TargetVIP:   "10.1.99.172",
-				PublicIP:    "103.239.168.100",
+				PublicIP:    "xxx.xxx.xxx.xxx",
 				UUID:        "test-public-ip-uuid",
 			},
 			wantErr: true,
@@ -465,7 +465,7 @@ func TestWaitForPublicIPPolicyRuleReady(t *testing.T) {
 	})
 
 	client := newTestClientForPublicIP(t, ms)
-	rule, err := client.WaitForPublicIPPolicyRuleReady(context.Background(), "test-public-ip-uuid", "10.1.99.172", "103.239.168.100", "test-public-ip-uuid-1", 15*time.Second)
+	rule, err := client.WaitForPublicIPPolicyRuleReady(context.Background(), "test-public-ip-uuid", "10.1.99.172", "xxx.xxx.xxx.xxx", "test-public-ip-uuid-1", 15*time.Second)
 	if err != nil {
 		t.Fatalf("WaitForPublicIPPolicyRuleReady() error = %v", err)
 	}
@@ -499,7 +499,7 @@ func TestCreatePublicIPPolicyRule_SourceOfTruthPayload(t *testing.T) {
 		ServiceList: []string{"uuid-http"},
 		Action:      "accept",
 		TargetVIP:   "10.1.99.172",
-		PublicIP:    "103.239.168.100",
+		PublicIP:    "xxx.xxx.xxx.xxx",
 		UUID:        "test-public-ip-uuid",
 	}, "S1")
 	if err != nil {
@@ -599,7 +599,7 @@ func TestCreatePublicIPPolicyRule_SourceOfTruthPayload_WithDetailedConfig(t *tes
 		ResourceType: "ipam",
 		RevisionNote: "creating Policy",
 		TargetVIP:    "10.1.99.172",
-		PublicIP:     "103.239.168.100",
+		PublicIP:     "xxx.xxx.xxx.xxx",
 		UUID:         "test-public-ip-uuid",
 	}, "S1")
 	if err != nil {
@@ -692,7 +692,7 @@ func TestCreatePublicIPPolicyRule_ReturnsAllocationInProgressError(t *testing.T)
 		ServiceList: []string{"uuid-http"},
 		Action:      "accept",
 		TargetVIP:   "10.1.99.172",
-		PublicIP:    "103.239.168.100",
+		PublicIP:    "xxx.xxx.xxx.xxx",
 		UUID:        "test-public-ip-uuid",
 	}, "S1")
 	if err == nil {
@@ -748,7 +748,7 @@ func TestListPublicIPPolicyRules(t *testing.T) {
 	defer ms.Close()
 
 	client := newTestClientForPublicIP(t, ms)
-	resp, err := client.ListPublicIPPolicyRules(context.Background(), "test-public-ip-uuid", "10.1.99.172", "103.239.168.100")
+	resp, err := client.ListPublicIPPolicyRules(context.Background(), "test-public-ip-uuid", "10.1.99.172", "xxx.xxx.xxx.xxx")
 	if err != nil {
 		t.Fatalf("ListPublicIPPolicyRules() error = %v", err)
 	}
@@ -778,7 +778,7 @@ func TestGetPublicIPPolicyRule(t *testing.T) {
 
 	client := newTestClientForPublicIP(t, ms)
 
-	rule, err := client.GetPublicIPPolicyRule(context.Background(), "test-public-ip-uuid", "10.1.99.172", "103.239.168.100", "test-public-ip-uuid-1")
+	rule, err := client.GetPublicIPPolicyRule(context.Background(), "test-public-ip-uuid", "10.1.99.172", "xxx.xxx.xxx.xxx", "test-public-ip-uuid-1")
 	if err != nil {
 		t.Fatalf("GetPublicIPPolicyRule() error = %v", err)
 	}
@@ -786,7 +786,7 @@ func TestGetPublicIPPolicyRule(t *testing.T) {
 		t.Fatalf("GetPublicIPPolicyRule() DisplayName = %q, want %q", rule.DisplayName, "test-rule")
 	}
 
-	_, err = client.GetPublicIPPolicyRule(context.Background(), "test-public-ip-uuid", "10.1.99.172", "103.239.168.100", "nonexistent-rule")
+	_, err = client.GetPublicIPPolicyRule(context.Background(), "test-public-ip-uuid", "10.1.99.172", "xxx.xxx.xxx.xxx", "nonexistent-rule")
 	if err == nil {
 		t.Fatal("GetPublicIPPolicyRule() expected error for missing rule, got nil")
 	}
@@ -860,7 +860,7 @@ func TestDeletePublicIPPolicyRuleWithWait(t *testing.T) {
 			context.Background(),
 			"test-public-ip-uuid",
 			"10.1.99.172",
-			"103.239.168.100",
+			"xxx.xxx.xxx.xxx",
 			"test-public-ip-uuid-1",
 			4*time.Second,
 		)
@@ -901,7 +901,7 @@ func TestDeletePublicIPPolicyRuleWithWait(t *testing.T) {
 			context.Background(),
 			"test-public-ip-uuid",
 			"10.1.99.172",
-			"103.239.168.100",
+			"xxx.xxx.xxx.xxx",
 			"test-public-ip-uuid-1",
 			2*time.Second,
 		)
@@ -943,7 +943,7 @@ func TestDeletePublicIPPolicyRuleWithWait(t *testing.T) {
 			context.Background(),
 			"test-public-ip-uuid",
 			"10.1.99.172",
-			"103.239.168.100",
+			"xxx.xxx.xxx.xxx",
 			"test-public-ip-uuid-1",
 			2*time.Second,
 		)
@@ -987,7 +987,7 @@ func TestDeletePublicIPPolicyRuleWithWait(t *testing.T) {
 			context.Background(),
 			"test-public-ip-uuid",
 			"10.1.99.172",
-			"103.239.168.100",
+			"xxx.xxx.xxx.xxx",
 			"test-public-ip-uuid-1",
 			2*time.Second,
 		)
@@ -1030,7 +1030,7 @@ func TestDeletePublicIPPolicyRuleWithWait(t *testing.T) {
 			context.Background(),
 			"test-public-ip-uuid",
 			"10.1.99.172",
-			"103.239.168.100",
+			"xxx.xxx.xxx.xxx",
 			"test-public-ip-uuid-1",
 			1*time.Second,
 		)

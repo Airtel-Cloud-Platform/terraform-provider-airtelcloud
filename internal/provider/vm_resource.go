@@ -674,7 +674,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 
 	protectionPlan := strings.TrimSpace(data.ProtectionPlan.ValueString())
 	if protectionPlan != "" {
-		resolved, err := computeClient.ResolveProtectionPlanID(ctx, protectionPlan, subnetID)
+		resolved, err := computeClient.ResolveProtectionPlanID(ctx, protectionPlan, data.AvailabilityZone.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError("Protection Plan Resolution Error", err.Error())
 			return
