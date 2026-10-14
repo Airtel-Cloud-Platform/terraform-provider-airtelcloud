@@ -273,6 +273,52 @@ func TestCreateProtectionPlan(t *testing.T) {
 	}
 }
 
+func TestCreateProtectionPlanAdoptsWhenAlreadyExists(t *testing.T) {
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	mockServer.SetErrorResponse("POST", "/api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plans/", 409, "already exist")
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	plan, err := client.CreateProtectionPlan(context.Background(), &models.CreateProtectionPlanRequest{
+		Name:          "test-plan",
+		SelectorValue: "S1",
+	}, "test-subnet-id")
+	if err != nil {
+		t.Fatalf("CreateProtectionPlan() error = %v", err)
+	}
+	if plan.ID != "plan-uuid-1234" {
+		t.Fatalf("CreateProtectionPlan() ID = %q, want plan-uuid-1234", plan.ID)
+	}
+}
+
+func TestDeleteProtectionPlan(t *testing.T) {
+	var gotAZ, gotPath string
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	mockServer.AddHandler("DELETE", "/api/v2.1/backups/domain/test-org/project/test-project/backups/protection_plans/plan-uuid-1234/", func(w http.ResponseWriter, r *http.Request) {
+		gotAZ = r.Header.Get("ce-availability-zone")
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	client, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+
+	if err := client.DeleteProtectionPlan(context.Background(), "plan-uuid-1234", "S1"); err != nil {
+		t.Fatalf("DeleteProtectionPlan() error = %v", err)
+	}
+	if gotAZ != "S1" {
+		t.Fatalf("ce-availability-zone = %q, want S1", gotAZ)
+	}
+	if !strings.HasSuffix(gotPath, "/protection_plans/plan-uuid-1234/") {
+		t.Fatalf("DELETE path = %q", gotPath)
+	}
+}
+
 func TestCreateProtectionPlanIDFromCreateBodyWhenListFails(t *testing.T) {
 	const createdID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 	mockServer := testutil.NewMockServer()

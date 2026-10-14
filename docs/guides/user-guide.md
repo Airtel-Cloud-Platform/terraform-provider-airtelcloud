@@ -1204,7 +1204,7 @@ terraform import airtelcloud_lb_virtual_server.http <lb_service_id>/<virtual_ser
 
 Manages a backup protection plan that defines schedule and retention policies.
 
-~> **Warning:** The Airtel Cloud API does not support deletion of protection plans. Running `terraform destroy` will only remove the plan from Terraform state -- the plan will continue to exist in the Airtel Cloud platform.
+`terraform destroy` calls DELETE. If the plan is still in the console, the next apply adopts it instead of failing with “already exists”.
 
 Set `vm_name` to an existing VM. AZ (`selector_value`) and subnet header come from that VM. `selector_key` is always `AZ`; `retention_unit` is always `DAYS`. The API name is `{name}-daily` or `{name}-weekly`.
 

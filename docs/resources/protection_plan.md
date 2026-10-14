@@ -2,169 +2,191 @@
 page_title: "airtelcloud_protection_plan Resource - Airtel Cloud"
 subcategory: "Backup"
 description: |-
-  Manages an Airtel Cloud Protection Plan (backup schedule and retention). Destroying this resource only removes it from Terraform state; the API does not delete plans.
----
+  Manages an Airtel Cloud Protection Plan for scheduling VM backups and defining backup retention.
 
 # airtelcloud_protection_plan (Resource)
 
-Creates a backup **protection plan**: how often backups run and how long they are kept.
+Manages an Airtel Cloud Protection Plan in Airtel Cloud.
 
-You only set a name, description, schedule, retention, and an existing VM name. The provider looks up that VM, uses its availability zone (`S1`, `S2`, …) as the plan selector, and uses its subnet on create. You do not set AZ or subnet yourself.
+A protection plan defines:
 
-Use the exported `id` when you attach the plan to a VM with [`airtelcloud_protection`](protection.md) or `airtelcloud_vm.protection_plan`.
+- How frequently VM backups are created.
+- How long backups are retained.
+- Which existing VM the protection plan is associated with.
 
-| You set | Provider fills |
-| --- | --- |
-| `name`, `description` | API name `{name}-daily` or `{name}-weekly` |
-| `recurrence` + `recurrence_period` | Interval in seconds (`daily` × 86400, `weekly` × 604800) |
-| `retention` (days) | `retention_unit` = `DAYS` |
-| `vm_name` | `selector_value` (AZ), `subnet_id` (create header only) |
+The VM specified by `vm_name` must already exist in the same Airtel Cloud project.
 
-~> **Destroy does not delete the plan.** The backup API has no delete. `terraform destroy` only removes the resource from state. The plan stays in the console. Change any argument and Terraform **replaces** the resource (creates another plan; the old one remains).
+> **Destroy:** Terraform calls `DELETE` on the protection plan. If the plan is still in the console afterward, the next `apply` adopts it instead of failing with “already exists”.
 
 ## Example Usage
 
-Copy this into a working directory. Put secrets in `terraform.tfvars` or environment variables — never in the `.tf` file.
+### Weekly Backup
 
 ```terraform
-terraform {
-  required_providers {
-    airtelcloud = {
-      source = "Airtel-Cloud-Platform/airtelcloud"
-    }
-  }
-}
-
-provider "airtelcloud" {
-  api_endpoint = "https://south.cloud.airtel.in"
-  api_key      = var.airtel_api_key
-  api_secret   = var.airtel_api_secret
-  region       = "south"
-  organization = var.organization
-  project_name = var.project_name
-}
-
-variable "airtel_api_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "airtel_api_secret" {
-  type      = string
-  sensitive = true
-}
-
-variable "organization" {
-  type = string
-}
-
-variable "project_name" {
-  type = string
-}
-
-# Existing VM instance_name (must already exist in this project).
-variable "vm_name" {
-  type = string
-}
-
 resource "airtelcloud_protection_plan" "weekly" {
   name              = "app-backup"
-  description       = "Weekly backup, 30-day retention"
-  vm_name           = var.vm_name
+  description       = "Weekly backup with 30-day retention"
+  vm_name           = "my-app-vm"
   recurrence        = 1
   recurrence_period = "weekly"
   retention         = 30
 }
-
-output "protection_plan_id" {
-  description = "UUID to pass to airtelcloud_protection or a VM backup block"
-  value       = airtelcloud_protection_plan.weekly.id
-}
 ```
 
-`terraform.tfvars` (local only; do not commit):
-
-```hcl
-organization  = "your-org"
-project_name  = "your-project"
-vm_name       = "your-existing-vm"
-# airtel_api_key    = "..."
-# airtel_api_secret = "..."
-```
-
-### Daily plan
+### Daily Backup
 
 ```terraform
 resource "airtelcloud_protection_plan" "daily" {
   name              = "app-backup"
-  description       = "Daily backup, 30-day retention"
-  vm_name           = var.vm_name
+  description       = "Daily backup with 30-day retention"
+  vm_name           = "my-app-vm"
   recurrence        = 1
   recurrence_period = "daily"
   retention         = 30
 }
 ```
 
-With `name = "app-backup"`, the console/API name is `app-backup-daily` or `app-backup-weekly`. Terraform state keeps `app-backup`.
+In the examples above, `my-app-vm` must be the `instance_name` of an existing VM in the same project.
 
-### Use the plan on a protection policy
+## Arguments Reference
+
+The following arguments are supported.
+
+### `name`
+
+**Required** — String
+
+Name of the protection plan.
+
+### `description`
+
+**Required** — String
+
+Description of the protection plan.
+
+### `vm_name`
+
+**Required** — String
+
+Name of an existing VM in the same Airtel Cloud project.
+
+The VM is used to associate the protection plan with the appropriate VM configuration.
+
+### `recurrence`
+
+**Required** — Number
+
+Number of recurrence periods between backups.
+
+Valid values are `1` to `30`.
+
+For example:
 
 ```terraform
-resource "airtelcloud_protection" "web" {
-  name             = "web-backup"
-  description      = "Attach weekly plan to the VM"
-  compute_name     = var.vm_name
-  protection_plan  = airtelcloud_protection_plan.weekly.id
-  enable_scheduler = "true"
-  weekday          = "monday"
-  start_time       = "02:00"
-}
+recurrence        = 1
+recurrence_period = "daily"
 ```
 
-Pass **`id`**, not `name`. See [`airtelcloud_protection`](protection.md).
+creates a backup every day.
 
-## Recurrence
+```terraform
+recurrence        = 2
+recurrence_period = "weekly"
+```
 
-`recurrence` is how many periods between runs. Allowed range: **1–30**. Retention: **1–365** days. Invalid values fail at plan time; the backup API is not called.
+creates a backup every two weeks.
 
-| `recurrence_period` | `recurrence` | Meaning | Seconds sent to the API |
-| --- | --- | --- | --- |
-| `daily` | `1` | Every day | 86400 |
-| `daily` | `7` | Every 7 days | 604800 |
-| `weekly` | `1` | Every week | 604800 |
-| `weekly` | `2` | Every 2 weeks | 1209600 |
+### `recurrence_period`
 
-## Argument Reference
+**Required** — String
 
-All arguments force replacement if changed.
+Defines the period used by `recurrence`.
 
-### Required
+Supported values:
 
-- `name` (String) - Plan name in Terraform. The API receives `{name}-daily` or `{name}-weekly`. Do not add that suffix unless you want it left as-is.
-- `description` (String) - Description stored on the plan.
-- `vm_name` (String) - Existing VM `instance_name` in the same project. AZ and subnet are read from this VM. The VM is not modified.
-- `recurrence` (Number) - Count of `recurrence_period` units, 1–30.
-- `recurrence_period` (String) - `daily` or `weekly`.
-- `retention` (Number) - How many days to keep backups, 1–365.
+- `daily`
+- `weekly`
 
-### You do not set
+### `retention`
 
-- `selector_key` — always `AZ`.
-- `retention_unit` — always `DAYS`.
-- Availability zone and subnet — taken from `vm_name`.
+**Required** — Number
+
+Number of days that backups are retained.
+
+Valid values are `1` to `365`.
+
+For example:
+
+```terraform
+retention = 30
+```
+
+retains backups for 30 days.
+
+## Recurrence Examples
+
+| `recurrence_period` | `recurrence` | Backup Frequency |
+|---|---:|---|
+| `daily` | `1` | Every day |
+| `daily` | `2` | Every 2 days |
+| `daily` | `7` | Every 7 days |
+| `weekly` | `1` | Every week |
+| `weekly` | `2` | Every 2 weeks |
+
+The effective backup interval is calculated from `recurrence` and `recurrence_period`.
 
 ## Attribute Reference
 
-- `id` (String) - Plan UUID. Use this when attaching the plan to a VM.
-- `selector_value` (String) - Availability zone from the VM (for example `S1`).
-- `subnet_id` (String) - Subnet from the VM (`network_id`). Used on create; list/read use the AZ header.
+In addition to the arguments above, the following attributes are exported.
+
+### `id`
+
+The unique ID (UUID) of the protection plan.
+
+### `selector_value`
+
+The availability zone associated with the VM used to create the protection plan.
+
+### `subnet_id`
+
+The network ID associated with the VM.
+
+## Replacement Behavior
+
+Changing any protection plan argument causes Terraform to replace the resource by creating a new protection plan.
+
+The following arguments trigger replacement when changed:
+
+- `name`
+- `description`
+- `vm_name`
+- `recurrence`
+- `recurrence_period`
+- `retention`
+
+Because the Airtel Cloud backup API does not support deleting protection plans, the previous plan remains in Airtel Cloud after replacement.
+
+> **Note:** Avoid making unnecessary changes to protection plan configuration because old plans cannot be removed automatically by Terraform.
 
 ## Import
 
-Import by the plan UUID from the console (not the display name):
+An existing protection plan can be imported using its UUID.
 
 ```shell
 terraform import airtelcloud_protection_plan.weekly 898a41cb-8ce0-48e2-861a-8370f6799819
 ```
 
-Import only restores `id`. Put the same `name`, `description`, `vm_name`, schedule, and retention in config so the next plan is empty.
+The UUID can be obtained from Airtel Cloud.
+
+After importing the resource, configure the resource arguments to match the existing protection plan.
+
+## Notes
+
+- `vm_name` must refer to an existing VM.
+- The VM must belong to the same Airtel Cloud project.
+- `recurrence` must be between `1` and `30`.
+- `recurrence_period` must be either `daily` or `weekly`.
+- `retention` must be between `1` and `365` days.
+- Changes to resource arguments create a new protection plan.
+- Destroy calls DELETE. If the plan remains in the console, re-apply adopts it.
+- Destroying the Terraform resource removes it from Terraform state only; the protection plan remains in Airtel Cloud.

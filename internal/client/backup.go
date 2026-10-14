@@ -94,6 +94,13 @@ func (c *Client) CreateProtectionPlan(ctx context.Context, req *models.CreatePro
 	var raw json.RawMessage
 	err := scopedClient.PostURLEncodedForm(ctx, fmt.Sprintf("%s/protection_plans/", c.backupBasePath()), formData, &raw)
 	if err != nil {
+		if isProtectionPlanAlreadyExists(err) {
+			tflog.Warn(ctx, "Protection plan already exists; adopting from list", map[string]interface{}{
+				"name":  req.Name,
+				"error": err.Error(),
+			})
+			return c.findProtectionPlanByName(ctx, req.Name, req.SelectorValue)
+		}
 		var syn *json.SyntaxError
 		var typ *json.UnmarshalTypeError
 		if !errors.As(err, &syn) && !errors.As(err, &typ) {
@@ -109,22 +116,52 @@ func (c *Client) CreateProtectionPlan(ctx context.Context, req *models.CreatePro
 		return &models.ProtectionPlan{ID: id, Name: req.Name}, nil
 	}
 
-	plans, listErr := c.ListProtectionPlans(ctx, req.SelectorValue)
+	plan, listErr := c.findProtectionPlanByName(ctx, req.Name, req.SelectorValue)
 	if listErr != nil {
 		return nil, fmt.Errorf("protection plan %q was created on the backend but could not be retrieved after retries; import it by id from the UI: %w", req.Name, listErr)
 	}
+	return plan, nil
+}
 
-	for _, plan := range plans {
-		if plan.Name != "" && containsIgnoreCase(plan.Name, req.Name) {
-			return &plan, nil
+func (c *Client) findProtectionPlanByName(ctx context.Context, name, az string) (*models.ProtectionPlan, error) {
+	plans, err := c.ListProtectionPlans(ctx, az)
+	if err != nil {
+		return nil, err
+	}
+	for i := range plans {
+		if plans[i].Name != "" && containsIgnoreCase(plans[i].Name, name) {
+			return &plans[i], nil
 		}
 	}
-
 	if len(plans) > 0 {
 		return &plans[len(plans)-1], nil
 	}
+	return nil, fmt.Errorf("protection plan %q not found in the list", name)
+}
 
-	return nil, fmt.Errorf("protection plan created but could not find it in the list")
+func isProtectionPlanAlreadyExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		if apiErr.StatusCode == 409 {
+			return true
+		}
+		msg := strings.ToLower(apiErr.Message)
+		return strings.Contains(msg, "already exist")
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "already exist")
+}
+
+// DeleteProtectionPlan deletes a plan by UUID. Uses ce-availability-zone like list.
+func (c *Client) DeleteProtectionPlan(ctx context.Context, id, az string) error {
+	scopedClient := c.WithAvailabilityZone(az).WithSubnetID("")
+	err := scopedClient.Delete(ctx, fmt.Sprintf("%s/protection_plans/%s/", c.backupBasePath(), id))
+	if err != nil && IsNotFoundError(err) {
+		return nil
+	}
+	return err
 }
 
 func extractProtectionPlanCreateID(body []byte) string {

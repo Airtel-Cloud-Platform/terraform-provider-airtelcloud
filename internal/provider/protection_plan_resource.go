@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -148,7 +149,7 @@ func (r *ProtectionPlanResource) Metadata(ctx context.Context, req resource.Meta
 
 func (r *ProtectionPlanResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages an Airtel Cloud Protection Plan (backup schedule and retention). The API does not support deletion; destroying this resource only removes it from Terraform state. Set `vm_name`; AZ (`selector_value`) and subnet-id header are read from that VM. `selector_key` is always `AZ` and `retention_unit` is always `DAYS`.",
+		MarkdownDescription: "Manages an Airtel Cloud Protection Plan (backup schedule and retention). Destroy calls DELETE; if the API reports the plan already exists on create, Terraform adopts the existing plan. Set `vm_name`; AZ (`selector_value`) and subnet-id header are read from that VM. `selector_key` is always `AZ` and `retention_unit` is always `DAYS`.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -382,7 +383,32 @@ func (r *ProtectionPlanResource) Update(ctx context.Context, req resource.Update
 }
 
 func (r *ProtectionPlanResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	tflog.Warn(ctx, "Protection plan deletion is not supported by the API. Removing from Terraform state only.")
+	var data ProtectionPlanResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	az := data.SelectorValue.ValueString()
+	if az == "" && data.VMName.ValueString() != "" {
+		var err error
+		az, _, err = r.lookupProtectionPlanVM(ctx, data.VMName.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("VM Lookup Error", fmt.Sprintf("Unable to resolve vm_name %q: %s", data.VMName.ValueString(), err))
+			return
+		}
+	}
+
+	err := r.client.DeleteProtectionPlan(ctx, data.ID.ValueString(), az)
+	if err == nil {
+		return
+	}
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 405 {
+		tflog.Warn(ctx, "Protection plan DELETE is not allowed; removing from Terraform state. Re-apply will adopt the existing plan if it is still in the console.")
+		return
+	}
+	resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete protection plan, got error: %s", err))
 }
 
 func (r *ProtectionPlanResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
