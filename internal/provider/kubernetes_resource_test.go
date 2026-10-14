@@ -70,35 +70,35 @@ func TestBuildKubernetesCreateRequest(t *testing.T) {
 		OSDistribution:       types.StringValue("Ubuntu"),
 		ProviderType:         types.StringValue(models.KubernetesProviderBYOH),
 		ControlPlaneProvider: types.StringValue(models.KubernetesControlPlaneKamaji),
-		NodePools: []KubernetesNodePoolModel{{
-			Flavor:     types.StringValue("ccd.xLarge"),
-			FlavorType: types.StringValue("Compute dense"),
-			SubnetName: types.StringValue("app-subnet"),
-			Count:      types.Int64Value(0),
-			Autoscaling: &KubernetesAutoscalingModel{
-				Enabled:  types.BoolValue(true),
-				MaxNodes: types.Int64Value(2),
-			},
-			Labels: []KubernetesMetaOpModel{{
-				Key:   types.StringValue("test"),
-				Value: types.StringValue("test"),
-				Op:    types.StringValue("MetaOpSet"),
-			}},
-			Annotations: []KubernetesMetaOpModel{{
-				Key:   types.StringValue("new"),
-				Value: types.StringValue("new"),
-				Op:    types.StringValue("MetaOpSet"),
-			}},
-			Taints: []KubernetesTaintModel{{
-				Key:    types.StringValue("test"),
-				Value:  types.StringValue("test"),
-				Effect: types.StringValue("PreferNoSchedule"),
-				Op:     types.StringValue("MetaOpSet"),
-			}},
-		}},
 	}
+	pools := []KubernetesNodePoolModel{{
+		Flavor:     types.StringValue("ccd.xLarge"),
+		FlavorType: types.StringValue("Compute dense"),
+		SubnetName: types.StringValue("app-subnet"),
+		Count:      types.Int64Value(0),
+		Autoscaling: &KubernetesAutoscalingModel{
+			Enabled:  types.BoolValue(true),
+			MaxNodes: types.Int64Value(2),
+		},
+		Labels: []KubernetesMetaOpModel{{
+			Key:   types.StringValue("test"),
+			Value: types.StringValue("test"),
+			Op:    types.StringValue("MetaOpSet"),
+		}},
+		Annotations: []KubernetesMetaOpModel{{
+			Key:   types.StringValue("new"),
+			Value: types.StringValue("new"),
+			Op:    types.StringValue("MetaOpSet"),
+		}},
+		Taints: []KubernetesTaintModel{{
+			Key:    types.StringValue("test"),
+			Value:  types.StringValue("test"),
+			Effect: types.StringValue("PreferNoSchedule"),
+			Op:     types.StringValue("MetaOpSet"),
+		}},
+	}}
 
-	req := buildKubernetesCreateRequest(&data, map[string]string{"md0": "c27614a2-0c1b-4eda-9377-dd9f8e24f3e3"})
+	req := buildKubernetesCreateRequest(&data, pools, map[string]string{"md0": "c27614a2-0c1b-4eda-9377-dd9f8e24f3e3"})
 	if req.Cluster != "test-kms" || req.K8sInfo.WorkerNodes != 1 {
 		t.Fatalf("unexpected request: %+v", req)
 	}

@@ -49,23 +49,23 @@ type KubernetesResource struct {
 }
 
 type KubernetesResourceModel struct {
-	ID                   types.String              `tfsdk:"id"`
-	Name                 types.String              `tfsdk:"name"`
-	Description          types.String              `tfsdk:"description"`
-	K8sName              types.String              `tfsdk:"k8s_name"`
-	KubernetesVersion    types.String              `tfsdk:"kubernetes_version"`
-	NetworkingName       types.String              `tfsdk:"networking_name"`
-	NetworkingVersion    types.String              `tfsdk:"networking_version"`
-	WorkerNodes          types.Int64               `tfsdk:"worker_nodes"`
-	AvailabilityZone     types.String              `tfsdk:"availability_zone"`
-	OSDistribution       types.String              `tfsdk:"os_distribution"`
-	ProviderType         types.String              `tfsdk:"provider_type"`
-	ControlPlaneProvider types.String              `tfsdk:"control_plane_provider"`
-	VPCName              types.String              `tfsdk:"vpc_name"`
-	NodePools            []KubernetesNodePoolModel `tfsdk:"node_pools"`
-	State                types.String              `tfsdk:"state"`
-	CreatedBy            types.String              `tfsdk:"created_by"`
-	Timeouts             timeouts.Value            `tfsdk:"timeouts"`
+	ID                   types.String   `tfsdk:"id"`
+	Name                 types.String   `tfsdk:"name"`
+	Description          types.String   `tfsdk:"description"`
+	K8sName              types.String   `tfsdk:"k8s_name"`
+	KubernetesVersion    types.String   `tfsdk:"kubernetes_version"`
+	NetworkingName       types.String   `tfsdk:"networking_name"`
+	NetworkingVersion    types.String   `tfsdk:"networking_version"`
+	WorkerNodes          types.Int64    `tfsdk:"worker_nodes"`
+	AvailabilityZone     types.String   `tfsdk:"availability_zone"`
+	OSDistribution       types.String   `tfsdk:"os_distribution"`
+	ProviderType         types.String   `tfsdk:"provider_type"`
+	ControlPlaneProvider types.String   `tfsdk:"control_plane_provider"`
+	VPCName              types.String   `tfsdk:"vpc_name"`
+	NodePools            types.List     `tfsdk:"node_pools"`
+	State                types.String   `tfsdk:"state"`
+	CreatedBy            types.String   `tfsdk:"created_by"`
+	Timeouts             timeouts.Value `tfsdk:"timeouts"`
 }
 
 type KubernetesNodePoolModel struct {
@@ -345,7 +345,13 @@ func (r *KubernetesResource) ValidateConfig(ctx context.Context, req resource.Va
 		return
 	}
 
-	for i, pool := range data.NodePools {
+	pools, poolDiags := kubernetesNodePools(ctx, data.NodePools)
+	resp.Diagnostics.Append(poolDiags...)
+	if resp.Diagnostics.HasError() || data.NodePools.IsUnknown() {
+		return
+	}
+
+	for i, pool := range pools {
 		autoscalingEnabled := false
 		if pool.Autoscaling != nil {
 			if pool.Autoscaling.Enabled.IsUnknown() {
@@ -397,13 +403,19 @@ func (r *KubernetesResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	subnetIDs, resolveDiags := r.resolveKubernetesSubnetIDs(ctx, &data)
+	pools, poolDiags := kubernetesNodePools(ctx, data.NodePools)
+	resp.Diagnostics.Append(poolDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	subnetIDs, resolveDiags := r.resolveKubernetesSubnetIDs(ctx, &data, pools)
 	resp.Diagnostics.Append(resolveDiags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	createReq := buildKubernetesCreateRequest(&data, subnetIDs)
+	createReq := buildKubernetesCreateRequest(&data, pools, subnetIDs)
 	azClient := r.client.WithAvailabilityZone(data.AvailabilityZone.ValueString())
 	if err := azClient.CreateKubernetesCluster(ctx, createReq); err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create kubernetes cluster, got error: %s", err))
@@ -416,7 +428,10 @@ func (r *KubernetesResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	applyKubernetesClusterToState(&data, ready)
+	resp.Diagnostics.Append(applyKubernetesClusterToState(ctx, &data, ready)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	tflog.Trace(ctx, "created kubernetes resource")
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -456,7 +471,10 @@ func (r *KubernetesResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	applyKubernetesClusterToState(&data, cluster)
+	resp.Diagnostics.Append(applyKubernetesClusterToState(ctx, &data, cluster)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -509,14 +527,14 @@ func (r *KubernetesResource) ImportState(ctx context.Context, req resource.Impor
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-func (r *KubernetesResource) resolveKubernetesSubnetIDs(ctx context.Context, data *KubernetesResourceModel) (map[string]string, diag.Diagnostics) {
+func (r *KubernetesResource) resolveKubernetesSubnetIDs(ctx context.Context, data *KubernetesResourceModel, pools []KubernetesNodePoolModel) (map[string]string, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	ids := make(map[string]string, len(data.NodePools))
+	ids := make(map[string]string, len(pools))
 	vpcName := ""
 	if !data.VPCName.IsNull() && !data.VPCName.IsUnknown() {
 		vpcName = data.VPCName.ValueString()
 	}
-	for i, pool := range data.NodePools {
+	for i, pool := range pools {
 		name := pool.SubnetName.ValueString()
 		id, err := r.client.ResolveSubnetIDByName(ctx, name, vpcName)
 		if err != nil {
@@ -532,11 +550,11 @@ func (r *KubernetesResource) resolveKubernetesSubnetIDs(ctx context.Context, dat
 	return ids, diags
 }
 
-func buildKubernetesCreateRequest(data *KubernetesResourceModel, subnetIDs map[string]string) *models.CreateKubernetesClusterRequest {
+func buildKubernetesCreateRequest(data *KubernetesResourceModel, pools []KubernetesNodePoolModel, subnetIDs map[string]string) *models.CreateKubernetesClusterRequest {
 	az := data.AvailabilityZone.ValueString()
-	pools := make(map[string]models.KubernetesNodePool, len(data.NodePools))
+	poolReqs := make(map[string]models.KubernetesNodePool, len(pools))
 	workerSum := 0
-	for i, pool := range data.NodePools {
+	for i, pool := range pools {
 		poolAZ := az
 		if !pool.AvailabilityZone.IsNull() && !pool.AvailabilityZone.IsUnknown() && pool.AvailabilityZone.ValueString() != "" {
 			poolAZ = pool.AvailabilityZone.ValueString()
@@ -570,7 +588,7 @@ func buildKubernetesCreateRequest(data *KubernetesResourceModel, subnetIDs map[s
 		item.Labels = kubernetesMetaOpsFromModel(pool.Labels)
 		item.Annotations = kubernetesMetaOpsFromModel(pool.Annotations)
 		item.Taints = kubernetesTaintsFromModel(pool.Taints)
-		pools[poolKey] = item
+		poolReqs[poolKey] = item
 	}
 
 	hasAutoscalingFromZero := workerSum == 0
@@ -600,7 +618,7 @@ func buildKubernetesCreateRequest(data *KubernetesResourceModel, subnetIDs map[s
 			BYOH: &models.KubernetesBYOHProvider{
 				MasterHostGroup:      "",
 				ControlPlaneProvider: data.ControlPlaneProvider.ValueString(),
-				NodePools:            pools,
+				NodePools:            poolReqs,
 			},
 		},
 		RequiredSchedulingTags: map[string]string{
@@ -610,7 +628,8 @@ func buildKubernetesCreateRequest(data *KubernetesResourceModel, subnetIDs map[s
 	return req
 }
 
-func applyKubernetesClusterToState(data *KubernetesResourceModel, cluster *models.KubernetesCluster) {
+func applyKubernetesClusterToState(ctx context.Context, data *KubernetesResourceModel, cluster *models.KubernetesCluster) diag.Diagnostics {
+	var diags diag.Diagnostics
 	name := cluster.ClusterName()
 	if name == "" {
 		name = data.Name.ValueString()
@@ -651,16 +670,26 @@ func applyKubernetesClusterToState(data *KubernetesResourceModel, cluster *model
 		data.KubernetesVersion = types.StringValue(cluster.K8sVersion)
 	}
 
+	pools, poolDiags := kubernetesNodePools(ctx, data.NodePools)
+	diags.Append(poolDiags...)
+	if diags.HasError() || data.NodePools.IsNull() || data.NodePools.IsUnknown() {
+		return diags
+	}
+
 	az := data.AvailabilityZone.ValueString()
-	for i := range data.NodePools {
-		if data.NodePools[i].AvailabilityZone.IsNull() || data.NodePools[i].AvailabilityZone.IsUnknown() || data.NodePools[i].AvailabilityZone.ValueString() == "" {
-			data.NodePools[i].AvailabilityZone = types.StringValue(az)
+	for i := range pools {
+		if pools[i].AvailabilityZone.IsNull() || pools[i].AvailabilityZone.IsUnknown() || pools[i].AvailabilityZone.ValueString() == "" {
+			pools[i].AvailabilityZone = types.StringValue(az)
 		}
+	}
+	diags.Append(setKubernetesNodePools(ctx, data, pools)...)
+	if diags.HasError() {
+		return diags
 	}
 
 	if data.WorkerNodes.IsNull() || data.WorkerNodes.IsUnknown() {
 		sum := int64(0)
-		for _, pool := range data.NodePools {
+		for _, pool := range pools {
 			sum += pool.Count.ValueInt64()
 		}
 		if sum == 0 {
@@ -668,6 +697,25 @@ func applyKubernetesClusterToState(data *KubernetesResourceModel, cluster *model
 		}
 		data.WorkerNodes = types.Int64Value(sum)
 	}
+	return diags
+}
+
+func kubernetesNodePools(ctx context.Context, list types.List) ([]KubernetesNodePoolModel, diag.Diagnostics) {
+	if list.IsNull() || list.IsUnknown() {
+		return nil, nil
+	}
+	var pools []KubernetesNodePoolModel
+	diags := list.ElementsAs(ctx, &pools, false)
+	return pools, diags
+}
+
+func setKubernetesNodePools(ctx context.Context, data *KubernetesResourceModel, pools []KubernetesNodePoolModel) diag.Diagnostics {
+	list, diags := types.ListValueFrom(ctx, data.NodePools.ElementType(ctx), pools)
+	if diags.HasError() {
+		return diags
+	}
+	data.NodePools = list
+	return nil
 }
 
 func kubernetesMetaOpNested() schema.NestedAttributeObject {
