@@ -40,6 +40,32 @@ type APIError struct {
 	Code       int    `json:"code"`
 }
 
+// UnmarshalJSON accepts both {"message": ...} and FastAPI-style {"detail": ...}
+// error bodies (detail may be a string or a structured validation list).
+func (e *APIError) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		StatusCode int             `json:"status_code"`
+		Message    string          `json:"message"`
+		Code       int             `json:"code"`
+		Detail     json.RawMessage `json:"detail"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	e.StatusCode = raw.StatusCode
+	e.Message = raw.Message
+	e.Code = raw.Code
+	if e.Message == "" && len(raw.Detail) > 0 && string(raw.Detail) != "null" {
+		var s string
+		if err := json.Unmarshal(raw.Detail, &s); err == nil {
+			e.Message = s
+		} else {
+			e.Message = string(raw.Detail)
+		}
+	}
+	return nil
+}
+
 func (e *APIError) Error() string {
 	return fmt.Sprintf("API Error %d: %s (code: %d)", e.StatusCode, e.Message, e.Code)
 }
