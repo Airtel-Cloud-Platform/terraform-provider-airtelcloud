@@ -1,0 +1,25 @@
+# Checkov config for terraform-provider-airtelcloud
+# The provider itself is Go; the .tf that ships publicly lives in examples/ and docs/,
+# and is what users copy-paste. The workflows are scanned too.
+directory:
+  - .
+framework:
+  - terraform      # examples/**/*.tf  (+ custom CKV_ACP_* checks below)
+  - secrets        # entropy + regex secret detection in all text files
+  - github_actions # .github/workflows/*.yml
+external-checks-dir:
+  - .checkov/checks
+skip-path:
+  - vendor
+  - dist
+  - .git
+  - testdata          # acceptance-test fixtures with intentionally fake values
+download-external-modules: false
+compact: true
+quiet: true           # print failures only
+soft-fail: false
+
+# Add justified skips here, one per line, with a reason. Prefer inline suppressions:
+#   # checkov:skip=CKV_XXX_1:reason
+# skip-check:
+#   - CKV_XXX_1  # reason

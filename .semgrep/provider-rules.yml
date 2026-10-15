@@ -1,0 +1,104 @@
+# Provider-specific Semgrep rules for terraform-provider-airtelcloud.
+# Run alongside the registry packs (p/golang, p/secrets, p/github-actions).
+# Severity ERROR blocks the PR; WARNING is reported in code scanning only.
+rules:
+  # --- Credentials in schema must be Sensitive (plugin framework) ------------
+  - id: acp-framework-credential-attribute-not-sensitive
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Schema attribute $NAME looks like a credential but is not marked `Sensitive: true`.
+      Terraform will show it in plan output and it can end up in CI logs. Add `Sensitive: true`.
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+    patterns:
+      - pattern: |
+          map[string]$SCHEMA.Attribute{..., "$NAME": $ATTR, ...}
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i)^(?!.*_(id|ids|name|type|arn|version|length|expiry|expires_at|ttl|policy)$)[a-z0-9_]*(password|passwd|secret|token|api_key|apikey|access_key|private_key|credential)[a-z0-9_]*$
+      - metavariable-pattern:
+          metavariable: $ATTR
+          patterns:
+            - pattern: $PKG.StringAttribute{...}
+            - pattern-not: "$PKG.StringAttribute{..., Sensitive: true, ...}"
+      - focus-metavariable: $ATTR
+
+  # --- Credentials in schema must be Sensitive (SDKv2) ------------------------
+  - id: acp-sdkv2-credential-attribute-not-sensitive
+    languages: [go]
+    severity: ERROR
+    message: >-
+      SDKv2 schema field $NAME looks like a credential but is not marked `Sensitive: true`.
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+    patterns:
+      - pattern: |
+          map[string]*$SCHEMA.Schema{..., "$NAME": $ATTR, ...}
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i)^(?!.*_(id|ids|name|type|arn|version|length|expiry|expires_at|ttl|policy)$)[a-z0-9_]*(password|passwd|secret|token|api_key|apikey|access_key|private_key|credential)[a-z0-9_]*$
+      - metavariable-pattern:
+          metavariable: $ATTR
+          patterns:
+            - pattern: "{...}"
+            - pattern-not: "{..., Sensitive: true, ...}"
+      - focus-metavariable: $ATTR
+
+  # --- Never log credentials ---------------------------------------------------
+  - id: acp-log-credential
+    languages: [go]
+    severity: ERROR
+    message: >-
+      A credential-looking value ($VAL) is passed to a logger. TF_LOG=DEBUG output is routinely
+      pasted into GitHub issues. Log a masked value or omit it.
+    patterns:
+      - pattern-either:
+          - pattern: 'tflog.$F($CTX, ..., map[string]interface{}{..., "$K": $VAL, ...}, ...)'
+          - pattern: 'tflog.$F($CTX, ..., map[string]any{..., "$K": $VAL, ...}, ...)'
+          - pattern: tflog.$F($CTX, $MSG, $K, $VAL, ...)
+          - pattern: log.$F(..., $VAL, ...)
+          - pattern: fmt.$F(..., $VAL, ...)
+      - metavariable-regex:
+          metavariable: $F
+          regex: ^(Trace|Debug|Info|Warn|Error|Print|Printf|Println|Fatal|Fatalf)$
+      - metavariable-regex:
+          metavariable: $VAL
+          regex: (?i).*\b[a-z0-9_.]*(password|secret|token|apikey|api_key|accesskey|access_key|privatekey)[a-z0-9_]*\b.*
+      - pattern-not: $X.IsNull()
+      - pattern-not-inside: tflog.MaskFieldValuesWithFieldKeys(...)
+
+  # --- TLS verification must not be disabled ----------------------------------
+  - id: acp-insecure-tls
+    languages: [go]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is disabled. The provider sends cloud credentials over this
+      connection. If an insecure mode is needed for dev, gate it behind an explicit provider
+      argument that defaults to false.
+    pattern-either:
+      - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+      - pattern: $C.InsecureSkipVerify = true
+
+  # --- No literal credentials in Go source (tests included) -------------------
+  - id: acp-hardcoded-credential-literal
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Literal string assigned to a credential-looking identifier ($NAME). Read it from an
+      environment variable (e.g. os.Getenv("AIRTELCLOUD_API_KEY")) instead.
+    patterns:
+      - pattern-either:
+          - pattern: $NAME := "$LIT"
+          - pattern: var $NAME = "$LIT"
+          - pattern: const $NAME = "$LIT"
+          - pattern: "$STRUCT{..., $NAME: \"$LIT\", ...}"
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i)^[a-z0-9_]*(password|secret|token|apikey|api_key|accesskey|access_key|privatekey)[a-z0-9_]*$
+      - metavariable-regex:
+          metavariable: $LIT
+          # Ignore empty strings, obvious placeholders and env var names.
+          regex: ^(?!(|REPLACE_ME|changeme|test|dummy|fake|xxx+|<[^>]*>|[A-Z0-9_]+)$).{8,}$

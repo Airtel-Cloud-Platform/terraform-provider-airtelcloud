@@ -29,15 +29,12 @@ dist/
 #script
 scripts/tf-local-dev.sh
 
-<<<<<<< HEAD
 # Local temp workspaces
 .tmp/
 
-=======
 # Temporary files
 /api-specs
 /specs/*
->>>>>>> 9eb51ac (Add PostgreSQL resource implementation and tests)
 
 
 
@@ -55,3 +52,18 @@ scripts/tf-local-dev.sh
 .aidevtoolkit/git-events/
 AGENTS.md
 CLAUDE.md
+
+# Secrets: never commit credentials (pre-commit and CI also scan for these)
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.terraformrc
+terraform.rc
+credentials*.json

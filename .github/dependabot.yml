@@ -1,0 +1,26 @@
+# Keeps the pinned action SHAs and Go modules current.
+# Dependabot understands "uses: owner/action@<sha> # vX.Y.Z" and bumps both together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      terraform-plugin:
+        patterns: ["github.com/hashicorp/terraform-plugin-*"]
+    commit-message:
+      prefix: "deps"
+

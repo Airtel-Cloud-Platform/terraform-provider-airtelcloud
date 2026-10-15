@@ -1,0 +1,13 @@
+# Changes to the security gate itself need a DevOps reviewer, so nobody can
+# quietly weaken a scanner, add a skip, or loosen workflow permissions in the same PR.
+# Replace the team handle with yours.
+/.github/                    @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/.pre-commit-config.yaml     @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/.checkov.yaml               @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/.checkov/                   @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/.semgrep/                   @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/trivy.yaml                  @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/trivy-secret.yaml           @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/.trivyignore                @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/.trufflehog-exclude.txt     @aakash-airtel @Vinay12Airtel @AirtelRahul09
+/.goreleaser.yml             @aakash-airtel @Vinay12Airtel @AirtelRahul09

@@ -1,0 +1,76 @@
+# Local guardrails for terraform-provider-airtelcloud.
+#
+# One-time setup per clone:
+#   brew install pre-commit trufflehog trivy     (or pipx install pre-commit; see SECURITY-PIPELINE.md)
+#   pre-commit install            # installs pre-commit AND pre-push hooks (see default_install_hook_types)
+#
+# These hooks are a fast first line of defence. They can be skipped with --no-verify,
+# so the same checks run again in CI (.github/workflows/security.yml), which cannot be skipped.
+
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  # --- Hygiene and cheap secret checks ---------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: detect-aws-credentials
+        args: [--allow-missing-credentials]
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+  # --- Secrets ----------------------------------------------------------------
+  - repo: local
+    hooks:
+      # Scans exactly the staged files. Fails on verified keys and on keys it could not
+      # verify (e.g. offline), so a laptop without network still cannot commit a live-looking key.
+      - id: trufflehog-staged
+        name: trufflehog (staged files)
+        entry: trufflehog filesystem --results=verified,unknown --fail --no-update --exclude-paths=.trufflehog-exclude.txt
+        language: system
+        stages: [pre-commit]
+
+      # Scans every commit about to be pushed, so a key that was committed and then
+      # deleted in a later commit is still caught before it reaches GitHub.
+      - id: trufflehog-push
+        name: trufflehog (commits being pushed)
+        entry: bash -c 'git fetch -q origin main && trufflehog git file://. --since-commit=origin/main --branch=HEAD --results=verified,unknown --fail --no-update --exclude-paths=.trufflehog-exclude.txt'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      # Airtel Cloud keys (TruffleHog has no detector for them) + other secret patterns.
+      - id: trivy-secrets
+        name: trivy (Airtel Cloud key patterns)
+        entry: trivy fs --config trivy.yaml --scanners secret --exit-code 1 --quiet .
+        language: system
+        pass_filenames: false
+        types_or: [go, terraform, markdown, yaml, json, shell, text]
+
+  # --- Terraform examples -----------------------------------------------------
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.109.2
+    hooks:
+      - id: terraform_fmt
+
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: 3.3.29
+    hooks:
+      - id: checkov
+        args: [--config-file, .checkov.yaml]
+        pass_filenames: false
+
+  # --- Go ---------------------------------------------------------------------
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.14.0
+    hooks:
+      - id: golangci-lint

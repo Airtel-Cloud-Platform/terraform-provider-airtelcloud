@@ -1,0 +1,324 @@
+# Security gate for terraform-provider-airtelcloud
+#
+# Runs on:   every PR to main, every push to main, weekly full sweep, manual run,
+#            and as a reusable workflow called by release.yml before GoReleaser publishes.
+# Blocks on: verified/unverifiable secrets (TruffleHog), IaC + workflow misconfig (Checkov),
+#            ERROR-level SAST findings (Semgrep), reachable Go vulns (govulncheck),
+#            HIGH/CRITICAL fixable vulns + secrets in files (Trivy), risky workflow patterns (zizmor).
+#
+# Make ONE check required in the branch ruleset:  "security / gate"
+#
+# Every third-party action is pinned to a full commit SHA. Tags are mutable: in March 2026
+# 76 of 77 aquasecurity/trivy-action tags were force-pushed to credential-stealing code
+# (CVE-2026-33634). Dependabot (see .github/dependabot.yml) keeps the SHAs current.
+
+name: security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 1 * * 1" # Mondays 07:11 IST: full-history sweep
+  workflow_dispatch:
+    inputs:
+      full-history:
+        description: Scan the entire git history (all branches and tags) for secrets
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      full-history:
+        description: Scan the entire git history (all branches and tags) for secrets
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TRUFFLEHOG_VERSION: "3.99.2"
+  SEMGREP_VERSION: "1.181.0"
+  TRIVY_VERSION: "v0.76.0"
+  GOVULNCHECK_VERSION: "v1.9.0"
+  ZIZMOR_VERSION: "1.31.0"
+  # SARIF uploads need security-events: write, which fork PRs never get.
+  CAN_UPLOAD_SARIF: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Secrets: TruffleHog over git history (diff on PR/push, everything on schedule/release)
+  # ---------------------------------------------------------------------------
+  secrets:
+    name: secrets (trufflehog)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install TruffleHog (checksum-verified)
+        run: |
+          set -euo pipefail
+          v="${TRUFFLEHOG_VERSION}"
+          base="https://github.com/trufflesecurity/trufflehog/releases/download/v${v}"
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "${tmp}/th.tgz"  "${base}/trufflehog_${v}_linux_amd64.tar.gz"
+          curl -fsSL -o "${tmp}/sums.txt" "${base}/trufflehog_${v}_checksums.txt"
+          expected="$(grep " trufflehog_${v}_linux_amd64.tar.gz$" "${tmp}/sums.txt" | cut -d' ' -f1)"
+          echo "${expected}  ${tmp}/th.tgz" | sha256sum -c -
+          tar -xzf "${tmp}/th.tgz" -C "${tmp}" trufflehog
+          sudo install -m 0755 "${tmp}/trufflehog" /usr/local/bin/trufflehog
+          trufflehog --version
+
+      - name: Decide scan range
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL: ${{ inputs.full-history }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          mode=full base="" head=""
+          if [[ "${FULL}" != "true" && "${EVENT}" != "schedule" ]]; then
+            if [[ "${EVENT}" == "pull_request" ]]; then
+              mode=diff base="${PR_BASE}" head="${PR_HEAD}"
+            elif [[ "${EVENT}" == "push" && -n "${PUSH_BEFORE}" \
+                    && "${PUSH_BEFORE}" != "0000000000000000000000000000000000000000" ]] \
+                 && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+              mode=diff base="${PUSH_BEFORE}" head="${GITHUB_SHA}"
+            fi
+          fi
+          echo "mode=${mode}" >> "$GITHUB_OUTPUT"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+          echo "head=${head}" >> "$GITHUB_OUTPUT"
+          echo "TruffleHog mode: ${mode} ${base:+(${base:0:7}..${head:0:7})}" >> "$GITHUB_STEP_SUMMARY"
+
+      # --results=verified,unknown fails on:
+      #   verified -> live credential, rotate NOW
+      #   unknown  -> verification could not complete (network, new detector); treat as live
+      # A key that has been revoked comes back "unverified" and does not fail the build,
+      # so once the leaked keys are rotated, the weekly full-history sweep goes green.
+      - name: Scan git history
+        env:
+          MODE: ${{ steps.range.outputs.mode }}
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD_SHA: ${{ steps.range.outputs.head }}
+        run: |
+          set -euo pipefail
+          args=(git "file://${GITHUB_WORKSPACE}" --results=verified,unknown --fail
+                --no-update --github-actions --exclude-paths=.trufflehog-exclude.txt)
+          if [[ "${MODE}" == "diff" ]]; then
+            args+=(--since-commit="${BASE}" --branch="${HEAD_SHA}")
+          fi
+          trufflehog "${args[@]}"
+
+      # Unverified hits are worth a human look even though they don't block.
+      - name: Report unverified candidates (non-blocking)
+        if: steps.range.outputs.mode == 'full'
+        run: |
+          trufflehog git "file://${GITHUB_WORKSPACE}" --results=unverified --json --no-update \
+            --exclude-paths=.trufflehog-exclude.txt > unverified.jsonl || true
+          n=$(wc -l < unverified.jsonl | tr -d ' ')
+          echo "Unverified secret candidates in history: **${n}** (see artifact)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload unverified report
+        if: steps.range.outputs.mode == 'full'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trufflehog-unverified
+          path: unverified.jsonl
+          retention-days: 14
+
+      # Keys also leak through PR descriptions and comments, not just commits.
+      - name: Scan issues and PR comments
+        if: steps.range.outputs.mode == 'full'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          trufflehog github --repo="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --issue-comments --pr-comments --results=verified,unknown --fail \
+            --no-update --github-actions --token="${GITHUB_TOKEN}"
+
+  # ---------------------------------------------------------------------------
+  # 2. IaC: Checkov over examples/, docs snippets and GitHub workflows
+  # ---------------------------------------------------------------------------
+  iac:
+    name: iac (checkov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@6f26dc90000b74feb589a906cdfae540f5119895 # v12.3134.0
+        with:
+          config_file: .checkov.yaml
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+
+      - name: Upload SARIF
+        if: always() && env.CAN_UPLOAD_SARIF == 'true' && hashFiles('results.sarif', 'results.sarif/**') != ''
+        uses: github/codeql-action/upload-sarif@cee97f86b972a3ded3c58d04148362b193ddc518 # v4.38.3
+        with:
+          sarif_file: results.sarif
+          category: checkov
+
+  # ---------------------------------------------------------------------------
+  # 3. SAST: Semgrep (Go, secrets, Actions) + our provider-specific rules
+  # ---------------------------------------------------------------------------
+  sast:
+    name: sast (semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Semgrep
+        run: pipx install "semgrep==${SEMGREP_VERSION}"
+
+      - name: Semgrep scan
+        run: |
+          set -euo pipefail
+          semgrep scan \
+            --config p/golang \
+            --config p/secrets \
+            --config p/github-actions \
+            --config .semgrep/ \
+            --metrics=off \
+            --text \
+            --json-output=semgrep.json \
+            --sarif-output=semgrep.sarif
+          # Block on ERROR severity only; WARNING/INFO show up in code scanning.
+          errors=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep.json)
+          echo "Semgrep ERROR findings: **${errors}**" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${errors}" -gt 0 ]]; then
+            jq -r '.results[] | select(.extra.severity == "ERROR")
+                   | "::error file=\(.path),line=\(.start.line)::[\(.check_id)] \(.extra.message)"' semgrep.json
+            exit 1
+          fi
+
+      - name: Upload SARIF
+        if: always() && env.CAN_UPLOAD_SARIF == 'true' && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@cee97f86b972a3ded3c58d04148362b193ddc518 # v4.38.3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  # ---------------------------------------------------------------------------
+  # 4. Dependencies: govulncheck (reachability-aware) + Trivy (vulns + secrets in files)
+  # ---------------------------------------------------------------------------
+  deps:
+    name: deps (govulncheck + trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # govulncheck only flags vulnerabilities whose vulnerable function the provider
+      # actually calls, so it is the low-noise blocking check for Go.
+      - name: govulncheck
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+      - name: Trivy (SARIF report, all severities)
+        if: env.CAN_UPLOAD_SARIF == 'true'
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: fs
+          scan-ref: .
+          trivy-config: trivy.yaml
+          format: sarif
+          output: trivy.sarif
+          exit-code: "0"
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+
+      - name: Upload SARIF
+        if: always() && env.CAN_UPLOAD_SARIF == 'true' && hashFiles('trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@cee97f86b972a3ded3c58d04148362b193ddc518 # v4.38.3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      - name: Trivy (gate on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: fs
+          scan-ref: .
+          trivy-config: trivy.yaml
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          skip-setup-trivy: ${{ env.CAN_UPLOAD_SARIF == 'true' }}
+
+  # ---------------------------------------------------------------------------
+  # 5. Pipeline guardrails: lint the workflows themselves
+  # ---------------------------------------------------------------------------
+  workflows:
+    name: workflows (zizmor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Catches template injection, pull_request_target misuse, unpinned actions,
+      # over-broad permissions and credential persistence in .github/workflows.
+      # --no-online-audits: the impostor-commit audit calls the GitHub API for every
+      # pinned action, and the job token gets 403 on other orgs' repos. The SHAs were
+      # resolved from each action's own release tags, and Dependabot keeps them current.
+      - name: zizmor
+        run: |
+          pipx install "zizmor==${ZIZMOR_VERSION}"
+          zizmor --no-online-audits --min-severity=medium --format=github .github/workflows
+
+  # ---------------------------------------------------------------------------
+  # Single required status check for the branch ruleset
+  # ---------------------------------------------------------------------------
+  gate:
+    name: gate
+    if: always()
+    needs: [secrets, iac, sast, deps, workflows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All security jobs passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "Job results: ${RESULTS}"
+          if ! jq -e 'all(. == "success")' <<< "${RESULTS}" > /dev/null; then
+            echo "::error::One or more security jobs failed or were cancelled."
+            exit 1
+          fi

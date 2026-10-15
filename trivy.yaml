@@ -1,0 +1,14 @@
+# Trivy config for terraform-provider-airtelcloud (used by CI and pre-commit)
+scan:
+  scanners:
+    - vuln     # go.mod / go.sum dependencies
+    - secret   # built-in rules + our Airtel Cloud rules in trivy-secret.yaml
+  skip-dirs:
+    - vendor
+    - dist
+    - .git
+vulnerability:
+  ignore-unfixed: true   # only fail on vulns that have a fix to upgrade to
+secret:
+  config: trivy-secret.yaml
+ignorefile: .trivyignore
