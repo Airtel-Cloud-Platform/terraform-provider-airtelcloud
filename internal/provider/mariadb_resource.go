@@ -58,26 +58,26 @@ type MariaDBResource struct {
 
 // MariaDBResourceModel is the Terraform state model. It is separate from API structs.
 type MariaDBResourceModel struct {
-	ID               types.String               `tfsdk:"id"`
-	ClusterName      types.String               `tfsdk:"cluster_name"`
-	Description      types.String               `tfsdk:"description"`
-	Version          types.String               `tfsdk:"version"`
-	HighAvailability types.Bool                 `tfsdk:"high_availability"`
-	NumReplicas      types.Int64                `tfsdk:"num_replicas"`
-	DatabaseName     types.String               `tfsdk:"database_name"`
-	MariaDBUsername  types.String               `tfsdk:"mariadb_username"`
-	Password         types.String               `tfsdk:"password"`
-	IsSuperuser      types.Bool                 `tfsdk:"is_superuser"`
-	NetworkType      types.String               `tfsdk:"network_type"`
-	ComputeSize      types.String               `tfsdk:"compute_size"`
-	StorageSize      types.Int64                `tfsdk:"storage_size"`
-	StorageType      types.String               `tfsdk:"storage_type"`
-	AvailabilityZone types.String               `tfsdk:"availability_zone"`
-	Labels           types.List                 `tfsdk:"labels"`
-	Topology         types.String               `tfsdk:"topology"`
-	ConnectionString types.String               `tfsdk:"connection_string"`
-	Port             types.Int64                `tfsdk:"port"`
-	CreatedAt        types.String               `tfsdk:"created_at"`
+	ID               types.String   `tfsdk:"id"`
+	ClusterName      types.String   `tfsdk:"cluster_name"`
+	Description      types.String   `tfsdk:"description"`
+	Version          types.String   `tfsdk:"version"`
+	HighAvailability types.Bool     `tfsdk:"high_availability"`
+	NumReplicas      types.Int64    `tfsdk:"num_replicas"`
+	DatabaseName     types.String   `tfsdk:"database_name"`
+	MariaDBUsername  types.String   `tfsdk:"mariadb_username"`
+	Password         types.String   `tfsdk:"password"`
+	IsSuperuser      types.Bool     `tfsdk:"is_superuser"`
+	NetworkType      types.String   `tfsdk:"network_type"`
+	ComputeSize      types.String   `tfsdk:"compute_size"`
+	StorageSize      types.Int64    `tfsdk:"storage_size"`
+	StorageType      types.String   `tfsdk:"storage_type"`
+	AvailabilityZone types.String   `tfsdk:"availability_zone"`
+	Labels           types.List     `tfsdk:"labels"`
+	Topology         types.String   `tfsdk:"topology"`
+	ConnectionString types.String   `tfsdk:"connection_string"`
+	Port             types.Int64    `tfsdk:"port"`
+	CreatedAt        types.String   `tfsdk:"created_at"`
 	Users            types.String   `tfsdk:"users"`
 	Status           types.String   `tfsdk:"status"`
 	Backup           types.Object   `tfsdk:"backup"`
