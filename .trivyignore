@@ -1,0 +1,4 @@
+# Accepted findings. One ID per line, each with an owner, reason and expiry.
+# Trivy honours the "exp:" suffix and starts failing again after that date.
+#
+# CVE-2026-00000 exp:2026-12-31  # owner: <name> - not reachable (govulncheck clean), upstream fix pending

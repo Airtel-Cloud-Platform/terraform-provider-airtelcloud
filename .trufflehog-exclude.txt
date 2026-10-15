@@ -1,0 +1,10 @@
+# Paths TruffleHog skips (one regex per line). Keep this list short: every entry is a blind spot.
+^vendor/
+^go\.sum$
+^\.git/
+
+# Fake Postgres DSNs (hosts "cluster.example" / "host") in test fixtures, including old commits.
+# They can never verify, so TruffleHog reports them as "unknown" and would fail every full scan.
+# Trivy (tests allow-rule disabled) and Semgrep still scan these files.
+^internal/client/postgres_test\.go$
+^internal/provider/postgres_resource_test\.go$
