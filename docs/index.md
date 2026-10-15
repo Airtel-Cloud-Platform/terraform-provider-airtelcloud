@@ -19,7 +19,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.2.8"
+      version = "1.3.0"
     }
   }
 }
@@ -104,7 +104,7 @@ The following arguments are supported in the provider configuration:
 
 ## Available Resources
 
-The provider supports the following 26 resources:
+The provider supports the following 30 resources:
 
 **Compute:**
 - [`airtelcloud_vm`](resources/vm) - Virtual Machine
@@ -123,6 +123,8 @@ The provider supports the following 26 resources:
 
 **Database:**
 - [`airtelcloud_postgres`](resources/postgres) - PostgreSQL Cluster
+- [`airtelcloud_mssql`](resources/mssql) - Microsoft SQL Server Instance
+- [`airtelcloud_mariadb`](resources/mariadb) - MariaDB Cluster
 
 **Networking:**
 - [`airtelcloud_vpc`](resources/vpc) - Virtual Private Cloud
