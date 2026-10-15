@@ -296,12 +296,13 @@ jobs:
 
       # Catches template injection, pull_request_target misuse, unpinned actions,
       # over-broad permissions and credential persistence in .github/workflows.
+      # --no-online-audits: the impostor-commit audit calls the GitHub API for every
+      # pinned action, and the job token gets 403 on other orgs' repos. The SHAs were
+      # resolved from each action's own release tags, and Dependabot keeps them current.
       - name: zizmor
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           pipx install "zizmor==${ZIZMOR_VERSION}"
-          zizmor --min-severity=medium --format=github .github/workflows
+          zizmor --no-online-audits --min-severity=medium --format=github .github/workflows
 
   # ---------------------------------------------------------------------------
   # Single required status check for the branch ruleset

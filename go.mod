@@ -2,7 +2,7 @@ module github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud
 
 go 1.24.0
 
-toolchain go1.24.9
+toolchain go1.26.9
 
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.16.1
