@@ -24,7 +24,7 @@ const (
 // CreateMariaDBClusterRequest is the POST body for creating a MariaDB cluster.
 type CreateMariaDBClusterRequest struct {
 	Name                 string                      `json:"name"`
-	Description          string                      `json:"description,omitempty"`
+	Description          string                      `json:"description"`
 	Version              string                      `json:"version"`
 	Topology             string                      `json:"topology"`
 	NumReplicas          int                         `json:"num_replicas"`

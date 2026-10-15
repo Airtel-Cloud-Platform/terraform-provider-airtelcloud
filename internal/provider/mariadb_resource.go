@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -27,6 +28,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client"
@@ -76,11 +78,11 @@ type MariaDBResourceModel struct {
 	ConnectionString types.String               `tfsdk:"connection_string"`
 	Port             types.Int64                `tfsdk:"port"`
 	CreatedAt        types.String               `tfsdk:"created_at"`
-	Users            types.String               `tfsdk:"users"`
-	Status           types.String               `tfsdk:"status"`
-	Backup           *MariaDBBackupModel        `tfsdk:"backup"`
-	SecurityGroup    *MariaDBSecurityGroupModel `tfsdk:"security_group"`
-	Timeouts         timeouts.Value             `tfsdk:"timeouts"`
+	Users            types.String   `tfsdk:"users"`
+	Status           types.String   `tfsdk:"status"`
+	Backup           types.Object   `tfsdk:"backup"`
+	SecurityGroup    types.Object   `tfsdk:"security_group"`
+	Timeouts         timeouts.Value `tfsdk:"timeouts"`
 }
 
 // MariaDBBackupModel is the nested backup block.
@@ -125,7 +127,7 @@ func (r *MariaDBResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"description": schema.StringAttribute{
-				MarkdownDescription: "A description of the cluster.",
+				MarkdownDescription: "A description of the cluster. When omitted or empty, the API is sent an empty string.",
 				Optional:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
@@ -177,7 +179,7 @@ func (r *MariaDBResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"password": schema.StringAttribute{
-				MarkdownDescription: "Admin password. The API does not return this value; it is stored only in Terraform state.",
+				MarkdownDescription: "Admin password. The API does not return this value; it is stored only in Terraform state. Must be 8-128 characters; include uppercase, lowercase, digit, and special character; must not contain '@' or '_'; must not contain words from mariadb_username or cluster_name.",
 				Required:            true,
 				Sensitive:           true,
 				Validators: []validator.String{
@@ -332,15 +334,15 @@ func (r *MariaDBResource) Schema(ctx context.Context, req resource.SchemaRequest
 			},
 			"security_group": schema.SingleNestedAttribute{
 				MarkdownDescription: "Allowed client CIDRs. Changes force a new cluster.",
-				Optional:            true,
+				Required:            true,
 				PlanModifiers: []planmodifier.Object{
 					objectplanmodifier.RequiresReplace(),
 				},
 				Attributes: map[string]schema.Attribute{
 					"allowed_ips": schema.ListAttribute{
 						ElementType:         types.StringType,
-						MarkdownDescription: "CIDR blocks allowed to connect (for example `192.168.1.0/24`).",
-						Optional:            true,
+						MarkdownDescription: "CIDR blocks allowed to connect (for example `192.168.1.0/24`). At least one CIDR is required.",
+						Required:            true,
 					},
 				},
 			},
@@ -381,24 +383,38 @@ func (r *MariaDBResource) ValidateConfig(ctx context.Context, req resource.Valid
 		resp.Diagnostics.AddAttributeError(path.Root("password"), "Invalid password", msg)
 	}
 
-	if data.Backup != nil {
-		if msg := validateMariaDBBackupScheduleTimeRequired(data.Backup); msg != "" {
-			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_time"), "Invalid schedule_time", msg)
-		}
-		if msg := validateMariaDBBackupScheduleDayRequired(data.Backup); msg != "" {
-			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_day"), "Invalid schedule_day", msg)
-		}
-
-		if msg := validateMariaDBScheduleTime(data.Backup.ScheduleTime); msg != "" {
-			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_time"), "Invalid schedule_time", msg)
-		}
-		if msg := validateMariaDBScheduleDay(data.Backup.ScheduleDay); msg != "" {
-			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_day"), "Invalid schedule_day", msg)
+	if !data.Backup.IsNull() && !data.Backup.IsUnknown() {
+		backup, backupDiags := expandMariaDBBackup(ctx, data.Backup)
+		resp.Diagnostics.Append(backupDiags...)
+		if backup != nil {
+			if msg := validateMariaDBBackupScheduleTimeRequired(backup); msg != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_time"), "Invalid schedule_time", msg)
+			}
+			if msg := validateMariaDBBackupScheduleDayRequired(backup); msg != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_day"), "Invalid schedule_day", msg)
+			}
+			if msg := validateMariaDBScheduleTime(backup.ScheduleTime); msg != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_time"), "Invalid schedule_time", msg)
+			}
+			if msg := validateMariaDBScheduleDay(backup.ScheduleDay); msg != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_day"), "Invalid schedule_day", msg)
+			}
 		}
 	}
 
-	if data.SecurityGroup != nil {
-		if msg := validateMariaDBSecurityGroup(data.SecurityGroup); msg != "" {
+	// Skip when unknown (common under modules during ValidateConfig).
+	if data.SecurityGroup.IsUnknown() {
+		return
+	}
+	if data.SecurityGroup.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("security_group"), "Invalid security_group", "security_group is required.")
+		return
+	}
+
+	group, groupDiags := expandMariaDBSecurityGroup(ctx, data.SecurityGroup)
+	resp.Diagnostics.Append(groupDiags...)
+	if group != nil {
+		if msg := validateMariaDBSecurityGroup(group); msg != "" {
 			resp.Diagnostics.AddAttributeError(path.Root("security_group"), "Invalid security_group", msg)
 		}
 	}
@@ -406,14 +422,20 @@ func (r *MariaDBResource) ValidateConfig(ctx context.Context, req resource.Valid
 
 func validateMariaDBSecurityGroup(group *MariaDBSecurityGroupModel) string {
 	if group == nil {
+		return "security_group is required."
+	}
+	if group.AllowedIPs.IsUnknown() {
 		return ""
 	}
-	if group.AllowedIPs.IsNull() || group.AllowedIPs.IsUnknown() {
-		return ""
+	if group.AllowedIPs.IsNull() {
+		return "security_group.allowed_ips is required."
 	}
 	var ips []string
 	if diags := group.AllowedIPs.ElementsAs(context.Background(), &ips, false); diags.HasError() {
 		return "security_group.allowed_ips is invalid."
+	}
+	if len(ips) == 0 {
+		return "security_group.allowed_ips must contain at least one CIDR."
 	}
 	for _, ip := range ips {
 		if strings.TrimSpace(ip) == "" {
@@ -759,46 +781,60 @@ func (r *MariaDBResource) buildMariaDBCreateRequest(ctx context.Context, data *M
 		Labels: labels,
 	}
 
-	if data.Backup != nil {
-		backup := &models.MariaDBBackupConfig{
-			Enabled: data.Backup.Enabled.ValueBool(),
-		}
-		if !data.Backup.CompressionLevel.IsNull() && !data.Backup.CompressionLevel.IsUnknown() {
-			backup.CompressionLevel = int(data.Backup.CompressionLevel.ValueInt64())
-		}
-		if !data.Backup.Retention.IsNull() && !data.Backup.Retention.IsUnknown() {
-			backup.Retention = int(data.Backup.Retention.ValueInt64())
-		}
-		if !data.Backup.ScheduleTime.IsNull() && !data.Backup.ScheduleTime.IsUnknown() {
-			s := strings.TrimSpace(data.Backup.ScheduleTime.ValueString())
-			if s != "" {
-				backup.ScheduleTime = s
-			}
-		}
-		if !data.Backup.ScheduleDay.IsNull() && !data.Backup.ScheduleDay.IsUnknown() {
-			s := strings.TrimSpace(data.Backup.ScheduleDay.ValueString())
-			if s != "" {
-				backup.ScheduleDay = s
-			}
-		}
-		if !data.Backup.ProtectionPlan.IsNull() && data.Backup.ProtectionPlan.ValueString() != "" {
-			plan, err := r.client.ResolveMariaDBProtectionPlan(ctx, data.Backup.ProtectionPlan.ValueString())
-			if err != nil {
-				diags.AddError("Protection Plan Resolution Error", err.Error())
-				return nil, diags
-			}
-			backup.ProtectionPlan = plan.Value
-		}
-		createReq.Backup = backup
-	}
-
-	if data.SecurityGroup != nil {
-		allowedIPs, ipDiags := stringSliceFromList(ctx, data.SecurityGroup.AllowedIPs)
-		diags.Append(ipDiags...)
+	if !data.Backup.IsNull() && !data.Backup.IsUnknown() {
+		backupModel, backupDiags := expandMariaDBBackup(ctx, data.Backup)
+		diags.Append(backupDiags...)
 		if diags.HasError() {
 			return nil, diags
 		}
-		createReq.SecurityGroup = &models.MariaDBSecurityGroup{AllowedIPs: allowedIPs}
+		if backupModel != nil {
+			backup := &models.MariaDBBackupConfig{
+				Enabled: backupModel.Enabled.ValueBool(),
+			}
+			if !backupModel.CompressionLevel.IsNull() && !backupModel.CompressionLevel.IsUnknown() {
+				backup.CompressionLevel = int(backupModel.CompressionLevel.ValueInt64())
+			}
+			if !backupModel.Retention.IsNull() && !backupModel.Retention.IsUnknown() {
+				backup.Retention = int(backupModel.Retention.ValueInt64())
+			}
+			if !backupModel.ScheduleTime.IsNull() && !backupModel.ScheduleTime.IsUnknown() {
+				s := strings.TrimSpace(backupModel.ScheduleTime.ValueString())
+				if s != "" {
+					backup.ScheduleTime = s
+				}
+			}
+			if !backupModel.ScheduleDay.IsNull() && !backupModel.ScheduleDay.IsUnknown() {
+				s := strings.TrimSpace(backupModel.ScheduleDay.ValueString())
+				if s != "" {
+					backup.ScheduleDay = s
+				}
+			}
+			if !backupModel.ProtectionPlan.IsNull() && backupModel.ProtectionPlan.ValueString() != "" {
+				plan, err := r.client.ResolveMariaDBProtectionPlan(ctx, backupModel.ProtectionPlan.ValueString())
+				if err != nil {
+					diags.AddError("Protection Plan Resolution Error", err.Error())
+					return nil, diags
+				}
+				backup.ProtectionPlan = plan.Value
+			}
+			createReq.Backup = backup
+		}
+	}
+
+	if !data.SecurityGroup.IsNull() && !data.SecurityGroup.IsUnknown() {
+		group, groupDiags := expandMariaDBSecurityGroup(ctx, data.SecurityGroup)
+		diags.Append(groupDiags...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		if group != nil {
+			allowedIPs, ipDiags := stringSliceFromList(ctx, group.AllowedIPs)
+			diags.Append(ipDiags...)
+			if diags.HasError() {
+				return nil, diags
+			}
+			createReq.SecurityGroup = &models.MariaDBSecurityGroup{AllowedIPs: allowedIPs}
+		}
 	}
 
 	return createReq, diags
@@ -824,12 +860,19 @@ func applyMariaDBClusterToState(ctx context.Context, data *MariaDBResourceModel,
 		data.Users = types.StringValue(cluster.MariaDBUsername)
 	}
 
-	if data.Backup != nil && cluster.Backup != nil {
-		if cluster.Backup.ScheduleTime != "" {
-			data.Backup.ScheduleTime = types.StringValue(cluster.Backup.ScheduleTime)
-		}
-		if cluster.Backup.ScheduleDay != "" {
-			data.Backup.ScheduleDay = types.StringValue(cluster.Backup.ScheduleDay)
+	if !data.Backup.IsNull() && !data.Backup.IsUnknown() && cluster.Backup != nil {
+		backupModel, backupDiags := expandMariaDBBackup(ctx, data.Backup)
+		diags.Append(backupDiags...)
+		if backupModel != nil {
+			if cluster.Backup.ScheduleTime != "" {
+				backupModel.ScheduleTime = types.StringValue(cluster.Backup.ScheduleTime)
+			}
+			if cluster.Backup.ScheduleDay != "" {
+				backupModel.ScheduleDay = types.StringValue(cluster.Backup.ScheduleDay)
+			}
+			obj, objDiags := flattenMariaDBBackup(ctx, backupModel)
+			diags.Append(objDiags...)
+			data.Backup = obj
 		}
 	}
 
@@ -882,27 +925,88 @@ func applyMariaDBClusterToState(ctx context.Context, data *MariaDBResourceModel,
 		data.Labels = list
 	}
 
-	if cluster.Backup != nil && (data.Backup != nil || cluster.Backup.Enabled) {
-		if data.Backup == nil {
-			data.Backup = &MariaDBBackupModel{}
+	if cluster.Backup != nil && (!data.Backup.IsNull() || cluster.Backup.Enabled) {
+		backupModel := &MariaDBBackupModel{}
+		if !data.Backup.IsNull() && !data.Backup.IsUnknown() {
+			existing, existingDiags := expandMariaDBBackup(ctx, data.Backup)
+			diags.Append(existingDiags...)
+			if existing != nil {
+				backupModel = existing
+			}
 		}
-		data.Backup.Enabled = types.BoolValue(cluster.Backup.Enabled)
+		backupModel.Enabled = types.BoolValue(cluster.Backup.Enabled)
 		if cluster.Backup.ProtectionPlan != "" {
-			data.Backup.ProtectionPlan = types.StringValue(cluster.Backup.ProtectionPlan)
+			backupModel.ProtectionPlan = types.StringValue(cluster.Backup.ProtectionPlan)
 		}
 		if cluster.Backup.CompressionLevel != 0 {
-			data.Backup.CompressionLevel = types.Int64Value(int64(cluster.Backup.CompressionLevel))
+			backupModel.CompressionLevel = types.Int64Value(int64(cluster.Backup.CompressionLevel))
 		}
 		if cluster.Backup.Retention != 0 {
-			data.Backup.Retention = types.Int64Value(int64(cluster.Backup.Retention))
+			backupModel.Retention = types.Int64Value(int64(cluster.Backup.Retention))
 		}
 		if cluster.Backup.ScheduleTime != "" {
-			data.Backup.ScheduleTime = types.StringValue(cluster.Backup.ScheduleTime)
+			backupModel.ScheduleTime = types.StringValue(cluster.Backup.ScheduleTime)
 		}
 		if cluster.Backup.ScheduleDay != "" {
-			data.Backup.ScheduleDay = types.StringValue(cluster.Backup.ScheduleDay)
+			backupModel.ScheduleDay = types.StringValue(cluster.Backup.ScheduleDay)
 		}
+		obj, objDiags := flattenMariaDBBackup(ctx, backupModel)
+		diags.Append(objDiags...)
+		data.Backup = obj
 	}
 
 	return diags
+}
+
+func expandMariaDBBackup(ctx context.Context, obj types.Object) (*MariaDBBackupModel, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if obj.IsNull() || obj.IsUnknown() {
+		return nil, diags
+	}
+	var model MariaDBBackupModel
+	diags.Append(obj.As(ctx, &model, basetypes.ObjectAsOptions{})...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	return &model, diags
+}
+
+func expandMariaDBSecurityGroup(ctx context.Context, obj types.Object) (*MariaDBSecurityGroupModel, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if obj.IsNull() || obj.IsUnknown() {
+		return nil, diags
+	}
+	var model MariaDBSecurityGroupModel
+	diags.Append(obj.As(ctx, &model, basetypes.ObjectAsOptions{})...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	return &model, diags
+}
+
+func flattenMariaDBBackup(ctx context.Context, model *MariaDBBackupModel) (types.Object, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if model == nil {
+		return types.ObjectNull(mariadbBackupAttrTypes()), diags
+	}
+	obj, objDiags := types.ObjectValueFrom(ctx, mariadbBackupAttrTypes(), model)
+	diags.Append(objDiags...)
+	return obj, diags
+}
+
+func mariadbBackupAttrTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"enabled":           types.BoolType,
+		"protection_plan":   types.StringType,
+		"compression_level": types.Int64Type,
+		"retention":         types.Int64Type,
+		"schedule_time":     types.StringType,
+		"schedule_day":      types.StringType,
+	}
+}
+
+func mariadbSecurityGroupAttrTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"allowed_ips": types.ListType{ElemType: types.StringType},
+	}
 }

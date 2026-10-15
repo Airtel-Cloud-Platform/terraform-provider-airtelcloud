@@ -48,18 +48,20 @@ resource "airtelcloud_mariadb" "app" {
 
 ### Required
 
-- `cluster_name` (String) - Display name of the cluster. Forces new resource. The API may suffix a UUID onto the stored name; Terraform keeps this configured value.
+- `cluster_name` (String) - Display name of the cluster. Must contain only lowercase letters, digits, and hyphens. Forces new resource. The API may suffix a UUID onto the stored name; Terraform keeps this configured value.
 - `version` (String) - MariaDB engine version (for example `10.6`, `10.11`, `11.4`, or `11.8`). Validated against the versions catalog. Forces new resource.
-- `database_name` (String) - Name of the initial database. Forces new resource.
-- `mariadb_username` (String) - Admin username. Forces new resource.
-- `password` (String, Sensitive) - Admin password. Forces new resource. Not returned by the API.
+- `database_name` (String) - Name of the initial database. Must start with a letter and contain only letters, digits, and underscore. Forces new resource.
+- `mariadb_username` (String) - Admin username. Must start with a letter and contain only letters, digits, and underscore. Forces new resource.
+- `password` (String, Sensitive) - Admin password. Forces new resource. Not returned by the API. Must be 8–128 characters; include at least one uppercase letter, one lowercase letter, one digit, and one special character; must not contain `@` or `_`; must not contain words from `mariadb_username` or `cluster_name`.
 - `compute_size` (String) - Flavor name from the mariadb flavors catalog (for example `db.maria.uhper.ccs.xlarge`). Resolved to flavor ID, vCPUs, and RAM internally. Forces new resource.
 - `storage_size` (Number) - Data volume size in GB. Must be at least 200. Forces new resource.
 - `availability_zone` (String) - Availability zone code (for example `S1`). Forces new resource.
+- `security_group` (Attributes) - Allowed client CIDRs. Required. Forces new resource.
+  - `allowed_ips` (List of String) - CIDR blocks allowed to connect. At least one non-empty CIDR is required.
 
 ### Optional
 
-- `description` (String) - Cluster description. Forces new resource.
+- `description` (String) - Cluster description. Forces new resource. When omitted or empty, the API is sent an empty string.
 - `high_availability` (Boolean) - When true, creates master-slave topology. Defaults to `false`. Forces new resource.
 - `num_replicas` (Number) - Slave replica count. Required and must be between `1` and `10` when `high_availability` is true. Defaults to `0`. Forces new resource.
 - `is_superuser` (Boolean) - Whether the admin user is a superuser. Defaults to `false`. Forces new resource.
@@ -73,8 +75,6 @@ resource "airtelcloud_mariadb" "app" {
   - `retention` (Number) - Retention in days.
   - `schedule_time` (String) - Backup schedule time in `HH:MM` format. Required when `enabled` is `true`.
   - `schedule_day` (String) - Backup schedule day. Must be one of `Monday` through `Sunday`. Required when `enabled` is `true`.
-- `security_group` (Attributes) - Allowed client CIDRs. Forces new resource.
-  - `allowed_ips` (List of String) - CIDR blocks allowed to connect.
 - `timeouts` (Block) - Create and delete timeouts. Defaults to 15 minutes.
 
 ## Attribute Reference
@@ -84,7 +84,7 @@ In addition to all arguments above, the following attributes are exported:
 - `id` (String) - Cluster UUID.
 - `status` (String) - Current status (`Creating`, `Active`, `Failed`, and others).
 - `topology` (String) - Resolved topology (`master` or `master-slave`).
-- `connection_string` (String, Sensitive) - MariaDB connection string. Empty until the cluster is Active. The API masks the password.
+- `connection_string` (String, Sensitive) - MariaDB connection string. Null until the cluster is Active. The API masks the password.
 - `port` (Number) - Database port (typically 3350).
 - `users` (String) - Admin username returned by the API.
 - `created_at` (String) - Creation timestamp.

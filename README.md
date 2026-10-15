@@ -17,6 +17,8 @@ This repository contains a Terraform provider for managing Airtel Public Cloud r
 - **Backup**: Create and manage virtual machine backups and protection plans.
 - **Public IP**: Create and manage Public IPs and related policies.
 - **PostgreSQL**: Create and manage PostgreSQL clusters.
+- **MSSQL**: Create and manage Microsoft SQL Server instances.
+- **MariaDB**: Create and manage MariaDB clusters.
 
 ## Prerequisites
 

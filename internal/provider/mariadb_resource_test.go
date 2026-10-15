@@ -4,10 +4,92 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
+
+func TestMariaDBSchemaRequiredSecurityGroup(t *testing.T) {
+	t.Parallel()
+
+	var resp resource.SchemaResponse
+	(&MariaDBResource{}).Schema(context.Background(), resource.SchemaRequest{}, &resp)
+
+	securityGroupAttr, ok := resp.Schema.Attributes["security_group"].(schema.SingleNestedAttribute)
+	if !ok {
+		t.Fatal("security_group attribute not found or not a single nested attribute")
+	}
+	if !securityGroupAttr.IsRequired() {
+		t.Fatal("security_group must be required")
+	}
+	if !securityGroupAttr.Attributes["allowed_ips"].IsRequired() {
+		t.Fatal("security_group.allowed_ips must be required")
+	}
+}
+
+func TestValidateMariaDBSecurityGroup(t *testing.T) {
+	tests := []struct {
+		name    string
+		group   *MariaDBSecurityGroupModel
+		wantErr bool
+	}{
+		{
+			name:    "nil group",
+			group:   nil,
+			wantErr: true,
+		},
+		{
+			name: "null allowed_ips",
+			group: &MariaDBSecurityGroupModel{
+				AllowedIPs: types.ListNull(types.StringType),
+			},
+			wantErr: true,
+		},
+		{
+			name: "unknown allowed_ips skips validation",
+			group: &MariaDBSecurityGroupModel{
+				AllowedIPs: types.ListUnknown(types.StringType),
+			},
+		},
+		{
+			name: "empty allowed_ips",
+			group: &MariaDBSecurityGroupModel{
+				AllowedIPs: types.ListValueMust(types.StringType, []attr.Value{}),
+			},
+			wantErr: true,
+		},
+		{
+			name: "one cidr",
+			group: &MariaDBSecurityGroupModel{
+				AllowedIPs: types.ListValueMust(types.StringType, []attr.Value{
+					types.StringValue("10.0.0.0/8"),
+				}),
+			},
+		},
+		{
+			name: "empty cidr value",
+			group: &MariaDBSecurityGroupModel{
+				AllowedIPs: types.ListValueMust(types.StringType, []attr.Value{
+					types.StringValue(" "),
+				}),
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := validateMariaDBSecurityGroup(tt.group)
+			gotErr := msg != ""
+			if gotErr != tt.wantErr {
+				t.Fatalf("validateMariaDBSecurityGroup() error = %v (%q), wantErr %v", gotErr, msg, tt.wantErr)
+			}
+		})
+	}
+}
 
 func TestValidateMariaDBReplicas(t *testing.T) {
 	tests := []struct {
