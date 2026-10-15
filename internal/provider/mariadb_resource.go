@@ -306,7 +306,7 @@ func (r *MariaDBResource) Schema(ctx context.Context, req resource.SchemaRequest
 						Default:             int64default.StaticInt64(1),
 					},
 					"retention": schema.Int64Attribute{
-						MarkdownDescription: "Backup retention in days.",
+						MarkdownDescription: "Backup retention in days. Required when enabled is true.",
 						Optional:            true,
 						Computed:            true,
 					},
@@ -392,6 +392,9 @@ func (r *MariaDBResource) ValidateConfig(ctx context.Context, req resource.Valid
 			}
 			if msg := validateMariaDBBackupScheduleDayRequired(backup); msg != "" {
 				resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_day"), "Invalid schedule_day", msg)
+			}
+			if msg := validateMariaDBBackupRetentionRequired(backup); msg != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("retention"), "Invalid retention", msg)
 			}
 			if msg := validateMariaDBScheduleTime(backup.ScheduleTime); msg != "" {
 				resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_time"), "Invalid schedule_time", msg)
@@ -562,6 +565,19 @@ func validateMariaDBBackupScheduleDayRequired(backup *MariaDBBackupModel) string
 	}
 	if backup.ScheduleDay.IsNull() || backup.ScheduleDay.IsUnknown() || strings.TrimSpace(backup.ScheduleDay.ValueString()) == "" {
 		return "schedule_day is required when backup.enabled is true."
+	}
+	return ""
+}
+
+func validateMariaDBBackupRetentionRequired(backup *MariaDBBackupModel) string {
+	if backup == nil || backup.Enabled.IsNull() || backup.Enabled.IsUnknown() || !backup.Enabled.ValueBool() {
+		return ""
+	}
+	if backup.Retention.IsNull() || backup.Retention.IsUnknown() {
+		return "retention is required when backup.enabled is true."
+	}
+	if backup.Retention.ValueInt64() < 1 {
+		return "retention must be at least 1 day when backup.enabled is true."
 	}
 	return ""
 }

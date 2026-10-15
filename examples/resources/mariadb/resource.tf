@@ -67,6 +67,7 @@ resource "airtelcloud_mariadb" "app" {
   backup = {
     enabled         = true
     protection_plan = "weekly-full-daily-incr"
+    retention       = 15
     schedule_time   = "02:00"
     schedule_day    = "Monday"
   }

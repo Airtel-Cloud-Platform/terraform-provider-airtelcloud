@@ -310,46 +310,53 @@ func TestValidateMariaDBNames(t *testing.T) {
 
 func TestValidateMariaDBBackupScheduleRequired(t *testing.T) {
 	tests := []struct {
-		name     string
-		backup   *MariaDBBackupModel
-		wantTime bool
-		wantDay  bool
+		name          string
+		backup        *MariaDBBackupModel
+		wantTime      bool
+		wantDay       bool
+		wantRetention bool
 	}{
 		{
-			name: "backup disabled allows missing schedule",
+			name: "backup disabled allows missing schedule and retention",
 			backup: &MariaDBBackupModel{
 				Enabled:      types.BoolValue(false),
 				ScheduleTime: types.StringNull(),
 				ScheduleDay:  types.StringNull(),
+				Retention:    types.Int64Null(),
 			},
 		},
 		{
-			name: "backup enabled requires both schedule fields",
+			name: "backup enabled requires schedule and retention",
 			backup: &MariaDBBackupModel{
 				Enabled:      types.BoolValue(true),
 				ScheduleTime: types.StringNull(),
 				ScheduleDay:  types.StringNull(),
+				Retention:    types.Int64Null(),
 			},
-			wantTime: true,
-			wantDay:  true,
+			wantTime:      true,
+			wantDay:       true,
+			wantRetention: true,
 		},
 		{
-			name: "backup enabled with schedule set",
+			name: "backup enabled with schedule and retention set",
 			backup: &MariaDBBackupModel{
 				Enabled:      types.BoolValue(true),
 				ScheduleTime: types.StringValue("12:30"),
 				ScheduleDay:  types.StringValue("Monday"),
+				Retention:    types.Int64Value(15),
 			},
 		},
 		{
-			name: "backup enabled with blank schedule",
+			name: "backup enabled with blank schedule and zero retention",
 			backup: &MariaDBBackupModel{
 				Enabled:      types.BoolValue(true),
 				ScheduleTime: types.StringValue("   "),
 				ScheduleDay:  types.StringValue(""),
+				Retention:    types.Int64Value(0),
 			},
-			wantTime: true,
-			wantDay:  true,
+			wantTime:      true,
+			wantDay:       true,
+			wantRetention: true,
 		},
 	}
 
@@ -357,15 +364,20 @@ func TestValidateMariaDBBackupScheduleRequired(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			timeMsg := validateMariaDBBackupScheduleTimeRequired(tt.backup)
 			dayMsg := validateMariaDBBackupScheduleDayRequired(tt.backup)
+			retentionMsg := validateMariaDBBackupRetentionRequired(tt.backup)
 
 			gotTimeErr := timeMsg != ""
 			gotDayErr := dayMsg != ""
+			gotRetentionErr := retentionMsg != ""
 
 			if gotTimeErr != tt.wantTime {
 				t.Fatalf("schedule_time required error = %v (%q), want %v", gotTimeErr, timeMsg, tt.wantTime)
 			}
 			if gotDayErr != tt.wantDay {
 				t.Fatalf("schedule_day required error = %v (%q), want %v", gotDayErr, dayMsg, tt.wantDay)
+			}
+			if gotRetentionErr != tt.wantRetention {
+				t.Fatalf("retention required error = %v (%q), want %v", gotRetentionErr, retentionMsg, tt.wantRetention)
 			}
 		})
 	}

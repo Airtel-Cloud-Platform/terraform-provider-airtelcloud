@@ -34,6 +34,7 @@ resource "airtelcloud_mariadb" "app" {
   backup = {
     enabled          = true
     protection_plan  = "weekly-full-daily-incr"
+    retention        = 15
     schedule_time    = "02:00"
     schedule_day     = "Monday"
   }
@@ -72,7 +73,7 @@ resource "airtelcloud_mariadb" "app" {
   - `enabled` (Boolean) - Whether backup is enabled. Defaults to `false`.
   - `protection_plan` (String) - Plan value from the protection-plans catalog (for example `weekly-full-daily-incr`).
   - `compression_level` (Number) - Compression level. Defaults to `1`.
-  - `retention` (Number) - Retention in days.
+  - `retention` (Number) - Retention in days. Required when `enabled` is `true` (must be at least `1`).
   - `schedule_time` (String) - Backup schedule time in `HH:MM` format. Required when `enabled` is `true`.
   - `schedule_day` (String) - Backup schedule day. Must be one of `Monday` through `Sunday`. Required when `enabled` is `true`.
 - `timeouts` (Block) - Create and delete timeouts. Defaults to 15 minutes.
