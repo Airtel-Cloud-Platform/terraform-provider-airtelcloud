@@ -140,15 +140,10 @@ jobs:
           path: unverified.jsonl
           retention-days: 14
 
-      # Keys also leak through PR descriptions and comments, not just commits.
-      - name: Scan issues and PR comments
-        if: steps.range.outputs.mode == 'full'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          trufflehog github --repo="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --issue-comments --pr-comments --results=verified,unknown --fail \
-            --no-update --github-actions --token="${GITHUB_TOKEN}"
+      # Issues, PR descriptions and comments are covered by GitHub secret scanning
+      # (repo Settings -> Code security), which scans them server-side continuously.
+      # TruffleHog's `github` source can't be used here: it calls GET /user, which the
+      # workflow's GITHUB_TOKEN is not allowed to do (403 "Resource not accessible by integration").
 
   # ---------------------------------------------------------------------------
   # 2. IaC: Checkov over examples/, docs snippets and GitHub workflows
