@@ -635,7 +635,7 @@ terraform import airtelcloud_storage_bucket.private_bucket <bucket-name>
 
 ### airtelcloud_volume
 
-Manages a block storage volume. Volumes can be attached to a compute instance via `compute_id` or `compute_name`, and attachment can be changed in-place without replacement.
+Manages a block storage volume. Attach with `compute_name`. Changing the name detaches and re-attaches in place.
 
 #### Example Usage
 
@@ -643,11 +643,11 @@ Manages a block storage volume. Volumes can be attached to a compute instance vi
 resource "airtelcloud_volume" "data_volume" {
   name              = "storage-volume"
   size              = 50
-  type              = "s1_wkld_ntp02_4iops_backend"
+  type              = "Standard Performance"
   availability_zone = "S1"
-  compute_id        = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
-  vpc_id            = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
-  subnet_id         = "35df162d-5211-4d58-84ed-6a499626949c"
+  vpc_name          = "copper-vpc1"
+  subnet_name       = "asg-vip-demo"
+  compute_name      = "web-1"
   is_encrypted      = false
   bootable          = false
 }
@@ -659,14 +659,12 @@ resource "airtelcloud_volume" "data_volume" {
 |---|---|---|---|
 | `name` | String | Yes | Volume name. |
 | `size` | Int64 | Yes | Volume size in GB. |
-| `type` | String | No | Volume type identifier. When set, it is validated against active block storage types returned by the API. |
-| `availability_zone` | String | No | Availability zone. |
-| `vpc_id` | String | No | VPC ID. Mutually exclusive with `vpc_name`. Forces new resource. |
-| `vpc_name` | String | No | VPC name. Resolved to `vpc_id`. Mutually exclusive with `vpc_id`. |
-| `subnet_id` | String | No | Subnet ID. Mutually exclusive with `subnet_name`. Forces new resource. |
-| `subnet_name` | String | No | Subnet name. Resolved to `subnet_id` within the selected VPC. Requires one of `vpc_id` or `vpc_name`. Mutually exclusive with `subnet_id`. |
-| `compute_id` | String | No | Compute instance ID to attach to. Can be changed in-place (triggers detach/re-attach). Mutually exclusive with `compute_name`. |
-| `compute_name` | String | No | Compute instance name to attach to. Resolved to `compute_id`. Mutually exclusive with `compute_id`. |
+| `availability_zone` | String | Yes | Availability zone. |
+| `type` | String | Yes | Tier: API name or UI label (`Standard Performance`). |
+| `vpc_name` | String | Yes | VPC name. Resolved internally to an ID. Forces new resource. |
+| `subnet_name` | String | Yes | Subnet name. Resolved internally to an ID. Forces new resource. |
+| `compute_name` | String | No | VM instance name to attach to. Omit to leave unattached. |
+| `labels` | List(String) | No | Volume labels. Applied after create; in-place on update. |
 | `is_encrypted` | Bool | No | Enable encryption. Default: `false`. Forces new resource. |
 | `bootable` | Bool | No | Mark as bootable. Default: `false`. Forces new resource. |
 | `enable_backup` | Bool | No | Enable backup. Default: `false`. |
@@ -685,10 +683,10 @@ resource "airtelcloud_volume" "data_volume" {
 #### Import
 
 ```bash
-terraform import airtelcloud_volume.data_volume <volume-id>
+terraform import airtelcloud_volume.data_volume <volume-uuid>
 ```
 
--> **Note:** The volume ID for import is the numeric `id`, not the `uuid`.
+-> **Note:** Import uses the volume `uuid`, not the numeric `id`.
 
 ---
 
@@ -1457,7 +1455,7 @@ terraform import <resource_type>.<name> <import_id>
 | `airtelcloud_vm` | `<compute-id>` | `b603ccb5-...` |
 | `airtelcloud_asg` | `<asg-uuid>` | `a1b2c3d4-...` |
 | `airtelcloud_storage_bucket` | `<bucket-name>` | `my-bucket` |
-| `airtelcloud_volume` | `<numeric-id>` | `123` |
+| `airtelcloud_volume` | `<uuid>` | `a1b2c3d4-...` |
 | `airtelcloud_file_storage` | `<id>` | `fs-abc123` |
 | `airtelcloud_postgres` | `<cluster-uuid>` | `e9953b5d-...` |
 | `airtelcloud_file_storage_export_path` | `<path-id>` | `exp-xyz789` |
