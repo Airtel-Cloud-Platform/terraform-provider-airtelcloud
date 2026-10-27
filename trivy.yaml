@@ -7,6 +7,7 @@ scan:
     - vendor
     - dist
     - .git
+    - .tmp
 vulnerability:
   ignore-unfixed: true   # only fail on vulns that have a fix to upgrade to
 secret:

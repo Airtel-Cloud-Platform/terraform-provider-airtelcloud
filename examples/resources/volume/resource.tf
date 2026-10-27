@@ -50,8 +50,7 @@ resource "airtelcloud_volume" "data_volume" {
   size              = 50
   type              = "s1_wkld_ntp02_4iops_backend"
   availability_zone = "S1"
-  compute_name      = "my-instance" # Attach by instance name (mutually exclusive with compute_id)
-  # compute_id      = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
+  compute_name      = "my-instance"
 
   # Networking
   vpc_name    = "copper-vpc01"
@@ -67,10 +66,10 @@ resource "airtelcloud_volume" "data_volume" {
 #  size              = 100
 #  type              = "s1_wkld_ntp02_4iops_backend"
 #  availability_zone = "S1"
-#  compute_id        = "b603ccb5-fe35-4ddb-9a7c-2e966a9425c2"
+#  compute_name      = "my-instance"
 #
-#  vpc_id    = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
-#  subnet_id = "35df162d-5211-4d58-84ed-6a499626949c"
+#  vpc_name    = "copper-vpc01"
+#  subnet_name = "subnet-26jun"
 #
 #  is_encrypted = true
 #  bootable     = false

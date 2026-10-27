@@ -2,10 +2,13 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client"
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -14,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -21,7 +25,6 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &VolumeResource{}
 var _ resource.ResourceWithImportState = &VolumeResource{}
-var _ resource.ResourceWithValidateConfig = &VolumeResource{}
 
 func NewVolumeResource() resource.Resource {
 	return &VolumeResource{}
@@ -42,80 +45,22 @@ type VolumeResourceModel struct {
 	Type             types.String `tfsdk:"type"`
 	Status           types.String `tfsdk:"status"`
 	AvailabilityZone types.String `tfsdk:"availability_zone"`
-	VPCID            types.String `tfsdk:"vpc_id"`
 	VPCName          types.String `tfsdk:"vpc_name"`
-	SubnetID         types.String `tfsdk:"subnet_id"`
 	SubnetName       types.String `tfsdk:"subnet_name"`
-	ComputeID        types.String `tfsdk:"compute_id"`
 	ComputeName      types.String `tfsdk:"compute_name"`
 	IsEncrypted      types.Bool   `tfsdk:"is_encrypted"`
 	Bootable         types.Bool   `tfsdk:"bootable"`
 	EnableBackup     types.Bool   `tfsdk:"enable_backup"`
 	AttachedTo       types.String `tfsdk:"attached_to"`
 	AttachmentDevice types.String `tfsdk:"attachment_device"`
+	Labels           types.List   `tfsdk:"labels"`
 }
 
-// computeIDPlanModifier computes the plan value for the Optional+Computed compute_id
-// attribute, accounting for the sibling compute_name attribute:
-//   - compute_id set in config: keep the configured value.
-//   - neither compute_id nor compute_name set: null (detach).
-//   - compute_name set, on create: unknown (resolved during apply).
-//   - compute_name set, on update with unchanged name: keep the prior resolved id.
-//   - compute_name set, on update with changed name: unknown (re-resolved on apply).
-type computeIDPlanModifier struct{}
-
-func (m computeIDPlanModifier) Description(_ context.Context) string {
-	return "Derives compute_id from config, or from a resolved compute_name, otherwise null when both are removed."
-}
-
-func (m computeIDPlanModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-func (m computeIDPlanModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	// compute_id explicitly set in config: keep it.
-	if !req.ConfigValue.IsNull() {
-		return
-	}
-
-	var configName types.String
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("compute_name"), &configName)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Neither compute_id nor compute_name in config: detach.
-	if configName.IsNull() {
-		resp.PlanValue = types.StringNull()
-		return
-	}
-
-	// compute_name is set. On create there is no prior state to reuse.
-	if req.State.Raw.IsNull() {
-		resp.PlanValue = types.StringUnknown()
-		return
-	}
-
-	// On update, reuse the prior resolved id when the name is unchanged so re-plans
-	// are clean; mark unknown when the name changed so it is re-resolved during apply.
-	var stateName types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("compute_name"), &stateName)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	if configName.Equal(stateName) {
-		resp.PlanValue = req.StateValue
-	} else {
-		resp.PlanValue = types.StringUnknown()
-	}
-}
-
-// attachmentPlanModifier marks attachment fields as unknown when compute_id changes,
-// so Terraform accepts the new value (including null) after apply.
+// attachmentPlanModifier marks attachment fields as unknown when compute_name changes.
 type attachmentPlanModifier struct{}
 
 func (m attachmentPlanModifier) Description(_ context.Context) string {
-	return "Marks value as unknown when compute_id changes."
+	return "Marks value as unknown when compute_name changes."
 }
 
 func (m attachmentPlanModifier) MarkdownDescription(ctx context.Context) string {
@@ -123,19 +68,14 @@ func (m attachmentPlanModifier) MarkdownDescription(ctx context.Context) string 
 }
 
 func (m attachmentPlanModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	// No custom logic needed during create or destroy
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
 	}
 
-	// Compare state against config (not plan) because plan modifier execution
-	// order across attributes is non-deterministic — computeIDPlanModifier
-	// may not have run yet when this modifier reads compute_id from the plan.
-	var stateComputeID, configComputeID types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("compute_id"), &stateComputeID)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("compute_id"), &configComputeID)...)
-
-	if !stateComputeID.Equal(configComputeID) {
+	var stateName, configName types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("compute_name"), &stateName)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("compute_name"), &configName)...)
+	if !stateName.Equal(configName) {
 		resp.PlanValue = types.StringUnknown()
 	}
 }
@@ -175,56 +115,40 @@ func (r *VolumeResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Required:            true,
 			},
 			"size": schema.Int64Attribute{
-				MarkdownDescription: "The size of the volume in GB.",
+				MarkdownDescription: "The size of the volume in GB. API requires 50 to 4095.",
 				Required:            true,
+				Validators: []validator.Int64{
+					int64validator.Between(50, 4095),
+				},
 			},
 			"type": schema.StringAttribute{
-				MarkdownDescription: "The type of the volume.",
-				Optional:            true,
+				MarkdownDescription: "Volume tier. Accepts the API type name or the UI label (for example `Standard Performance`). Looked up from GET .../volume_types?group=BLOCK_STORAGE with the subnet-id header.",
+				Required:            true,
 			},
 			"status": schema.StringAttribute{
 				MarkdownDescription: "The current status of the volume.",
 				Computed:            true,
 			},
 			"availability_zone": schema.StringAttribute{
-				MarkdownDescription: "The availability zone where the volume is placed.",
-				Optional:            true,
-				Computed:            true,
-			},
-			"vpc_id": schema.StringAttribute{
-				MarkdownDescription: "The VPC network ID for the volume. Mutually exclusive with vpc_name.",
-				Optional:            true,
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				MarkdownDescription: "Availability zone (UI value, for example `S1` or `South-AZ1`).",
+				Required:            true,
 			},
 			"vpc_name": schema.StringAttribute{
-				MarkdownDescription: "The name of the VPC for the volume. If set, it is resolved to vpc_id. Mutually exclusive with vpc_id.",
-				Optional:            true,
-			},
-			"subnet_id": schema.StringAttribute{
-				MarkdownDescription: "The subnet ID for the volume. Mutually exclusive with subnet_name.",
-				Optional:            true,
-				Computed:            true,
+				MarkdownDescription: "VPC name. Resolved to a VPC ID for the create API. Forces replacement if changed.",
+				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"subnet_name": schema.StringAttribute{
-				MarkdownDescription: "The name of the subnet for the volume. If set, it is resolved to subnet_id (requires vpc_id or vpc_name). Mutually exclusive with subnet_id.",
-				Optional:            true,
-			},
-			"compute_id": schema.StringAttribute{
-				MarkdownDescription: "The compute instance ID to attach the volume to. Mutually exclusive with compute_name.",
-				Optional:            true,
-				Computed:            true,
+				MarkdownDescription: "Subnet name within the VPC. Resolved to a subnet ID (sent as the subnet-id header). Forces replacement if changed.",
+				Required:            true,
 				PlanModifiers: []planmodifier.String{
-					computeIDPlanModifier{},
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"compute_name": schema.StringAttribute{
-				MarkdownDescription: "The name of the compute instance to attach the volume to. If set, it is resolved to compute_id. Mutually exclusive with compute_id.",
+				MarkdownDescription: "VM instance name to attach to. Resolved to a compute ID for the API. Omit to leave the volume unattached. Changing this value detaches and re-attaches in place.",
 				Optional:            true,
 			},
 			"is_encrypted": schema.BoolAttribute{
@@ -265,6 +189,11 @@ func (r *VolumeResource) Schema(ctx context.Context, req resource.SchemaRequest,
 					attachmentPlanModifier{},
 				},
 			},
+			"labels": schema.ListAttribute{
+				ElementType:         types.StringType,
+				MarkdownDescription: "Optional labels. Applied after create via PATCH .../volumes/labels using the numeric volume id.",
+				Optional:            true,
+			},
 		},
 	}
 }
@@ -288,43 +217,48 @@ func (r *VolumeResource) Configure(ctx context.Context, req resource.ConfigureRe
 	r.client = client
 }
 
-// ValidateConfig enforces that compute_id and compute_name are not both set. Both
-// may be omitted — an unattached volume is valid.
-func (r *VolumeResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var data VolumeResourceModel
-
-	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
-	if resp.Diagnostics.HasError() {
-		return
+// matchVolumeType matches the UI tier or API name against active BLOCK_STORAGE types.
+func matchVolumeType(volumeTypes []models.VolumeType, want string) (models.VolumeType, []string, bool) {
+	want = strings.TrimSpace(want)
+	var options []string
+	for _, vt := range volumeTypes {
+		if !vt.IsActive {
+			continue
+		}
+		label := vt.Name
+		if vt.Label != "" && !strings.EqualFold(vt.Label, vt.Name) {
+			label = fmt.Sprintf("%s (%s)", vt.Label, vt.Name)
+		}
+		options = append(options, label)
+		if strings.EqualFold(vt.Name, want) || (vt.Label != "" && strings.EqualFold(vt.Label, want)) {
+			return vt, options, true
+		}
 	}
-
-	if !data.ComputeID.IsNull() && !data.ComputeName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of compute_id or compute_name may be specified, not both.")
-	}
-
-	// VPC and subnet each accept an id or a name (both optional), but not both.
-	if !data.VPCID.IsNull() && !data.VPCName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of vpc_id or vpc_name may be specified, not both.")
-	}
-	if !data.SubnetID.IsNull() && !data.SubnetName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"Only one of subnet_id or subnet_name may be specified, not both.")
-	}
-
-	// Resolving subnet_name requires a VPC to scope the lookup.
-	if !data.SubnetName.IsNull() && data.VPCID.IsNull() && data.VPCName.IsNull() {
-		resp.Diagnostics.AddError("Invalid Configuration",
-			"subnet_name requires one of vpc_id or vpc_name to be specified.")
-	}
+	return models.VolumeType{}, options, false
 }
 
-func (r *VolumeResource) volumeClient(subnetID types.String) *client.Client {
-	if !subnetID.IsNull() && subnetID.ValueString() != "" {
-		return r.client.WithSubnetID(subnetID.ValueString())
+func bothKnownSet(a, b types.String) bool {
+	return !a.IsNull() && !a.IsUnknown() && !b.IsNull() && !b.IsUnknown()
+}
+
+func (r *VolumeResource) resolveNetwork(ctx context.Context, vpcName, subnetName types.String) (vpcID, subnetID string, err error) {
+	vpcID, err = r.client.ResolveVPCID(ctx, vpcName.ValueString())
+	if err != nil {
+		return "", "", err
 	}
-	return r.client
+	subnetID, err = r.client.ResolveSubnetID(ctx, vpcID, subnetName.ValueString())
+	if err != nil {
+		return "", "", err
+	}
+	return vpcID, subnetID, nil
+}
+
+func (r *VolumeResource) volumeClientFor(ctx context.Context, vpcName, subnetName types.String) (*client.Client, string, string, error) {
+	vpcID, subnetID, err := r.resolveNetwork(ctx, vpcName, subnetName)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return r.client.WithSubnetID(subnetID), vpcID, subnetID, nil
 }
 
 func (r *VolumeResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -336,46 +270,14 @@ func (r *VolumeResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	// Resolve vpc_name -> vpc_id (needed before subnet resolution), then
-	// subnet_name -> subnet_id. Persist the resolved ids into the Computed
-	// attributes so they are known in state.
-	vpcID := data.VPCID.ValueString()
-	if vpcID == "" && !data.VPCName.IsNull() {
-		resolved, err := r.client.ResolveVPCID(ctx, data.VPCName.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("VPC Resolution Error", err.Error())
-			return
-		}
-		vpcID = resolved
+	volumeClient, vpcID, subnetID, err := r.volumeClientFor(ctx, data.VPCName, data.SubnetName)
+	if err != nil {
+		resp.Diagnostics.AddError("Network Resolution Error", err.Error())
+		return
 	}
 
-	subnetID := data.SubnetID.ValueString()
-	if subnetID == "" && !data.SubnetName.IsNull() {
-		resolved, err := r.client.ResolveSubnetID(ctx, vpcID, data.SubnetName.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Subnet Resolution Error", err.Error())
-			return
-		}
-		subnetID = resolved
-	}
-
-	if vpcID == "" {
-		data.VPCID = types.StringNull()
-	} else {
-		data.VPCID = types.StringValue(vpcID)
-	}
-	if subnetID == "" {
-		data.SubnetID = types.StringNull()
-	} else {
-		data.SubnetID = types.StringValue(subnetID)
-	}
-
-	volumeClient := r.volumeClient(data.SubnetID)
-
-	// Resolve compute_name to compute_id when configured by name, and persist the
-	// resolved id into the Computed compute_id attribute so it is known in state.
-	computeID := data.ComputeID.ValueString()
-	if computeID == "" && !data.ComputeName.IsNull() {
+	computeID := ""
+	if !data.ComputeName.IsNull() && data.ComputeName.ValueString() != "" {
 		resolved, err := volumeClient.ResolveComputeID(ctx, data.ComputeName.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError("Compute Resolution Error", fmt.Sprintf("Unable to resolve compute name %q: %s", data.ComputeName.ValueString(), err))
@@ -383,53 +285,32 @@ func (r *VolumeResource) Create(ctx context.Context, req resource.CreateRequest,
 		}
 		computeID = resolved
 	}
-	// Mirror the plan modifier: an empty compute id means the volume is not
-	// attached, which the plan represents as null. Setting StringValue("") here
-	// would conflict with that null plan value ("was null, but now \"\"").
-	if computeID == "" {
-		data.ComputeID = types.StringNull()
-	} else {
-		data.ComputeID = types.StringValue(computeID)
+
+	// UI loads tiers from GET .../volume_types?group=BLOCK_STORAGE with subnet-id.
+	volumeTypes, err := volumeClient.GetVolumeTypes(ctx, "BLOCK_STORAGE")
+	if err != nil {
+		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to fetch volume types for validation: %s", err))
+		return
 	}
+	matchedType, validNames, found := matchVolumeType(volumeTypes, data.Type.ValueString())
+	if !found {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("type"),
+			"Invalid Volume Type",
+			fmt.Sprintf("Volume type %q is not valid. Available types: %v", data.Type.ValueString(), validNames),
+		)
+		return
+	}
+	volumeTypeName := matchedType.Name
+	resolvedVolumeTypeID := fmt.Sprintf("%d", matchedType.ID)
 
-	// Validate volume type name against the API and resolve its ID
-	volumeTypeName := data.Type.ValueString()
-	var resolvedVolumeTypeID string
-	if volumeTypeName != "" {
-		volumeTypes, err := volumeClient.GetVolumeTypes(ctx, "BLOCK_STORAGE")
-		if err != nil {
-			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to fetch volume types for validation: %s", err))
-			return
-		}
-
-		// Filter to active types only
-		var activeTypes []models.VolumeType
-		for _, vt := range volumeTypes {
-			if vt.IsActive {
-				activeTypes = append(activeTypes, vt)
-			}
-		}
-
-		found := false
-		var validNames []string
-		for _, vt := range activeTypes {
-			validNames = append(validNames, vt.Name)
-			if vt.Name == volumeTypeName {
-				found = true
-				resolvedVolumeTypeID = fmt.Sprintf("%d", vt.ID)
-				break
-			}
-		}
-		if !found {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("volume_type"),
-				"Invalid Volume Type",
-				fmt.Sprintf("Volume type %q is not valid. Available types: %v", volumeTypeName, validNames),
-			)
+	var labels []string
+	if !data.Labels.IsNull() && !data.Labels.IsUnknown() {
+		resp.Diagnostics.Append(data.Labels.ElementsAs(ctx, &labels, false)...)
+		if resp.Diagnostics.HasError() {
 			return
 		}
 	}
-
 	// Map is_encrypted bool to API string value
 	isEncrypted := ""
 	if !data.IsEncrypted.IsNull() && data.IsEncrypted.ValueBool() {
@@ -457,17 +338,25 @@ func (r *VolumeResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create volume, got error: %s", err))
 		return
 	}
+	if len(labels) > 0 {
+		if err := volumeClient.PatchVolumeLabels(ctx, volume.ID, labels); err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to set volume labels, got error: %s", err))
+			return
+		}
+	}
 
 	// Update the model with the created volume data
 	data.ID = types.Int64Value(int64(volume.ID))
 	data.UUID = types.StringValue(volume.UUID)
 	data.ProviderVolumeID = types.StringValue(volume.ProviderVolumeID)
 	data.Status = types.StringValue(volume.Status)
-	az := volume.AZName
-	if az == "" {
-		az = volume.AvailabilityZone
+	if data.AvailabilityZone.IsNull() || data.AvailabilityZone.ValueString() == "" {
+		az := volume.AZName
+		if az == "" {
+			az = volume.AvailabilityZone
+		}
+		data.AvailabilityZone = types.StringValue(az)
 	}
-	data.AvailabilityZone = types.StringValue(az)
 
 	// Handle volume attachments
 	if len(volume.VolumeAttachments) > 0 {
@@ -493,7 +382,11 @@ func (r *VolumeResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	volumeClient := r.volumeClient(data.SubnetID)
+	volumeClient, _, _, err := r.volumeClientFor(ctx, data.VPCName, data.SubnetName)
+	if err != nil {
+		resp.Diagnostics.AddError("Network Resolution Error", err.Error())
+		return
+	}
 
 	volume, err := volumeClient.GetVolume(ctx, data.UUID.ValueString())
 	if err != nil {
@@ -506,39 +399,41 @@ func (r *VolumeResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	// Update the model with the current volume data
+	data.ID = types.Int64Value(int64(volume.ID))
 	data.ProviderVolumeID = types.StringValue(volume.ProviderVolumeID)
 	data.Name = types.StringValue(volume.VolumeName)
 	data.Size = types.Int64Value(int64(volume.VolumeSize))
 	data.Status = types.StringValue(volume.Status)
-	az := volume.AZName
-	if az == "" {
-		az = volume.AvailabilityZone
+	if data.AvailabilityZone.IsNull() || data.AvailabilityZone.ValueString() == "" {
+		az := volume.AZName
+		if az == "" {
+			az = volume.AvailabilityZone
+		}
+		data.AvailabilityZone = types.StringValue(az)
 	}
-	data.AvailabilityZone = types.StringValue(az)
 	data.Bootable = types.BoolValue(volume.Bootable)
 	data.EnableBackup = types.BoolValue(volume.EnableBackup)
 
-	if volume.VPCID != "" {
-		data.VPCID = types.StringValue(volume.VPCID)
-	}
-
-	// Handle volume attachments and reconcile compute_id with API state
 	if len(volume.VolumeAttachments) > 0 {
 		attachment := volume.VolumeAttachments[0]
-		data.ComputeID = types.StringValue(attachment.ComputeID)
 		data.AttachedTo = types.StringValue(attachment.ComputeID)
 		data.AttachmentDevice = types.StringValue(attachment.VolumeAttachmentDeviceName)
 	} else {
-		if !data.ComputeID.IsNull() {
-			data.ComputeID = types.StringNull()
-		}
 		data.AttachedTo = types.StringNull()
 		data.AttachmentDevice = types.StringNull()
 	}
 
-	// Set volume type name if available
 	if volume.VolumeType.Name != "" {
-		data.Type = types.StringValue(volume.VolumeType.Name)
+		current := data.Type.ValueString()
+		if !strings.EqualFold(current, volume.VolumeType.Name) &&
+			(volume.VolumeType.Label == "" || !strings.EqualFold(current, volume.VolumeType.Label)) {
+			data.Type = types.StringValue(volume.VolumeType.Name)
+		}
+	}
+	if apiLabels := parseVolumeLabels(volume.Labels); len(apiLabels) > 0 {
+		list, diags := types.ListValueFrom(ctx, types.StringType, apiLabels)
+		resp.Diagnostics.Append(diags...)
+		data.Labels = list
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -566,22 +461,20 @@ func (r *VolumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	volumeClient := r.volumeClient(plan.SubnetID)
+	volumeClient, _, _, err := r.volumeClientFor(ctx, plan.VPCName, plan.SubnetName)
+	if err != nil {
+		resp.Diagnostics.AddError("Network Resolution Error", err.Error())
+		return
+	}
 
-	// Read current volume to get volume_type name and compute_id
 	currentVolume, err := volumeClient.GetVolume(ctx, state.UUID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read volume for update: %s", err))
 		return
 	}
 
-	// Resolve the target compute id for this apply. When configured by name the
-	// Computed compute_id is unknown in the plan (its plan modifier only reuses the
-	// prior id when the name is unchanged), so resolve compute_name to a concrete id
-	// before diffing — otherwise a changed name would look like a detach.
-	oldComputeID := state.ComputeID.ValueString()
-	newComputeID := plan.ComputeID.ValueString()
-	if newComputeID == "" && !plan.ComputeName.IsNull() {
+	newComputeID := ""
+	if !plan.ComputeName.IsNull() && plan.ComputeName.ValueString() != "" {
 		resolved, err := volumeClient.ResolveComputeID(ctx, plan.ComputeName.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError("Compute Resolution Error", fmt.Sprintf("Unable to resolve compute name %q: %s", plan.ComputeName.ValueString(), err))
@@ -589,7 +482,7 @@ func (r *VolumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 		}
 		newComputeID = resolved
 	}
-	if oldComputeID != newComputeID {
+	if !state.ComputeName.Equal(plan.ComputeName) {
 		// Use API as source of truth for current attachment state
 		actualAttachedID := ""
 		if len(currentVolume.VolumeAttachments) > 0 {
@@ -644,15 +537,6 @@ func (r *VolumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	computeID := newComputeID
 
-	// Persist the resolved compute id into the Computed compute_id attribute. It may
-	// be unknown in the plan (configured by a changed name); writing an unknown value
-	// to state is an error, so settle it here to the resolved id (or null if detached).
-	if computeID != "" {
-		plan.ComputeID = types.StringValue(computeID)
-	} else {
-		plan.ComputeID = types.StringNull()
-	}
-
 	updateReq := &models.UpdateVolumeRequest{
 		VolumeName:   plan.Name.ValueString(),
 		VolumeSize:   int(plan.Size.ValueInt64()),
@@ -669,6 +553,20 @@ func (r *VolumeResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if err != nil {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to update volume, got error: %s", err))
 		return
+	}
+
+	if !plan.Labels.Equal(state.Labels) {
+		var labels []string
+		if !plan.Labels.IsNull() && !plan.Labels.IsUnknown() {
+			resp.Diagnostics.Append(plan.Labels.ElementsAs(ctx, &labels, false)...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+		}
+		if err := volumeClient.PatchVolumeLabels(ctx, int(state.ID.ValueInt64()), labels); err != nil {
+			resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to set volume labels, got error: %s", err))
+			return
+		}
 	}
 
 	// Read the updated volume to get the latest state
@@ -711,7 +609,11 @@ func (r *VolumeResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 
-	volumeClient := r.volumeClient(data.SubnetID)
+	volumeClient, _, _, err := r.volumeClientFor(ctx, data.VPCName, data.SubnetName)
+	if err != nil {
+		resp.Diagnostics.AddError("Network Resolution Error", err.Error())
+		return
+	}
 
 	// Check if volume is attached to any compute instance
 	currentVolume, err := volumeClient.GetVolume(ctx, data.UUID.ValueString())
@@ -758,4 +660,21 @@ func (r *VolumeResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 func (r *VolumeResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("uuid"), req, resp)
+}
+
+func parseVolumeLabels(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		return arr
+	}
+	var obj struct {
+		Labels []string `json:"labels"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return obj.Labels
+	}
+	return nil
 }

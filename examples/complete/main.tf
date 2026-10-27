@@ -106,11 +106,11 @@ resource "airtelcloud_subnet" "tf_private" {
 # size              = 50
 # type              = "s1_wkld_ntp02_4iops_backend"
 # availability_zone = "S1"
-# compute_id        = airtelcloud_vm.web1.id
+# compute_name      = airtelcloud_vm.web1.instance_name
 
 # Networking
-# vpc_id    = "029ac9b8-d93e-4691-a7cb-2f651c607cfe"
-# subnet_id = "35df162d-5211-4d58-84ed-6a499626949c"
+# vpc_name    = "copper-vpc01"
+# subnet_name = "subnet-26jun"
 
 # is_encrypted  = false
 # bootable      = false

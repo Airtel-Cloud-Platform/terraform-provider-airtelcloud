@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
@@ -54,6 +56,19 @@ func (c *Client) CreateVolume(ctx context.Context, req *models.CreateVolumeReque
 	}
 
 	return &volume, nil
+}
+
+// PatchVolumeLabels sets labels via PATCH .../volumes/labels.
+// resource_id must be the numeric volume id; UUID returns 500.
+func (c *Client) PatchVolumeLabels(ctx context.Context, id int, labels []string) error {
+	if id == 0 {
+		return fmt.Errorf("volume id is required to set labels")
+	}
+	formData := map[string]interface{}{
+		"resource_id": strconv.Itoa(id),
+		"labels":      strings.Join(labels, ","),
+	}
+	return c.PatchURLEncodedForm(ctx, fmt.Sprintf("%s/labels", c.volumeBasePath()), formData, nil)
 }
 
 // UpdateVolume extends an existing volume (size increase only)

@@ -11,6 +11,28 @@ import (
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
 
+func TestPatchVolumeLabels(t *testing.T) {
+	mockServer := testutil.NewMockServer()
+	defer mockServer.Close()
+
+	var capturedID, capturedLabels string
+	mockServer.AddHandler("PATCH", "/api/v2.1/volumes/domain/test-org/project/test-project/volumes/labels", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		capturedID = r.FormValue("resource_id")
+		capturedLabels = r.FormValue("labels")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	baseURL := strings.TrimSuffix(mockServer.URL, "/")
+	c, _ := NewClient(baseURL, "test-api-key", "test-api-secret", "south-1", "test-org", "test-project", "")
+	if err := c.PatchVolumeLabels(context.Background(), 483648, []string{"tft"}); err != nil {
+		t.Fatalf("PatchVolumeLabels() error = %v", err)
+	}
+	if capturedID != "483648" || capturedLabels != "tft" {
+		t.Fatalf("id=%q labels=%q", capturedID, capturedLabels)
+	}
+}
+
 func TestCreateVolume(t *testing.T) {
 	mockServer := testutil.NewMockServer()
 	defer mockServer.Close()

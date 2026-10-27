@@ -144,12 +144,12 @@ resource "airtelcloud_volume" "data_volume" {
   size              = 50
   type              = "n2_wkld_ntp02_1iops_backend"
   availability_zone = "N1"
-  #compute_id = airtelcloud_vm.web_server.id
-  vpc_name     = "copper-vpc01"
-  subnet_name  = "subnet-az2"
-  is_encrypted = false
-  bootable     = false
-  depends_on   = [airtelcloud_vm.web_server]
+  compute_name      = airtelcloud_vm.web_server.instance_name
+  vpc_name          = "copper-vpc01"
+  subnet_name       = "subnet-az2"
+  is_encrypted      = false
+  bootable          = false
+  depends_on        = [airtelcloud_vm.web_server]
 }
 
 resource "airtelcloud_compute_snapshot" "example" {
