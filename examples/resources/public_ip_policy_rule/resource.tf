@@ -2,7 +2,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "1.3.0"
+      version = "2.0.0"
     }
   }
 }
@@ -44,7 +44,7 @@ variable "project_name" {
 # Allow web traffic (HTTP + HTTPS) from any source
 resource "airtelcloud_public_ip_policy_rule" "web_traffic" {
   public_ip_name = "my-vm-public-ip"
-  rule_name   = "web-traffic"
+  rule_name      = "web-traffic"
   source         = "any"
   services       = ["HTTP", "HTTPS"]
   action         = "accept"
@@ -53,7 +53,7 @@ resource "airtelcloud_public_ip_policy_rule" "web_traffic" {
 # Allow SSH access from a specific management IP only
 resource "airtelcloud_public_ip_policy_rule" "ssh_mgmt" {
   public_ip_name = "my-vm-public-ip"
-  rule_name   = "ssh-mgmt"
+  rule_name      = "ssh-mgmt"
   source         = "192.168.100.5"
   services       = ["SSH"]
   action         = "accept"
@@ -62,7 +62,7 @@ resource "airtelcloud_public_ip_policy_rule" "ssh_mgmt" {
 # API-shaped example using source_config and service_config
 resource "airtelcloud_public_ip_policy_rule" "temporal_rule" {
   public_ip_name = "my-vm-public-ip"
-  rule_name   = "temporal-rule"
+  rule_name      = "temporal-rule"
   action         = "accept"
   resource_type  = "ipam"
   revision_note  = "creating Policy"
