@@ -104,7 +104,7 @@ The following arguments are supported in the provider configuration:
 
 ## Available Resources
 
-The provider supports the following 30 resources:
+The provider supports the following 31 resources:
 
 **Compute:**
 - [`airtelcloud_vm`](resources/vm) - Virtual Machine
@@ -145,6 +145,9 @@ The provider supports the following 30 resources:
 **DNS:**
 - [`airtelcloud_dns_zone`](resources/dns_zone) - DNS Zone
 - [`airtelcloud_dns_record`](resources/dns_record) - DNS Record
+
+**Alerting:**
+- [`airtelcloud_alert`](resources/alert) - Metric Alert
 
 **Backup:**
 - [`airtelcloud_protection_plan`](resources/protection_plan) - Protection Plan
