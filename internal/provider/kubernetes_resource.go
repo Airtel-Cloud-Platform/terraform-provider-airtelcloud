@@ -16,7 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -73,6 +72,7 @@ type KubernetesNodePoolModel struct {
 	FlavorType       types.String                `tfsdk:"flavor_type"`
 	SubnetName       types.String                `tfsdk:"subnet_name"`
 	AvailabilityZone types.String                `tfsdk:"availability_zone"`
+	DesiredNodes     types.Int64                 `tfsdk:"desired_nodes"`
 	Count            types.Int64                 `tfsdk:"count"`
 	Autoscaling      *KubernetesAutoscalingModel `tfsdk:"autoscaling"`
 	Labels           []KubernetesMetaOpModel     `tfsdk:"labels"`
@@ -250,13 +250,27 @@ func (r *KubernetesResource) Schema(ctx context.Context, req resource.SchemaRequ
 								stringplanmodifier.UseStateForUnknown(),
 							},
 						},
-						"count": schema.Int64Attribute{
-							MarkdownDescription: "Machines in the pool. Use `0` when autoscaling is enabled. Defaults to `0`.",
+						"desired_nodes": schema.Int64Attribute{
+							MarkdownDescription: "Desired Nodes. Machines in the pool. Use `0` when autoscaling is enabled. Defaults to `0`. Replaces the deprecated `count`.",
 							Optional:            true,
 							Computed:            true,
-							Default:             int64default.StaticInt64(0),
 							Validators: []validator.Int64{
 								int64validator.AtLeast(0),
+							},
+							PlanModifiers: []planmodifier.Int64{
+								kubernetesNodeCountPlanModifier{sibling: "count"},
+							},
+						},
+						"count": schema.Int64Attribute{
+							MarkdownDescription: "Deprecated alias for `desired_nodes`. Machines in the pool. Use `0` when autoscaling is enabled.",
+							DeprecationMessage:  "Use desired_nodes instead. count is kept for backward compatibility.",
+							Optional:            true,
+							Computed:            true,
+							Validators: []validator.Int64{
+								int64validator.AtLeast(0),
+							},
+							PlanModifiers: []planmodifier.Int64{
+								kubernetesNodeCountPlanModifier{sibling: "desired_nodes"},
 							},
 						},
 						"autoscaling": schema.SingleNestedAttribute{
@@ -353,15 +367,23 @@ func (r *KubernetesResource) ValidateConfig(ctx context.Context, req resource.Va
 			}
 			autoscalingEnabled = pool.Autoscaling.Enabled.IsNull() || pool.Autoscaling.Enabled.ValueBool()
 		}
-		if pool.Count.IsUnknown() {
+		if pool.DesiredNodes.IsUnknown() || pool.Count.IsUnknown() {
 			continue
 		}
-		count := pool.Count.ValueInt64()
-		if !autoscalingEnabled && count < 1 {
+		if !pool.DesiredNodes.IsNull() && !pool.Count.IsNull() && pool.DesiredNodes.ValueInt64() != pool.Count.ValueInt64() {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("node_pools").AtListIndex(i).AtName("count"),
+				"Conflicting node pool size",
+				"desired_nodes and count are both set with different values. Set only desired_nodes (count is deprecated).",
+			)
+			continue
+		}
+		count := pool.desiredNodes().ValueInt64()
+		if !autoscalingEnabled && count < 1 {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("node_pools").AtListIndex(i).AtName("desired_nodes"),
 				"Invalid node pool count",
-				"count must be at least 1 unless autoscaling.enabled is true.",
+				"desired_nodes must be at least 1 unless autoscaling.enabled is true.",
 			)
 		}
 	}
@@ -544,7 +566,7 @@ func buildKubernetesCreateRequest(data *KubernetesResourceModel, subnetIDs map[s
 		if pool.AvailabilityZone.IsUnknown() || pool.AvailabilityZone.IsNull() || pool.AvailabilityZone.ValueString() == "" {
 			pool.AvailabilityZone = types.StringValue(az)
 		}
-		count := int(pool.Count.ValueInt64())
+		count := int(pool.desiredNodes().ValueInt64())
 		workerSum += count
 		poolKey := kubernetesNodePoolAPIName(i)
 		item := models.KubernetesNodePool{
@@ -653,6 +675,7 @@ func applyKubernetesClusterToState(data *KubernetesResourceModel, cluster *model
 
 	az := data.AvailabilityZone.ValueString()
 	for i := range data.NodePools {
+		data.NodePools[i].normalizeNodeCount()
 		if data.NodePools[i].AvailabilityZone.IsNull() || data.NodePools[i].AvailabilityZone.IsUnknown() || data.NodePools[i].AvailabilityZone.ValueString() == "" {
 			data.NodePools[i].AvailabilityZone = types.StringValue(az)
 		}
@@ -661,7 +684,7 @@ func applyKubernetesClusterToState(data *KubernetesResourceModel, cluster *model
 	if data.WorkerNodes.IsNull() || data.WorkerNodes.IsUnknown() {
 		sum := int64(0)
 		for _, pool := range data.NodePools {
-			sum += pool.Count.ValueInt64()
+			sum += pool.desiredNodes().ValueInt64()
 		}
 		if sum == 0 {
 			sum = 1
@@ -744,4 +767,61 @@ func kubernetesTaintEffectAPIValue(effect string) string {
 
 func kubernetesNodePoolAPIName(index int) string {
 	return fmt.Sprintf("md%d", index)
+}
+
+// desiredNodes returns the node count, preferring desired_nodes over the
+// deprecated count alias.
+func (p KubernetesNodePoolModel) desiredNodes() types.Int64 {
+	if !p.DesiredNodes.IsNull() && !p.DesiredNodes.IsUnknown() {
+		return p.DesiredNodes
+	}
+	if !p.Count.IsNull() && !p.Count.IsUnknown() {
+		return p.Count
+	}
+	return types.Int64Value(0)
+}
+
+// normalizeNodeCount keeps desired_nodes and its deprecated alias count in sync
+// so state written by older provider versions (count only) does not diff.
+func (p *KubernetesNodePoolModel) normalizeNodeCount() {
+	n := p.desiredNodes()
+	p.DesiredNodes = n
+	p.Count = n
+}
+
+// kubernetesNodeCountPlanModifier makes desired_nodes and count behave as aliases.
+// Whichever is configured supplies the planned value of the other; when neither
+// is configured both plan to 0.
+type kubernetesNodeCountPlanModifier struct {
+	sibling string
+}
+
+func (m kubernetesNodeCountPlanModifier) Description(_ context.Context) string {
+	return "Keeps desired_nodes and count in sync."
+}
+
+func (m kubernetesNodeCountPlanModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (m kubernetesNodeCountPlanModifier) PlanModifyInt64(ctx context.Context, req planmodifier.Int64Request, resp *planmodifier.Int64Response) {
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+
+	var sibling types.Int64
+	diags := req.Config.GetAttribute(ctx, req.Path.ParentPath().AtName(m.sibling), &sibling)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	switch {
+	case sibling.IsUnknown():
+		resp.PlanValue = types.Int64Unknown()
+	case !sibling.IsNull():
+		resp.PlanValue = sibling
+	default:
+		resp.PlanValue = types.Int64Value(0)
+	}
 }

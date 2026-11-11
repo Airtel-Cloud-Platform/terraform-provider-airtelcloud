@@ -132,6 +132,81 @@ func TestBuildKubernetesCreateRequest(t *testing.T) {
 	}
 }
 
+func TestKubernetesSchemaNodeCountAttributes(t *testing.T) {
+	t.Parallel()
+
+	var resp resource.SchemaResponse
+	(&KubernetesResource{}).Schema(context.Background(), resource.SchemaRequest{}, &resp)
+
+	pools := resp.Schema.Attributes["node_pools"].(schema.ListNestedAttribute)
+	desired, ok := pools.NestedObject.Attributes["desired_nodes"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatal("node_pools.desired_nodes must be an int64 attribute")
+	}
+	if !desired.Optional || !desired.Computed || desired.DeprecationMessage != "" {
+		t.Fatalf("unexpected desired_nodes: %+v", desired)
+	}
+	count, ok := pools.NestedObject.Attributes["count"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatal("node_pools.count must remain as a deprecated alias")
+	}
+	if count.DeprecationMessage == "" {
+		t.Fatal("node_pools.count must be deprecated")
+	}
+}
+
+func TestKubernetesNodePoolDesiredNodes(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		pool KubernetesNodePoolModel
+		want int64
+	}{
+		"desired_nodes wins": {KubernetesNodePoolModel{DesiredNodes: types.Int64Value(3), Count: types.Int64Null()}, 3},
+		"count alias":        {KubernetesNodePoolModel{DesiredNodes: types.Int64Null(), Count: types.Int64Value(2)}, 2},
+		"neither set":        {KubernetesNodePoolModel{DesiredNodes: types.Int64Null(), Count: types.Int64Null()}, 0},
+	}
+	for name, tc := range tests {
+		if got := tc.pool.desiredNodes().ValueInt64(); got != tc.want {
+			t.Errorf("%s: desiredNodes() = %d, want %d", name, got, tc.want)
+		}
+		pool := tc.pool
+		pool.normalizeNodeCount()
+		if pool.DesiredNodes.ValueInt64() != tc.want || pool.Count.ValueInt64() != tc.want {
+			t.Errorf("%s: normalize left desired_nodes=%v count=%v, want %d", name, pool.DesiredNodes, pool.Count, tc.want)
+		}
+	}
+}
+
+func TestBuildKubernetesCreateRequestDesiredNodes(t *testing.T) {
+	data := KubernetesResourceModel{
+		Name:                 types.StringValue("test-kms"),
+		K8sName:              types.StringValue("CKP"),
+		KubernetesVersion:    types.StringValue("v1.33.7"),
+		NetworkingName:       types.StringValue("calico"),
+		NetworkingVersion:    types.StringValue("v3.30.6"),
+		AvailabilityZone:     types.StringValue("S1"),
+		OSDistribution:       types.StringValue("Ubuntu"),
+		ProviderType:         types.StringValue(models.KubernetesProviderBYOH),
+		ControlPlaneProvider: types.StringValue(models.KubernetesControlPlaneKamaji),
+		NodePools: []KubernetesNodePoolModel{
+			{Flavor: types.StringValue("ccd.xLarge"), SubnetName: types.StringValue("a"), DesiredNodes: types.Int64Value(2)},
+			{Flavor: types.StringValue("ccd.xLarge"), SubnetName: types.StringValue("b"), Count: types.Int64Value(3)},
+		},
+	}
+
+	req := buildKubernetesCreateRequest(&data, map[string]string{"md0": "id-a", "md1": "id-b"})
+	if got := req.CKPProvider.BYOH.NodePools["md0"].Count; got != 2 {
+		t.Fatalf("md0 count = %d, want 2", got)
+	}
+	if got := req.CKPProvider.BYOH.NodePools["md1"].Count; got != 3 {
+		t.Fatalf("md1 count (deprecated alias) = %d, want 3", got)
+	}
+	if req.K8sInfo.WorkerNodes != 5 {
+		t.Fatalf("WorkerNodes = %d, want 5", req.K8sInfo.WorkerNodes)
+	}
+}
+
 func TestKubernetesTaintEffectAPIValue(t *testing.T) {
 	t.Parallel()
 

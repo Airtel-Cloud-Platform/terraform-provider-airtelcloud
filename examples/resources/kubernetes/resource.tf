@@ -63,10 +63,10 @@ resource "airtelcloud_kubernetes" "cluster" {
 
   node_pools = [
     {
-      flavor      = "ccd.xLarge"
-      flavor_type = "Compute dense"
-      subnet_name = var.subnet_name
-      count       = 0
+      flavor        = "ccd.xLarge"
+      flavor_type   = "Compute dense"
+      subnet_name   = var.subnet_name
+      desired_nodes = 0
       autoscaling = {
         enabled   = true
         max_nodes = 2
