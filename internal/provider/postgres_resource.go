@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -27,6 +28,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client"
@@ -56,32 +58,32 @@ type PostgresResource struct {
 
 // PostgresResourceModel is the Terraform state model. It is separate from API structs.
 type PostgresResourceModel struct {
-	ID               types.String         `tfsdk:"id"`
-	ClusterName      types.String         `tfsdk:"cluster_name"`
-	Description      types.String         `tfsdk:"description"`
-	Version          types.String         `tfsdk:"version"`
-	HighAvailability types.Bool           `tfsdk:"high_availability"`
-	NumReplicas      types.Int64          `tfsdk:"num_replicas"`
-	DatabaseName     types.String         `tfsdk:"database_name"`
-	PostgresUsername types.String         `tfsdk:"postgres_username"`
-	Password         types.String         `tfsdk:"password"`
-	IsSuperuser      types.Bool           `tfsdk:"is_superuser"`
-	NetworkType      types.String         `tfsdk:"network_type"`
-	ComputeSize      types.String         `tfsdk:"compute_size"`
-	StorageSize      types.Int64          `tfsdk:"storage_size"`
-	StorageType      types.String         `tfsdk:"storage_type"`
-	AvailabilityZone types.String         `tfsdk:"availability_zone"`
-	VPC              types.String         `tfsdk:"vpc"`
-	Subnet           types.String         `tfsdk:"subnet"`
-	CustomCIDR       types.List           `tfsdk:"custom_cidr"`
-	PGExtensions     types.List           `tfsdk:"pg_extensions"`
-	Labels           types.List           `tfsdk:"labels"`
-	Topology         types.String         `tfsdk:"topology"`
-	ConnectionString types.String         `tfsdk:"connection_string"`
-	CreatedAt        types.String         `tfsdk:"created_at"`
-	Status           types.String         `tfsdk:"status"`
-	Backup           *PostgresBackupModel `tfsdk:"backup"`
-	Timeouts         timeouts.Value       `tfsdk:"timeouts"`
+	ID               types.String   `tfsdk:"id"`
+	ClusterName      types.String   `tfsdk:"cluster_name"`
+	Description      types.String   `tfsdk:"description"`
+	Version          types.String   `tfsdk:"version"`
+	HighAvailability types.Bool     `tfsdk:"high_availability"`
+	NumReplicas      types.Int64    `tfsdk:"num_replicas"`
+	DatabaseName     types.String   `tfsdk:"database_name"`
+	PostgresUsername types.String   `tfsdk:"postgres_username"`
+	Password         types.String   `tfsdk:"password"`
+	IsSuperuser      types.Bool     `tfsdk:"is_superuser"`
+	NetworkType      types.String   `tfsdk:"network_type"`
+	ComputeSize      types.String   `tfsdk:"compute_size"`
+	StorageSize      types.Int64    `tfsdk:"storage_size"`
+	StorageType      types.String   `tfsdk:"storage_type"`
+	AvailabilityZone types.String   `tfsdk:"availability_zone"`
+	VPC              types.String   `tfsdk:"vpc"`
+	Subnet           types.String   `tfsdk:"subnet"`
+	CustomCIDR       types.List     `tfsdk:"custom_cidr"`
+	PGExtensions     types.List     `tfsdk:"pg_extensions"`
+	Labels           types.List     `tfsdk:"labels"`
+	Topology         types.String   `tfsdk:"topology"`
+	ConnectionString types.String   `tfsdk:"connection_string"`
+	CreatedAt        types.String   `tfsdk:"created_at"`
+	Status           types.String   `tfsdk:"status"`
+	Backup           types.Object   `tfsdk:"backup"`
+	Timeouts         timeouts.Value `tfsdk:"timeouts"`
 }
 
 // PostgresBackupModel is the nested backup block.
@@ -92,6 +94,26 @@ type PostgresBackupModel struct {
 	Retention        types.Int64  `tfsdk:"retention"`
 	ScheduleTime     types.String `tfsdk:"schedule_time"`
 	ScheduleDay      types.String `tfsdk:"schedule_day"`
+}
+
+func postgresBackupAttributeTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"enabled":           types.BoolType,
+		"protection_plan":   types.StringType,
+		"compression_level": types.Int64Type,
+		"retention":         types.Int64Type,
+		"schedule_time":     types.StringType,
+		"schedule_day":      types.StringType,
+	}
+}
+
+func postgresBackupFromObject(ctx context.Context, value types.Object) (*PostgresBackupModel, diag.Diagnostics) {
+	if value.IsNull() || value.IsUnknown() {
+		return nil, nil
+	}
+	var backup PostgresBackupModel
+	diags := value.As(ctx, &backup, basetypes.ObjectAsOptions{})
+	return &backup, diags
 }
 
 func (r *PostgresResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -382,18 +404,23 @@ func (r *PostgresResource) ValidateConfig(ctx context.Context, req resource.Vali
 		resp.Diagnostics.AddAttributeError(path.Root("password"), "Invalid password", msg)
 	}
 
-	if data.Backup != nil {
-		if msg := validatePostgresBackupScheduleTimeRequired(data.Backup); msg != "" {
+	backup, backupDiags := postgresBackupFromObject(ctx, data.Backup)
+	resp.Diagnostics.Append(backupDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if backup != nil {
+		if msg := validatePostgresBackupScheduleTimeRequired(backup); msg != "" {
 			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_time"), "Invalid schedule_time", msg)
 		}
-		if msg := validatePostgresBackupScheduleDayRequired(data.Backup); msg != "" {
+		if msg := validatePostgresBackupScheduleDayRequired(backup); msg != "" {
 			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_day"), "Invalid schedule_day", msg)
 		}
 
-		if msg := validatePostgresScheduleTime(data.Backup.ScheduleTime); msg != "" {
+		if msg := validatePostgresScheduleTime(backup.ScheduleTime); msg != "" {
 			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_time"), "Invalid schedule_time", msg)
 		}
-		if msg := validatePostgresScheduleDay(data.Backup.ScheduleDay); msg != "" {
+		if msg := validatePostgresScheduleDay(backup.ScheduleDay); msg != "" {
 			resp.Diagnostics.AddAttributeError(path.Root("backup").AtName("schedule_day"), "Invalid schedule_day", msg)
 		}
 	}
@@ -788,26 +815,31 @@ func (r *PostgresResource) buildPostgresCreateRequest(ctx context.Context, data 
 		createReq.NumReplicas = int(data.NumReplicas.ValueInt64())
 	}
 
-	if data.Backup != nil {
+	backupModel, backupDiags := postgresBackupFromObject(ctx, data.Backup)
+	diags.Append(backupDiags...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	if backupModel != nil {
 		backup := &models.PostgresBackupConfig{
-			Enabled:          data.Backup.Enabled.ValueBool(),
-			CompressionLevel: int(data.Backup.CompressionLevel.ValueInt64()),
-			Retention:        int(data.Backup.Retention.ValueInt64()),
+			Enabled:          backupModel.Enabled.ValueBool(),
+			CompressionLevel: int(backupModel.CompressionLevel.ValueInt64()),
+			Retention:        int(backupModel.Retention.ValueInt64()),
 		}
-		if !data.Backup.ScheduleTime.IsNull() && !data.Backup.ScheduleTime.IsUnknown() {
-			s := strings.TrimSpace(data.Backup.ScheduleTime.ValueString())
+		if !backupModel.ScheduleTime.IsNull() && !backupModel.ScheduleTime.IsUnknown() {
+			s := strings.TrimSpace(backupModel.ScheduleTime.ValueString())
 			if s != "" {
 				backup.ScheduleTime = s
 			}
 		}
-		if !data.Backup.ScheduleDay.IsNull() && !data.Backup.ScheduleDay.IsUnknown() {
-			s := strings.TrimSpace(data.Backup.ScheduleDay.ValueString())
+		if !backupModel.ScheduleDay.IsNull() && !backupModel.ScheduleDay.IsUnknown() {
+			s := strings.TrimSpace(backupModel.ScheduleDay.ValueString())
 			if s != "" {
 				backup.ScheduleDay = s
 			}
 		}
-		if !data.Backup.ProtectionPlan.IsNull() && data.Backup.ProtectionPlan.ValueString() != "" {
-			plan, err := r.client.ResolvePostgresProtectionPlan(ctx, data.Backup.ProtectionPlan.ValueString())
+		if !backupModel.ProtectionPlan.IsNull() && backupModel.ProtectionPlan.ValueString() != "" {
+			plan, err := r.client.ResolvePostgresProtectionPlan(ctx, backupModel.ProtectionPlan.ValueString())
 			if err != nil {
 				diags.AddError("Protection Plan Resolution Error", err.Error())
 				return nil, diags
@@ -876,16 +908,26 @@ func applyPostgresClusterToState(ctx context.Context, data *PostgresResourceMode
 		data.ConnectionString = types.StringValue(*cluster.ConnectionString)
 	}
 
-	if data.Backup != nil && cluster.Backup != nil {
+	backup, backupDiags := postgresBackupFromObject(ctx, data.Backup)
+	diags.Append(backupDiags...)
+	if diags.HasError() {
+		return diags
+	}
+	if backup != nil && cluster.Backup != nil {
 		if cluster.Backup.ScheduleTime != "" {
-			data.Backup.ScheduleTime = types.StringValue(cluster.Backup.ScheduleTime)
+			backup.ScheduleTime = types.StringValue(cluster.Backup.ScheduleTime)
 		}
 		if cluster.Backup.ScheduleDay != "" {
-			data.Backup.ScheduleDay = types.StringValue(cluster.Backup.ScheduleDay)
+			backup.ScheduleDay = types.StringValue(cluster.Backup.ScheduleDay)
 		}
 	}
 
 	if !refreshConfig {
+		if backup != nil {
+			value, valueDiags := types.ObjectValueFrom(ctx, postgresBackupAttributeTypes(), backup)
+			diags.Append(valueDiags...)
+			data.Backup = value
+		}
 		return diags
 	}
 
@@ -939,26 +981,31 @@ func applyPostgresClusterToState(ctx context.Context, data *PostgresResourceMode
 		data.Labels = list
 	}
 
-	if cluster.Backup != nil && (data.Backup != nil || cluster.Backup.Enabled) {
-		if data.Backup == nil {
-			data.Backup = &PostgresBackupModel{}
+	if cluster.Backup != nil && (backup != nil || cluster.Backup.Enabled) {
+		if backup == nil {
+			backup = &PostgresBackupModel{}
 		}
-		data.Backup.Enabled = types.BoolValue(cluster.Backup.Enabled)
+		backup.Enabled = types.BoolValue(cluster.Backup.Enabled)
 		if cluster.Backup.ProtectionPlan != "" {
-			data.Backup.ProtectionPlan = types.StringValue(cluster.Backup.ProtectionPlan)
+			backup.ProtectionPlan = types.StringValue(cluster.Backup.ProtectionPlan)
 		}
 		if cluster.Backup.CompressionLevel != 0 {
-			data.Backup.CompressionLevel = types.Int64Value(int64(cluster.Backup.CompressionLevel))
+			backup.CompressionLevel = types.Int64Value(int64(cluster.Backup.CompressionLevel))
 		}
 		if cluster.Backup.Retention != 0 {
-			data.Backup.Retention = types.Int64Value(int64(cluster.Backup.Retention))
+			backup.Retention = types.Int64Value(int64(cluster.Backup.Retention))
 		}
 		if cluster.Backup.ScheduleTime != "" {
-			data.Backup.ScheduleTime = types.StringValue(cluster.Backup.ScheduleTime)
+			backup.ScheduleTime = types.StringValue(cluster.Backup.ScheduleTime)
 		}
 		if cluster.Backup.ScheduleDay != "" {
-			data.Backup.ScheduleDay = types.StringValue(cluster.Backup.ScheduleDay)
+			backup.ScheduleDay = types.StringValue(cluster.Backup.ScheduleDay)
 		}
+	}
+	if backup != nil {
+		value, valueDiags := types.ObjectValueFrom(ctx, postgresBackupAttributeTypes(), backup)
+		diags.Append(valueDiags...)
+		data.Backup = value
 	}
 
 	return diags

@@ -4,12 +4,127 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
+
+func TestPostgresModelBackup(t *testing.T) {
+	ctx := context.Background()
+	var resp resource.SchemaResponse
+	(&PostgresResource{}).Schema(ctx, resource.SchemaRequest{}, &resp)
+	attributeTypes := resp.Schema.Type().(types.ObjectType).AttrTypes
+	attributes := make(map[string]attr.Value, len(attributeTypes))
+	for name, attributeType := range attributeTypes {
+		value, err := attributeType.ValueFromTerraform(ctx, tftypes.NewValue(attributeType.TerraformType(ctx), nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		attributes[name] = value
+	}
+	backupTypes := attributeTypes["backup"].(types.ObjectType).AttrTypes
+	knownBackup, diags := types.ObjectValueFrom(ctx, backupTypes, PostgresBackupModel{
+		Enabled:      types.BoolValue(true),
+		ScheduleTime: types.StringUnknown(),
+		ScheduleDay:  types.StringValue("monday"),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	for name, backup := range map[string]types.Object{
+		"unknown": types.ObjectUnknown(backupTypes),
+		"null":    types.ObjectNull(backupTypes),
+		"known":   knownBackup,
+	} {
+		t.Run(name, func(t *testing.T) {
+			attributes["backup"] = backup
+			value := types.ObjectValueMust(attributeTypes, attributes)
+			raw, err := value.ToTerraformValue(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := tfsdk.Config{Raw: raw, Schema: resp.Schema}
+			var data PostgresResourceModel
+			if diags := config.Get(ctx, &data); diags.HasError() {
+				t.Fatalf("backup must decode without conversion errors: %v", diags)
+			}
+			if !data.Backup.Equal(backup) {
+				t.Fatalf("backup = %v, want %v", data.Backup, backup)
+			}
+			decoded, diags := postgresBackupFromObject(ctx, data.Backup)
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			if backup.IsNull() || backup.IsUnknown() {
+				if decoded != nil {
+					t.Fatal("null or unknown backup must not be decoded into settings")
+				}
+			} else if decoded == nil || !decoded.Enabled.ValueBool() || !decoded.ScheduleTime.IsUnknown() {
+				t.Fatalf("known backup settings were not preserved: %#v", decoded)
+			}
+		})
+	}
+}
+
+func TestApplyPostgresBackupState(t *testing.T) {
+	ctx := context.Background()
+	configured, diags := types.ObjectValueFrom(ctx, postgresBackupAttributeTypes(), PostgresBackupModel{
+		Enabled:          types.BoolValue(true),
+		CompressionLevel: types.Int64Value(6),
+		Retention:        types.Int64Value(15),
+		ScheduleTime:     types.StringValue("01:00"),
+		ScheduleDay:      types.StringValue("monday"),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	tests := []struct {
+		name          string
+		backup        types.Object
+		refreshConfig bool
+		apiEnabled    bool
+		wantNull      bool
+	}{
+		{name: "create preserves omitted backup", backup: types.ObjectNull(postgresBackupAttributeTypes()), wantNull: true},
+		{name: "refresh preserves omitted disabled backup", backup: types.ObjectNull(postgresBackupAttributeTypes()), refreshConfig: true, wantNull: true},
+		{name: "create updates configured schedule", backup: configured, apiEnabled: true},
+		{name: "refresh updates configured backup", backup: configured, refreshConfig: true, apiEnabled: true},
+		{name: "import populates enabled backup", backup: types.ObjectNull(postgresBackupAttributeTypes()), refreshConfig: true, apiEnabled: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data := PostgresResourceModel{Backup: test.backup}
+			cluster := &models.PostgresCluster{Backup: &models.PostgresBackupConfig{
+				Enabled:          test.apiEnabled,
+				CompressionLevel: 6,
+				Retention:        15,
+				ScheduleTime:     "02:00",
+				ScheduleDay:      "tuesday",
+			}}
+			if diags := applyPostgresClusterToState(ctx, &data, cluster, test.refreshConfig); diags.HasError() {
+				t.Fatal(diags)
+			}
+			if data.Backup.IsNull() != test.wantNull {
+				t.Fatalf("backup null = %v, want %v", data.Backup.IsNull(), test.wantNull)
+			}
+			if test.wantNull {
+				return
+			}
+			backup, diags := postgresBackupFromObject(ctx, data.Backup)
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			if backup == nil || !backup.Enabled.ValueBool() || backup.Retention.ValueInt64() != 15 || backup.ScheduleTime.ValueString() != "02:00" || backup.ScheduleDay.ValueString() != "tuesday" {
+				t.Fatalf("unexpected backup state: %#v", backup)
+			}
+		})
+	}
+}
 
 func TestPostgresSchemaNetworkAccess(t *testing.T) {
 	t.Parallel()
