@@ -39,9 +39,9 @@ resource "airtelcloud_mariadb" "app" {
     schedule_day     = "Monday"
   }
 
-  security_group = {
-    allowed_ips = ["192.168.1.0/24"]
-  }
+  vpc         = "app-vpc"
+  subnet      = "app-subnet"
+  custom_cidr = ["192.168.1.0/24"]
 }
 ```
 
@@ -57,11 +57,12 @@ resource "airtelcloud_mariadb" "app" {
 - `compute_size` (String) - Flavor name from the mariadb flavors catalog (for example `db.maria.uhper.ccs.xlarge`). Resolved to flavor ID, vCPUs, and RAM internally. Forces new resource.
 - `storage_size` (Number) - Data volume size in GB. Must be at least 200. Forces new resource.
 - `availability_zone` (String) - Availability zone code (for example `S1`). Forces new resource.
-- `security_group` (Attributes) - Allowed client CIDRs. Required. Forces new resource.
-  - `allowed_ips` (List of String) - CIDR blocks allowed to connect. At least one non-empty CIDR is required.
 
 ### Optional
 
+- `vpc` (String) - VPC name used to resolve `subnet`. Must be set together with `subnet`. Forces new resource.
+- `subnet` (String) - Subnet name within `vpc`. Its `ipv4AddressSpace` is added to the API's allowed IPs. Forces new resource.
+- `custom_cidr` (List of String) - Custom allowed client CIDRs. Required when `vpc` and `subnet` are omitted. Can be combined with them; a matching subnet CIDR is not added twice. Entries must not be empty. Forces new resource.
 - `description` (String) - Cluster description. Forces new resource. When omitted or empty, the API is sent an empty string.
 - `high_availability` (Boolean) - When true, creates master-slave topology. Defaults to `false`. Forces new resource.
 - `num_replicas` (Number) - Slave replica count. Required and must be between `1` and `10` when `high_availability` is true. Defaults to `0`. Forces new resource.
@@ -79,6 +80,10 @@ resource "airtelcloud_mariadb" "app" {
 - `timeouts` (Block) - Create and delete timeouts. Defaults to 15 minutes.
 
 ## Attribute Reference
+
+Set `custom_cidr`, both `vpc` and `subnet`, or all three. VPC and subnet names are used only to resolve the client subnet CIDR; they do not select the cluster's provisioned network. The provider sends the combined CIDRs as `security_group.allowed_ips` internally.
+
+The former Terraform `security_group` attribute is no longer supported. Replace `security_group = { allowed_ips = [...] }` with `custom_cidr = [...]` in existing configurations.
 
 In addition to all arguments above, the following attributes are exported:
 
