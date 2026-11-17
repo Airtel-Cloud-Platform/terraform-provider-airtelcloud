@@ -272,7 +272,8 @@ func (c *Client) WaitForMSSQLReady(ctx context.Context, id string, timeout time.
 	}
 }
 
-// WaitForMSSQLDeleted polls GET until the instance returns 404.
+// WaitForMSSQLDeleted polls GET until the instance returns 404 or reports status Deleted.
+// The API keeps returning the instance with status Deleted after deletion instead of a 404.
 func (c *Client) WaitForMSSQLDeleted(ctx context.Context, id string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 
@@ -288,12 +289,15 @@ func (c *Client) WaitForMSSQLDeleted(ctx context.Context, id string, timeout tim
 			}
 			return err
 		}
+		if instance.Status == models.MSSQLStatusDeleted {
+			return nil
+		}
 		if instance.Status == models.MSSQLStatusFailed {
 			return mssqlStatusError(instance)
 		}
 
 		if !time.Now().Add(mssqlPollInterval).Before(deadline) {
-			return fmt.Errorf("mssql instance deletion timed out after %v", timeout)
+			return fmt.Errorf("mssql instance deletion timed out after %v (status %q)", timeout, instance.Status)
 		}
 
 		select {

@@ -229,3 +229,22 @@ func TestWaitForMSSQLDeleted(t *testing.T) {
 		t.Fatalf("WaitForMSSQLDeleted() error = %v", err)
 	}
 }
+
+func TestWaitForMSSQLDeletedStatusDeleted(t *testing.T) {
+	ms := testutil.NewMockServer()
+	defer ms.Close()
+	ms.AddHandler("GET", testMSSQLItem, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, models.MSSQLInstance{UUID: testMSSQLID, Status: models.MSSQLStatusDeleted})
+	})
+	if err := newPostgresTestClient(t, ms).WaitForMSSQLDeleted(context.Background(), testMSSQLID, time.Second); err != nil {
+		t.Fatalf("status Deleted should finish the wait, got %v", err)
+	}
+
+	ms.AddHandler("GET", testMSSQLItem, func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, models.MSSQLInstance{UUID: testMSSQLID, Status: models.MSSQLStatusDeleting})
+	})
+	err := newPostgresTestClient(t, ms).WaitForMSSQLDeleted(context.Background(), testMSSQLID, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "deletion timed out") {
+		t.Fatalf("Deleting should keep polling until timeout, got %v", err)
+	}
+}

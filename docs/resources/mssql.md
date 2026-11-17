@@ -11,7 +11,7 @@ Manages an Airtel Cloud MSSQL instance.
 
 Create, read, import, and delete are supported. Changing configuration forces a new instance. The API does not return the admin password. Set `custom_cidr`, or `vpc` and `subnet`, or both. Network names are not sent on create; subnet CIDR is resolved into API `security_group.allowed_ips`.
 
-Create waits until status is `Active`. `Requested`, `Initiated`, and `Resizing` are still in progress. `Failed` fails the operation. Delete keeps polling through `Deleting` and finishes when GET returns 404.
+Create waits until status is `Active`. `Requested`, `Initiated`, and `Resizing` are still in progress. `Failed` fails the operation. Delete keeps polling through `Deleting` and finishes when the API reports status `Deleted` or GET returns 404.
 
 ## Example Usage
 
@@ -21,6 +21,7 @@ variable "mssql_password" {
   sensitive = true
 }
 
+# Network access by VPC and subnet. The subnet CIDR is allowed to connect.
 resource "airtelcloud_mssql" "app" {
   name              = "hello"
   database_edition  = "web"
@@ -31,13 +32,33 @@ resource "airtelcloud_mssql" "app" {
   availability_zone = "S1"
   vpc               = "copper-vpc1"
   subnet            = "vlan-dbaas-91"
-  custom_cidr       = ["192.168.1.0/24"]
   db_name           = "AppDb"
   mssql_username    = "DbAdmin"
   password          = var.mssql_password
 
   backup = {
     protection_plan = "CH26_AZ1_PaaS_MSSQLIP_DAILY_FULL_2100_PP"
+  }
+}
+
+# Network access by custom CIDR only. `vpc` and `subnet` are not needed.
+# Create and delete each default to 30 minutes; raise them if your instance is slow (create typically takes about 14 minutes).
+resource "airtelcloud_mssql" "cidr_only" {
+  name              = "hello-cidr"
+  database_edition  = "web"
+  collation         = "SQL_Latin1_General_CP1_CI_AS"
+  features          = ["SQLENGINE"]
+  compute_size      = "db.mssqlweb.uhper.cci.xlarge"
+  storage_size      = 200
+  availability_zone = "S1"
+  custom_cidr       = ["192.168.1.0/24"]
+  db_name           = "AppDb"
+  mssql_username    = "DbAdmin"
+  password          = var.mssql_password
+
+  timeouts {
+    create = "45m"
+    delete = "45m"
   }
 }
 ```
@@ -68,7 +89,7 @@ resource "airtelcloud_mssql" "app" {
 - `enable_tde` (Boolean) Defaults to `false`.
 - `advanced_settings_enabled` (Boolean) Defaults to `false`. Maintenance windows are not set.
 - `backup` (Attributes) Set `protection_plan` to a netbackup catalog name. Omit the block to disable backup.
-- `timeouts` (Block) `create` and `delete`. Default is 15 minutes.
+- `timeouts` (Block) `create` and `delete`, for example `timeouts { create = "45m" delete = "45m" }`. Default is 30 minutes each. In testing, create took about 14 minutes and delete about 2 to 3 minutes.
 
 ### Read-Only
 
