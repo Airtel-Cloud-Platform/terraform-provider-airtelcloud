@@ -9,7 +9,7 @@ description: |-
 
 Manages an autoscaling group.
 
-Create, read, import, and delete are supported. Changing configuration forces a new group. The group is placed in the availability zone of the chosen subnet; Terraform rejects the plan when `availability_zone` does not match that subnet.
+Create, read, import, and delete are supported. Changing configuration forces a new group; only the `timeouts` block can change in place. The group is placed in the availability zone of the chosen subnet; Terraform rejects the plan when `availability_zone` does not match that subnet.
 
 ## Example Usage
 
@@ -171,9 +171,19 @@ In addition to all arguments above, the following attributes are exported:
 - `network_id` (String) - Resolved subnet ID.
 - `os_type` (String) - Image OS family. Empty for snapshot-based groups.
 
+## Notes
+
+- **Load balancer attachment uses separate inputs.** There is no nested block. Set `load_balancer_name`, `host_name`, `vip`, `protocol`, `port`, `routing_algorithm`, `pool_name`, `pool_port`, `max_connections`, `health_check_interval`, `health_check_timeout` and `pool_monitor_protocol` directly on the resource. They are all required together once `load_balancer_name` is set, and rejected if it is not.
+- **`disk_size` has a minimum of 20 GB.** It defaults to 100 GB, or 200 GB for Windows images, when not set.
+- **The default create and delete timeout is 15 minutes.** Override it with a `timeouts` block. A group normally becomes ready in under a minute and deletes in well under a minute.
+
 ## Availability zone
 
 A group is placed in the zone of the subnet given in `subnet`. Terraform rejects the plan when that zone differs from `availability_zone`. If the API still reports a different zone after create, Terraform keeps the configured value in state and emits a warning.
+
+## Deleting a group with a load balancer
+
+A group that has a virtual server cannot be deleted while that virtual server exists. On destroy, Terraform deletes the virtual server first, waits for it to disappear, and then deletes the group. The `delete` timeout applies to each wait.
 
 ## Import
 
@@ -181,4 +191,15 @@ A group is placed in the zone of the subnet given in `subnet`. Terraform rejects
 terraform import airtelcloud_asg.example <asg-uuid>
 ```
 
-Name-only values that the GET API cannot return (for example `keypair_name` and snapshot-based image fields) remain unknown after import until supplied in configuration.
+Write the configuration first, then import. After import Terraform recovers these arguments from the API, so they match your configuration and do not force a replacement:
+
+- `vpc_name`, `subnet`, `security_group_names`, `keypair_name`
+- `vip`, `protocol`, `port`, `routing_algorithm`, `pool_name`, `enable_persistance` (groups with a load balancer)
+
+The API does not report some arguments at all. The first plan after import shows them as an in-place update that only records your configured value in state; it changes nothing on the platform:
+
+- `disk_size`
+- `health_check_interval`, `health_check_timeout`, `pool_monitor_protocol`
+- `snapshot_name`
+
+Because these cannot be read back, Terraform cannot detect a difference between your configuration and the real group for them. Make sure they match how the group was created. A recovered value that differs from your configuration still forces a replacement.

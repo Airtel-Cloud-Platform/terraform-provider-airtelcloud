@@ -2,90 +2,110 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"reflect"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
+	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client"
+	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/client/testutil"
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
 
-func TestMariaDBSchemaRequiredSecurityGroup(t *testing.T) {
+func TestMariaDBSchemaNetworkAccess(t *testing.T) {
 	t.Parallel()
 
 	var resp resource.SchemaResponse
 	(&MariaDBResource{}).Schema(context.Background(), resource.SchemaRequest{}, &resp)
 
-	securityGroupAttr, ok := resp.Schema.Attributes["security_group"].(schema.SingleNestedAttribute)
-	if !ok {
-		t.Fatal("security_group attribute not found or not a single nested attribute")
+	if _, ok := resp.Schema.Attributes["security_group"]; ok {
+		t.Fatal("security_group must not be exposed")
 	}
-	if !securityGroupAttr.IsRequired() {
-		t.Fatal("security_group must be required")
-	}
-	if !securityGroupAttr.Attributes["allowed_ips"].IsRequired() {
-		t.Fatal("security_group.allowed_ips must be required")
+	for _, name := range []string{"vpc", "subnet", "custom_cidr"} {
+		attribute, ok := resp.Schema.Attributes[name]
+		if !ok || !attribute.IsOptional() {
+			t.Fatalf("%s must be optional", name)
+		}
 	}
 }
 
-func TestValidateMariaDBSecurityGroup(t *testing.T) {
-	tests := []struct {
-		name    string
-		group   *MariaDBSecurityGroupModel
-		wantErr bool
+func TestBuildMariaDBCreateRequestNetworkAccess(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		vpc        string
+		subnet     string
+		customCIDR []string
+		subnetCIDR string
+		wantIPs    []string
+		wantError  string
 	}{
-		{
-			name:    "nil group",
-			group:   nil,
-			wantErr: true,
-		},
-		{
-			name: "null allowed_ips",
-			group: &MariaDBSecurityGroupModel{
-				AllowedIPs: types.ListNull(types.StringType),
-			},
-			wantErr: true,
-		},
-		{
-			name: "unknown allowed_ips skips validation",
-			group: &MariaDBSecurityGroupModel{
-				AllowedIPs: types.ListUnknown(types.StringType),
-			},
-		},
-		{
-			name: "empty allowed_ips",
-			group: &MariaDBSecurityGroupModel{
-				AllowedIPs: types.ListValueMust(types.StringType, []attr.Value{}),
-			},
-			wantErr: true,
-		},
-		{
-			name: "one cidr",
-			group: &MariaDBSecurityGroupModel{
-				AllowedIPs: types.ListValueMust(types.StringType, []attr.Value{
-					types.StringValue("10.0.0.0/8"),
-				}),
-			},
-		},
-		{
-			name: "empty cidr value",
-			group: &MariaDBSecurityGroupModel{
-				AllowedIPs: types.ListValueMust(types.StringType, []attr.Value{
-					types.StringValue(" "),
-				}),
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			msg := validateMariaDBSecurityGroup(tt.group)
-			gotErr := msg != ""
-			if gotErr != tt.wantErr {
-				t.Fatalf("validateMariaDBSecurityGroup() error = %v (%q), wantErr %v", gotErr, msg, tt.wantErr)
+		{name: "custom only", customCIDR: []string{"192.168.1.0/24"}, wantIPs: []string{"192.168.1.0/24"}},
+		{name: "subnet only", vpc: "app-vpc", subnet: "app-subnet", subnetCIDR: "10.0.0.0/24", wantIPs: []string{"10.0.0.0/24"}},
+		{name: "both", vpc: "app-vpc", subnet: "app-subnet", subnetCIDR: "10.0.0.0/24", customCIDR: []string{"192.168.1.0/24"}, wantIPs: []string{"192.168.1.0/24", "10.0.0.0/24"}},
+		{name: "duplicate subnet CIDR", vpc: "app-vpc", subnet: "app-subnet", subnetCIDR: "10.0.0.0/24", customCIDR: []string{"10.0.0.0/24"}, wantIPs: []string{"10.0.0.0/24"}},
+		{name: "missing access", wantError: "Invalid Configuration"},
+		{name: "missing VPC", vpc: "missing", subnet: "app-subnet", wantError: "VPC Resolution Error"},
+		{name: "missing subnet", vpc: "app-vpc", subnet: "missing", wantError: "Subnet Resolution Error"},
+		{name: "empty subnet CIDR", vpc: "app-vpc", subnet: "app-subnet", subnetCIDR: " ", wantError: "Subnet Resolution Error"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := testutil.NewMockServer()
+			defer server.Close()
+			const databaseBase = "/api/v1/dbaas/domain/test-org/project/test-project"
+			const networkBase = "/api/network-manager/v1/domain/test-org/project/test-project"
+			responses := map[string]interface{}{
+				"/api/auth-mgmt/v1/zones":               models.MariaDBZoneListResponse{Items: []models.MariaDBZone{{AZCode: "S1", IsActive: true}}},
+				databaseBase + "/mariadb/versions":      []models.MariaDBVersion{{Version: "10.6", Supported: true}},
+				databaseBase + "/mariadb/flavors":       []models.MariaDBFlavor{{ID: 290, Name: "db.maria.uhper.ccs.xlarge", RAM: 16, IsActive: true}},
+				databaseBase + "/mariadb/topologies":    []models.MariaDBTopology{{Topology: models.MariaDBTopologyMaster}},
+				databaseBase + "/mssql/volumetypes":     []models.MariaDBVolumeType{{ID: 10, Name: "backend", Label: "High Performance", IsActive: true}},
+				networkBase + "/networks":               models.VPCListResponse{Items: []models.VPC{{ID: "vpc-id", Name: "app-vpc"}}},
+				networkBase + "/network/vpc-id/subnets": models.SubnetListResponse{Items: []models.Subnet{{Name: "app-subnet", IPv4AddressSpace: test.subnetCIDR}}},
+			}
+			for endpoint, response := range responses {
+				server.AddHandler("GET", endpoint, func(writer http.ResponseWriter, request *http.Request) {
+					if test.vpc == "" && request.URL.Path == networkBase+"/networks" {
+						t.Error("custom CIDRs must not trigger VPC lookup")
+					}
+					writer.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(writer).Encode(response); err != nil {
+						t.Errorf("encode response: %v", err)
+					}
+				})
+			}
+			apiClient, err := client.NewClient(server.URL, "test-api-key", "test-api-secret", "south", "test-org", "test-project", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			cidrs, diags := types.ListValueFrom(context.Background(), types.StringType, test.customCIDR)
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			data := MariaDBResourceModel{
+				ClusterName: types.StringValue("app-db"), Version: types.StringValue("10.6"),
+				AvailabilityZone: types.StringValue("S1"), ComputeSize: types.StringValue("db.maria.uhper.ccs.xlarge"),
+				StorageType: types.StringValue("High Performance"), StorageSize: types.Int64Value(200),
+				VPC: types.StringValue(test.vpc), Subnet: types.StringValue(test.subnet), CustomCIDR: cidrs,
+			}
+			createRequest, diags := (&MariaDBResource{client: apiClient}).buildMariaDBCreateRequest(context.Background(), &data)
+			if test.wantError != "" {
+				if !diags.HasError() || diags[0].Summary() != test.wantError {
+					t.Fatalf("diagnostics = %v, want %s", diags, test.wantError)
+				}
+				return
+			}
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			if createRequest.SecurityGroup == nil || !reflect.DeepEqual(createRequest.SecurityGroup.AllowedIPs, test.wantIPs) {
+				t.Fatalf("security group = %+v, want allowed IPs %v", createRequest.SecurityGroup, test.wantIPs)
+			}
+			if !data.CustomCIDR.Equal(cidrs) {
+				t.Fatal("resolved subnet must not modify configured custom CIDRs")
 			}
 		})
 	}

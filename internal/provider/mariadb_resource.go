@@ -73,6 +73,9 @@ type MariaDBResourceModel struct {
 	StorageSize      types.Int64    `tfsdk:"storage_size"`
 	StorageType      types.String   `tfsdk:"storage_type"`
 	AvailabilityZone types.String   `tfsdk:"availability_zone"`
+	VPC              types.String   `tfsdk:"vpc"`
+	Subnet           types.String   `tfsdk:"subnet"`
+	CustomCIDR       types.List     `tfsdk:"custom_cidr"`
 	Labels           types.List     `tfsdk:"labels"`
 	Topology         types.String   `tfsdk:"topology"`
 	ConnectionString types.String   `tfsdk:"connection_string"`
@@ -81,7 +84,6 @@ type MariaDBResourceModel struct {
 	Users            types.String   `tfsdk:"users"`
 	Status           types.String   `tfsdk:"status"`
 	Backup           types.Object   `tfsdk:"backup"`
-	SecurityGroup    types.Object   `tfsdk:"security_group"`
 	Timeouts         timeouts.Value `tfsdk:"timeouts"`
 }
 
@@ -93,11 +95,6 @@ type MariaDBBackupModel struct {
 	Retention        types.Int64  `tfsdk:"retention"`
 	ScheduleTime     types.String `tfsdk:"schedule_time"`
 	ScheduleDay      types.String `tfsdk:"schedule_day"`
-}
-
-// MariaDBSecurityGroupModel is the nested security_group block.
-type MariaDBSecurityGroupModel struct {
-	AllowedIPs types.List `tfsdk:"allowed_ips"`
 }
 
 func (r *MariaDBResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -332,18 +329,26 @@ func (r *MariaDBResource) Schema(ctx context.Context, req resource.SchemaRequest
 					},
 				},
 			},
-			"security_group": schema.SingleNestedAttribute{
-				MarkdownDescription: "Allowed client CIDRs. Changes force a new cluster.",
-				Required:            true,
-				PlanModifiers: []planmodifier.Object{
-					objectplanmodifier.RequiresReplace(),
+			"vpc": schema.StringAttribute{
+				MarkdownDescription: "VPC name used to resolve `subnet`. Required with `subnet` when `custom_cidr` is omitted. Not sent on create.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
 				},
-				Attributes: map[string]schema.Attribute{
-					"allowed_ips": schema.ListAttribute{
-						ElementType:         types.StringType,
-						MarkdownDescription: "CIDR blocks allowed to connect (for example `192.168.1.0/24`). At least one CIDR is required.",
-						Required:            true,
-					},
+			},
+			"subnet": schema.StringAttribute{
+				MarkdownDescription: "Subnet name within `vpc`. Required with `vpc` when `custom_cidr` is omitted. Resolved `ipv4AddressSpace` is sent as an allowed IP. Not sent on create.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"custom_cidr": schema.ListAttribute{
+				ElementType:         types.StringType,
+				MarkdownDescription: "Custom CIDR blocks sent as `security_group.allowed_ips`. Required when `vpc` and `subnet` are omitted. Can be set together with `vpc`/`subnet`.",
+				Optional:            true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
 				},
 			},
 		},
@@ -405,47 +410,9 @@ func (r *MariaDBResource) ValidateConfig(ctx context.Context, req resource.Valid
 		}
 	}
 
-	// Skip when unknown (common under modules during ValidateConfig).
-	if data.SecurityGroup.IsUnknown() {
-		return
+	if msg := validatePostgresNetworkAccess(data.VPC, data.Subnet, data.CustomCIDR); msg != "" {
+		resp.Diagnostics.AddError("Invalid Configuration", msg)
 	}
-	if data.SecurityGroup.IsNull() {
-		resp.Diagnostics.AddAttributeError(path.Root("security_group"), "Invalid security_group", "security_group is required.")
-		return
-	}
-
-	group, groupDiags := expandMariaDBSecurityGroup(ctx, data.SecurityGroup)
-	resp.Diagnostics.Append(groupDiags...)
-	if group != nil {
-		if msg := validateMariaDBSecurityGroup(group); msg != "" {
-			resp.Diagnostics.AddAttributeError(path.Root("security_group"), "Invalid security_group", msg)
-		}
-	}
-}
-
-func validateMariaDBSecurityGroup(group *MariaDBSecurityGroupModel) string {
-	if group == nil {
-		return "security_group is required."
-	}
-	if group.AllowedIPs.IsUnknown() {
-		return ""
-	}
-	if group.AllowedIPs.IsNull() {
-		return "security_group.allowed_ips is required."
-	}
-	var ips []string
-	if diags := group.AllowedIPs.ElementsAs(context.Background(), &ips, false); diags.HasError() {
-		return "security_group.allowed_ips is invalid."
-	}
-	if len(ips) == 0 {
-		return "security_group.allowed_ips must contain at least one CIDR."
-	}
-	for _, ip := range ips {
-		if strings.TrimSpace(ip) == "" {
-			return "security_group.allowed_ips cannot contain empty values."
-		}
-	}
-	return ""
 }
 
 func validateMariaDBReplicas(ha types.Bool, replicas types.Int64) string {
@@ -837,21 +804,37 @@ func (r *MariaDBResource) buildMariaDBCreateRequest(ctx context.Context, data *M
 		}
 	}
 
-	if !data.SecurityGroup.IsNull() && !data.SecurityGroup.IsUnknown() {
-		group, groupDiags := expandMariaDBSecurityGroup(ctx, data.SecurityGroup)
-		diags.Append(groupDiags...)
-		if diags.HasError() {
+	allowedIPs, ipDiags := stringSliceFromList(ctx, data.CustomCIDR)
+	diags.Append(ipDiags...)
+	if diags.HasError() {
+		return nil, diags
+	}
+
+	hasNetwork := !data.VPC.IsNull() && strings.TrimSpace(data.VPC.ValueString()) != "" &&
+		!data.Subnet.IsNull() && strings.TrimSpace(data.Subnet.ValueString()) != ""
+	if hasNetwork {
+		vpcID, err := r.client.ResolveVPCID(ctx, data.VPC.ValueString())
+		if err != nil {
+			diags.AddError("VPC Resolution Error", err.Error())
 			return nil, diags
 		}
-		if group != nil {
-			allowedIPs, ipDiags := stringSliceFromList(ctx, group.AllowedIPs)
-			diags.Append(ipDiags...)
-			if diags.HasError() {
-				return nil, diags
-			}
-			createReq.SecurityGroup = &models.MariaDBSecurityGroup{AllowedIPs: allowedIPs}
+		subnet, err := r.client.ResolveSubnet(ctx, vpcID, data.Subnet.ValueString())
+		if err != nil {
+			diags.AddError("Subnet Resolution Error", err.Error())
+			return nil, diags
 		}
+		subnetCIDR := strings.TrimSpace(subnet.IPv4AddressSpace)
+		if subnetCIDR == "" {
+			diags.AddError("Subnet Resolution Error", fmt.Sprintf("subnet %q has empty ipv4AddressSpace", data.Subnet.ValueString()))
+			return nil, diags
+		}
+		allowedIPs = appendUniqueString(allowedIPs, subnetCIDR)
 	}
+	if len(allowedIPs) == 0 {
+		diags.AddError("Invalid Configuration", "set custom_cidr, or set both vpc and subnet, or set both.")
+		return nil, diags
+	}
+	createReq.SecurityGroup = &models.MariaDBSecurityGroup{AllowedIPs: allowedIPs}
 
 	return createReq, diags
 }
@@ -987,19 +970,6 @@ func expandMariaDBBackup(ctx context.Context, obj types.Object) (*MariaDBBackupM
 	return &model, diags
 }
 
-func expandMariaDBSecurityGroup(ctx context.Context, obj types.Object) (*MariaDBSecurityGroupModel, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	if obj.IsNull() || obj.IsUnknown() {
-		return nil, diags
-	}
-	var model MariaDBSecurityGroupModel
-	diags.Append(obj.As(ctx, &model, basetypes.ObjectAsOptions{})...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	return &model, diags
-}
-
 func flattenMariaDBBackup(ctx context.Context, model *MariaDBBackupModel) (types.Object, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if model == nil {
@@ -1018,11 +988,5 @@ func mariadbBackupAttrTypes() map[string]attr.Type {
 		"retention":         types.Int64Type,
 		"schedule_time":     types.StringType,
 		"schedule_day":      types.StringType,
-	}
-}
-
-func mariadbSecurityGroupAttrTypes() map[string]attr.Type {
-	return map[string]attr.Type{
-		"allowed_ips": types.ListType{ElemType: types.StringType},
 	}
 }

@@ -145,11 +145,14 @@ func (r *ComputeSnapshotResource) ValidateConfig(ctx context.Context, req resour
 		return
 	}
 
-	if !data.ComputeID.IsNull() && !data.ComputeName.IsNull() {
+	computeIDSet := !data.ComputeID.IsNull() && !data.ComputeID.IsUnknown()
+	computeNameSet := !data.ComputeName.IsNull() && !data.ComputeName.IsUnknown()
+
+	if computeIDSet && computeNameSet {
 		resp.Diagnostics.AddError("Invalid Configuration",
 			"Only one of compute_id or compute_name may be specified, not both.")
 	}
-	if data.ComputeID.IsNull() && data.ComputeName.IsNull() {
+	if !computeIDSet && !computeNameSet && !data.ComputeID.IsUnknown() && !data.ComputeName.IsUnknown() {
 		resp.Diagnostics.AddError("Invalid Configuration",
 			"One of compute_id or compute_name must be specified.")
 	}

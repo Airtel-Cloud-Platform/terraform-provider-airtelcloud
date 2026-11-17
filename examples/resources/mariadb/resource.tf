@@ -72,9 +72,7 @@ resource "airtelcloud_mariadb" "app" {
     schedule_day    = "Monday"
   }
 
-  security_group = {
-    allowed_ips = ["192.168.1.0/24"]
-  }
+  custom_cidr = ["192.168.1.0/24"]
 }
 
 output "mariadb_id" {

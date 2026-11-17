@@ -97,6 +97,49 @@ type ASGRuleModel struct {
 	TargetValue     types.Int64  `tfsdk:"target_value"`
 }
 
+const adoptModifierDescription = "Forces replacement when the value changes, but adopts a configured value that the API cannot report (state is null after import) without replacing the group."
+
+// replacesUnlessAdopting decides whether a changed value forces replacement.
+//
+// The API does not return every argument, so an imported group has some of them
+// null in state. Replacing a live group because of that would be destructive
+// and the real value is unknowable, so a null state value adopts the
+// configuration instead. requireConfig additionally skips Optional+Computed
+// attributes that are not configured.
+func replacesUnlessAdopting(state, config attr.Value, requireConfig bool) bool {
+	if state.IsNull() {
+		return false
+	}
+	if requireConfig && config.IsNull() {
+		return false
+	}
+	return true
+}
+
+func replaceUnlessAdoptingString(requireConfig bool) planmodifier.String {
+	return stringplanmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+		resp.RequiresReplace = replacesUnlessAdopting(req.StateValue, req.ConfigValue, requireConfig)
+	}, adoptModifierDescription, adoptModifierDescription)
+}
+
+func replaceUnlessAdoptingInt64(requireConfig bool) planmodifier.Int64 {
+	return int64planmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.Int64Request, resp *int64planmodifier.RequiresReplaceIfFuncResponse) {
+		resp.RequiresReplace = replacesUnlessAdopting(req.StateValue, req.ConfigValue, requireConfig)
+	}, adoptModifierDescription, adoptModifierDescription)
+}
+
+func replaceUnlessAdoptingBool() planmodifier.Bool {
+	return boolplanmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.BoolRequest, resp *boolplanmodifier.RequiresReplaceIfFuncResponse) {
+		resp.RequiresReplace = replacesUnlessAdopting(req.StateValue, req.ConfigValue, false)
+	}, adoptModifierDescription, adoptModifierDescription)
+}
+
+func replaceUnlessAdoptingList(requireConfig bool) planmodifier.List {
+	return listplanmodifier.RequiresReplaceIf(func(_ context.Context, req planmodifier.ListRequest, resp *listplanmodifier.RequiresReplaceIfFuncResponse) {
+		resp.RequiresReplace = replacesUnlessAdopting(req.StateValue, req.ConfigValue, requireConfig)
+	}, adoptModifierDescription, adoptModifierDescription)
+}
+
 func (r *ASGResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_asg"
 }
@@ -105,6 +148,11 @@ func (r *ASGResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp
 	replaceString := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	replaceInt := []planmodifier.Int64{int64planmodifier.RequiresReplace()}
 	replaceList := []planmodifier.List{listplanmodifier.RequiresReplace()}
+	// adopt* are for arguments the API cannot report back (or that import only
+	// partly recovers): see replacesUnlessAdopting.
+	adoptString := []planmodifier.String{replaceUnlessAdoptingString(false)}
+	adoptInt := []planmodifier.Int64{replaceUnlessAdoptingInt64(false)}
+	adoptBool := []planmodifier.Bool{replaceUnlessAdoptingBool()}
 	rule := schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
 		"metric_type":      schema.StringAttribute{Required: true},
 		"aggregation_type": schema.StringAttribute{Required: true},
@@ -114,10 +162,10 @@ func (r *ASGResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp
 		MarkdownDescription: "Manages an Airtel Cloud autoscaling group. Configuration changes replace the group.",
 		Attributes: map[string]schema.Attribute{
 			"id":                   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"vpc_name":             schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.RegexMatches(asgVPCNamePattern, "must contain only lowercase letters, digits, and hyphens")}, PlanModifiers: replaceString},
+			"vpc_name":             schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.RegexMatches(asgVPCNamePattern, "must contain only lowercase letters, digits, and hyphens")}, PlanModifiers: adoptString},
 			"vpc_id":               schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"availability_zone":    schema.StringAttribute{Required: true, PlanModifiers: replaceString},
-			"subnet":               schema.StringAttribute{Required: true, PlanModifiers: replaceString},
+			"subnet":               schema.StringAttribute{Required: true, PlanModifiers: adoptString},
 			"network_id":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":                 schema.StringAttribute{Required: true, Validators: []validator.String{stringvalidator.LengthAtLeast(3)}, PlanModifiers: replaceString},
 			"minimum_size":         schema.Int64Attribute{Required: true, Validators: []validator.Int64{int64validator.AtLeast(1)}, PlanModifiers: replaceInt},
@@ -135,33 +183,33 @@ func (r *ASGResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp
 			"flavor_name":          schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplaceIfConfigured(), stringplanmodifier.UseStateForUnknown()}},
 			"image_id":             schema.Int64Attribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.Int64{int64planmodifier.RequiresReplaceIfConfigured(), int64planmodifier.UseStateForUnknown()}},
 			"image_name":           schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplaceIfConfigured(), stringplanmodifier.UseStateForUnknown()}},
-			"snapshot_name":        schema.StringAttribute{Optional: true, PlanModifiers: replaceString},
+			"snapshot_name":        schema.StringAttribute{Optional: true, PlanModifiers: adoptString},
 			"security_group_ids":   schema.ListAttribute{ElementType: types.Int64Type, Optional: true, Computed: true, Validators: []validator.List{listvalidator.SizeAtMost(1)}, PlanModifiers: []planmodifier.List{listplanmodifier.RequiresReplaceIfConfigured(), listplanmodifier.UseStateForUnknown()}},
-			"security_group_names": schema.ListAttribute{ElementType: types.StringType, Optional: true, Computed: true, Validators: []validator.List{listvalidator.SizeAtMost(1)}, PlanModifiers: []planmodifier.List{listplanmodifier.RequiresReplaceIfConfigured(), listplanmodifier.UseStateForUnknown()}},
+			"security_group_names": schema.ListAttribute{ElementType: types.StringType, Optional: true, Computed: true, Validators: []validator.List{listvalidator.SizeAtMost(1)}, PlanModifiers: []planmodifier.List{replaceUnlessAdoptingList(true), listplanmodifier.UseStateForUnknown()}},
 			"keypair_id":           schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplaceIfConfigured(), stringplanmodifier.UseStateForUnknown()}},
-			"keypair_name":         schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplaceIfConfigured(), stringplanmodifier.UseStateForUnknown()}},
-			"os_type":              schema.StringAttribute{Computed: true},
+			"keypair_name":         schema.StringAttribute{Optional: true, Computed: true, PlanModifiers: []planmodifier.String{replaceUnlessAdoptingString(true), stringplanmodifier.UseStateForUnknown()}},
+			"os_type":              schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"disk_size": schema.Int64Attribute{
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Boot volume size in GB. Defaults to 100, or 200 for Windows images.",
 				Validators:          []validator.Int64{int64validator.AtLeast(20)},
-				PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace(), int64planmodifier.UseStateForUnknown()},
+				PlanModifiers:       []planmodifier.Int64{replaceUnlessAdoptingInt64(false), int64planmodifier.UseStateForUnknown()},
 			},
 			"labels":                schema.ListAttribute{ElementType: types.StringType, Optional: true, PlanModifiers: replaceList},
 			"load_balancer_name":    schema.StringAttribute{Optional: true, PlanModifiers: replaceString},
 			"host_name":             schema.StringAttribute{Optional: true, PlanModifiers: replaceString},
-			"vip":                   schema.StringAttribute{Optional: true, PlanModifiers: replaceString},
-			"protocol":              schema.StringAttribute{Optional: true, PlanModifiers: replaceString},
-			"port":                  schema.Int64Attribute{Optional: true, PlanModifiers: replaceInt},
-			"routing_algorithm":     schema.StringAttribute{Optional: true, PlanModifiers: replaceString},
-			"enable_persistance":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()}},
-			"pool_name":             schema.StringAttribute{Optional: true, PlanModifiers: replaceString},
+			"vip":                   schema.StringAttribute{Optional: true, PlanModifiers: adoptString},
+			"protocol":              schema.StringAttribute{Optional: true, PlanModifiers: adoptString},
+			"port":                  schema.Int64Attribute{Optional: true, PlanModifiers: adoptInt},
+			"routing_algorithm":     schema.StringAttribute{Optional: true, PlanModifiers: adoptString},
+			"enable_persistance":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(false), PlanModifiers: adoptBool},
+			"pool_name":             schema.StringAttribute{Optional: true, PlanModifiers: adoptString},
 			"pool_port":             schema.Int64Attribute{Optional: true, PlanModifiers: replaceInt},
 			"max_connections":       schema.Int64Attribute{Optional: true, PlanModifiers: replaceInt},
-			"health_check_interval": schema.Int64Attribute{Optional: true, Validators: []validator.Int64{int64validator.AtLeast(1)}, PlanModifiers: replaceInt},
-			"health_check_timeout":  schema.Int64Attribute{Optional: true, Validators: []validator.Int64{int64validator.AtLeast(1)}, PlanModifiers: replaceInt},
-			"pool_monitor_protocol": schema.StringAttribute{Optional: true, PlanModifiers: replaceString},
+			"health_check_interval": schema.Int64Attribute{Optional: true, Validators: []validator.Int64{int64validator.AtLeast(1)}, PlanModifiers: adoptInt},
+			"health_check_timeout":  schema.Int64Attribute{Optional: true, Validators: []validator.Int64{int64validator.AtLeast(1)}, PlanModifiers: adoptInt},
+			"pool_monitor_protocol": schema.StringAttribute{Optional: true, PlanModifiers: adoptString},
 		},
 		Blocks: map[string]schema.Block{"timeouts": timeouts.Block(ctx, timeouts.Opts{Create: true, Delete: true})},
 	}
@@ -229,8 +277,11 @@ func (r *ASGResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	var scoped *client.Client
 	if r.client != nil {
-		resp.Diagnostics.Append(r.validateASGSubnetZone(ctx, &plan)...)
+		var diags diag.Diagnostics
+		scoped, diags = r.validateASGSubnetZone(ctx, &plan)
+		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
@@ -238,19 +289,49 @@ func (r *ASGResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 	if intSet(plan.DiskSize) {
 		return
 	}
-	if r.client == nil {
-		plan.DiskSize = types.Int64Unknown()
-		resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
-		return
-	}
-	osType, err := r.resolveASGOSType(ctx, &plan)
-	if err != nil {
+	osType, ok := r.plannedASGOSType(ctx, &plan, scoped)
+	if !ok {
 		plan.DiskSize = types.Int64Unknown()
 		resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 		return
 	}
 	plan.DiskSize = types.Int64Value(defaultASGDiskSize(osType))
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+}
+
+// plannedASGOSType finds the OS family used to pick the default boot volume
+// size. ok is false when it cannot be determined yet, in which case disk_size
+// stays unknown until apply.
+//
+// Order: a snapshot has no image OS; an OS already carried over from state (set
+// on create and on import) needs no API call; otherwise the image is looked up
+// with the zone- and subnet-scoped client. The image list is only served for a
+// scoped client, so an unscoped lookup always fails with 404.
+func (r *ASGResource) plannedASGOSType(ctx context.Context, data *ASGResourceModel, scoped *client.Client) (string, bool) {
+	if stringSet(data.SnapshotName) {
+		return "", true
+	}
+	if stringSet(data.OSType) {
+		return data.OSType.ValueString(), true
+	}
+	// image_id and image_name are Optional+Computed, so whichever one is not
+	// configured is unknown; only the configured one is usable.
+	id := int64(0)
+	if intSet(data.ImageID) {
+		id = data.ImageID.ValueInt64()
+	}
+	name := ""
+	if stringSet(data.ImageName) {
+		name = data.ImageName.ValueString()
+	}
+	if scoped == nil || (id == 0 && name == "") {
+		return "", false
+	}
+	img, err := scoped.ResolveImage(ctx, id, name)
+	if err != nil {
+		return "", false
+	}
+	return img.OSFamily(), true
 }
 
 func (r *ASGResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -302,11 +383,22 @@ func (r *ASGResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		return
 	}
 	resp.Diagnostics.Append(applyASGToState(ctx, &data, group)...)
+	resp.Diagnostics.Append(r.fillASGImportedFields(ctx, &data, group)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func (r *ASGResource) Update(_ context.Context, _ resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Update Not Supported", "Changes to airtelcloud_asg force replacement.")
+// Update never calls the API: the platform has no update endpoint, and every
+// argument that changes the group forces replacement. What reaches Update is a
+// change to the timeouts block, or an imported group adopting a configured value
+// the API could not report (see replacesUnlessAdopting). Both are state only.
+func (r *ASGResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var data ASGResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	settleASGComputed(&data)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 func (r *ASGResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -320,7 +412,9 @@ func (r *ASGResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.DeleteAutoScalingGroup(ctx, data.ID.ValueString()); err != nil && !client.IsNotFoundError(err) {
+	// A group attached to a load balancer cannot be deleted while its virtual
+	// server exists, so that is removed first.
+	if err := r.client.DeleteAutoScalingGroupWithVirtualServer(ctx, data.ID.ValueString(), timeout); err != nil && !client.IsNotFoundError(err) {
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to delete autoscaling group: %s", err))
 		return
 	}
@@ -520,6 +614,106 @@ func applyASGToState(ctx context.Context, data *ASGResourceModel, group *models.
 	return diags
 }
 
+// fillASGImportedFields recovers arguments the group GET does not return by
+// name, so an imported group matches its configuration instead of showing a
+// forced replacement. It only fills values that are still unset, so on a group
+// Terraform created it makes no calls once state is populated.
+//
+// What the API cannot give back at all (disk_size, health_check_interval,
+// health_check_timeout, pool_monitor_protocol, snapshot_name) is left null and
+// adopted from configuration by the replaceUnlessAdopting plan modifiers. A
+// failed lookup is a warning, never an error: the value is then adopted too.
+func (r *ASGResource) fillASGImportedFields(ctx context.Context, data *ASGResourceModel, group *models.AutoScalingGroup) diag.Diagnostics {
+	var diags diag.Diagnostics
+	warn := func(what string, err error) {
+		diags.AddWarning("Unable to recover "+what,
+			fmt.Sprintf("%s could not be read from the API and will be taken from configuration: %s", what, err))
+	}
+
+	if !stringSet(data.VPCName) && group.VPCID != "" {
+		if vpc, err := r.client.GetVPC(ctx, group.VPCID); err != nil {
+			warn("vpc_name", err)
+		} else if vpc.Name != "" {
+			data.VPCName = types.StringValue(vpc.Name)
+		}
+	}
+
+	if !stringSet(data.Subnet) && group.VPCID != "" && group.NetworkID != "" {
+		if subnets, err := r.client.ListSubnets(ctx, group.VPCID); err != nil {
+			warn("subnet", err)
+		} else {
+			for _, s := range subnets.Items {
+				if s.SubnetID == group.NetworkID {
+					data.Subnet = types.StringValue(s.Name)
+					break
+				}
+			}
+		}
+	}
+
+	if data.SecurityGroupNames.IsNull() && group.SecurityGroupID != 0 {
+		if sgs, err := r.client.WithAvailabilityZone(group.AZName).ListSecurityGroupsDetailed(ctx); err != nil {
+			warn("security_group_names", err)
+		} else {
+			for _, sg := range sgs {
+				if int64(sg.ID) == group.SecurityGroupID {
+					data.SecurityGroupNames, _ = types.ListValueFrom(ctx, types.StringType, []string{sg.SecurityGroupName})
+					break
+				}
+			}
+		}
+	}
+
+	if !stringSet(data.KeypairName) && stringSet(data.KeypairID) {
+		if keypairs, err := r.client.ListKeypairs(ctx); err != nil {
+			warn("keypair_name", err)
+		} else {
+			for _, kp := range keypairs {
+				if kp.ID == data.KeypairID.ValueString() {
+					data.KeypairName = types.StringValue(kp.Name)
+					break
+				}
+			}
+		}
+	}
+
+	if data.EnablePersistence.IsNull() || data.EnablePersistence.IsUnknown() {
+		data.EnablePersistence = types.BoolValue(false)
+	}
+
+	// The group response only names the virtual server; its listener settings
+	// come from the virtual server itself.
+	if group.VirtualServer.ID != "" && !stringSet(data.VIP) {
+		vs, err := r.client.GetAutoScalingGroupVirtualServer(ctx, group)
+		if err != nil {
+			warn("the load balancer virtual server settings", err)
+		} else if vs != nil {
+			if vs.VIP != "" {
+				data.VIP = types.StringValue(vs.VIP)
+			}
+			if !stringSet(data.Protocol) && vs.Protocol != "" {
+				data.Protocol = types.StringValue(vs.Protocol)
+			}
+			if !intSet(data.Port) && vs.Port != 0 {
+				data.Port = types.Int64Value(int64(vs.Port))
+			}
+			if !stringSet(data.RoutingAlgorithm) && vs.RoutingAlgorithm != "" {
+				data.RoutingAlgorithm = types.StringValue(vs.RoutingAlgorithm)
+			}
+			if !stringSet(data.PoolName) {
+				for _, pool := range vs.Pools {
+					if pool.PoolName != "" {
+						data.PoolName = types.StringValue(pool.PoolName)
+						break
+					}
+				}
+			}
+			data.EnablePersistence = types.BoolValue(vs.PersistenceEnabled)
+		}
+	}
+	return diags
+}
+
 // applyASGAvailabilityZone keeps the configured zone in state and only adopts
 // the API value on import, where state has none. The platform places the group
 // in the zone of the chosen subnet, so it can report a zone other than the one
@@ -547,23 +741,28 @@ func applyASGAvailabilityZone(data *ASGResourceModel, azName string) diag.Diagno
 	return diags
 }
 
-func (r *ASGResource) validateASGSubnetZone(ctx context.Context, data *ASGResourceModel) diag.Diagnostics {
+// validateASGSubnetZone rejects a subnet that is not in the requested zone. It
+// also returns the client scoped to that zone and subnet, or nil when the
+// references cannot be resolved yet (unknown values, or a lookup that fails and
+// is reported again at apply time).
+func (r *ASGResource) validateASGSubnetZone(ctx context.Context, data *ASGResourceModel) (*client.Client, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if r.client == nil || !stringSet(data.VPCName) || !stringSet(data.Subnet) || !stringSet(data.AvailabilityZone) {
-		return diags
+		return nil, diags
 	}
 	vpcID, err := r.client.ResolveVPCID(ctx, data.VPCName.ValueString())
 	if err != nil {
-		return diags
+		return nil, diags
 	}
 	subnet, err := r.client.ResolveSubnet(ctx, vpcID, data.Subnet.ValueString())
 	if err != nil {
-		return diags
+		return nil, diags
 	}
 	if msg := subnetAvailabilityZoneMismatch(data.Subnet.ValueString(), subnet.AvailabilityZone, data.AvailabilityZone.ValueString()); msg != "" {
 		diags.AddError("Invalid Configuration", msg)
+		return nil, diags
 	}
-	return diags
+	return r.client.WithAvailabilityZone(data.AvailabilityZone.ValueString()).WithSubnetID(subnet.SubnetID), diags
 }
 
 func subnetAvailabilityZoneMismatch(subnetName, subnetAZ, requestedAZ string) string {
@@ -803,23 +1002,4 @@ func defaultASGDiskSize(osType string) int64 {
 		return 200
 	}
 	return 100
-}
-
-func (r *ASGResource) resolveASGOSType(ctx context.Context, data *ASGResourceModel) (string, error) {
-	if stringSet(data.SnapshotName) {
-		return "", nil
-	}
-	id := int64(0)
-	if intSet(data.ImageID) {
-		id = data.ImageID.ValueInt64()
-	}
-	name := ""
-	if stringSet(data.ImageName) {
-		name = data.ImageName.ValueString()
-	}
-	img, err := r.client.ResolveImage(ctx, id, name)
-	if err != nil {
-		return "", err
-	}
-	return img.OSFamily(), nil
 }
