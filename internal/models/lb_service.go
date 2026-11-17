@@ -78,6 +78,15 @@ type LBVirtualServer struct {
 	RedirectHTTPS      bool   `json:"redirect_https,omitempty"`
 	Created            string `json:"created,omitempty"`
 	Updated            string `json:"updated,omitempty"`
+	// Pools lists the backend pools. Only the name is read; it is how an
+	// autoscaling group's pool_name is recovered on import.
+	Pools []LBVirtualServerPool `json:"pools,omitempty"`
+}
+
+// LBVirtualServerPool is a backend pool attached to a virtual server.
+type LBVirtualServerPool struct {
+	ID       string `json:"id,omitempty"`
+	PoolName string `json:"pool_name,omitempty"`
 }
 
 // VirtualServerNode represents a backend node (pool member) in a virtual server.
