@@ -137,6 +137,52 @@ func (c *Client) DeleteAutoScalingGroup(ctx context.Context, id string) error {
 	return c.Delete(ctx, fmt.Sprintf("%s/%s", c.autoScalingBasePath(), id))
 }
 
+// GetAutoScalingGroupVirtualServer returns the load balancer virtual server
+// attached to a group, or nil when the group has none. The virtual server lives
+// on the load balancer service, so the call is scoped to that service's network.
+func (c *Client) GetAutoScalingGroupVirtualServer(ctx context.Context, group *models.AutoScalingGroup) (*models.LBVirtualServer, error) {
+	vs := group.VirtualServer
+	if vs.ID == "" || vs.LBService.ID == "" {
+		return nil, nil
+	}
+	lb, err := c.GetLBService(ctx, vs.LBService.ID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read load balancer %s: %w", vs.LBService.ID, err)
+	}
+	return c.WithSubnetID(lb.NetworkID).GetVirtualServer(ctx, vs.LBService.ID, vs.ID)
+}
+
+// DeleteAutoScalingGroupWithVirtualServer deletes a group, first removing the
+// load balancer virtual server it created. The platform rejects deleting a group
+// that is still in use by a virtual server ("Delete the virtual server to
+// continue"), so the virtual server has to go first and its removal confirmed.
+// A group that is already gone returns a not-found error.
+func (c *Client) DeleteAutoScalingGroupWithVirtualServer(ctx context.Context, id string, timeout time.Duration) error {
+	group, err := c.GetAutoScalingGroup(ctx, id)
+	if err != nil {
+		return err
+	}
+	vs := group.VirtualServer
+	if vs.ID != "" && vs.LBService.ID != "" {
+		lb, err := c.GetLBService(ctx, vs.LBService.ID)
+		switch {
+		case err == nil:
+			scoped := c.WithSubnetID(lb.NetworkID)
+			if err := scoped.DeleteVirtualServer(ctx, vs.LBService.ID, vs.ID); err != nil && !IsNotFoundError(err) {
+				return fmt.Errorf("unable to delete virtual server %s: %w", vs.ID, err)
+			}
+			if err := scoped.WaitForVirtualServerDeleted(ctx, vs.LBService.ID, vs.ID, timeout); err != nil {
+				return fmt.Errorf("waiting for virtual server %s deletion: %w", vs.ID, err)
+			}
+		case IsNotFoundError(err):
+			// The load balancer is gone, so the virtual server is too.
+		default:
+			return fmt.Errorf("unable to read load balancer %s: %w", vs.LBService.ID, err)
+		}
+	}
+	return c.DeleteAutoScalingGroup(ctx, id)
+}
+
 func (c *Client) WaitForAutoScalingGroupReady(ctx context.Context, id string, timeout time.Duration) (*models.AutoScalingGroup, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

@@ -80,6 +80,7 @@ type ASGLabels struct {
 }
 
 type ASGVirtualServer struct {
+	ID        string `json:"id"`
 	Name      string `json:"name"`
 	LBService struct {
 		Name string `json:"name"`
