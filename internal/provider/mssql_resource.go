@@ -33,7 +33,7 @@ import (
 	"github.com/Airtel-Cloud-Platform/terraform-provider-airtelcloud/internal/models"
 )
 
-const mssqlDefaultTimeout = 15 * time.Minute
+const mssqlDefaultTimeout = 30 * time.Minute
 
 var (
 	mssqlNamePattern       = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -402,6 +402,11 @@ func (r *MSSQLResource) Read(ctx context.Context, req resource.ReadRequest, resp
 			return
 		}
 		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to read mssql instance, got error: %s", err))
+		return
+	}
+
+	if instance.Status == models.MSSQLStatusDeleted {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 

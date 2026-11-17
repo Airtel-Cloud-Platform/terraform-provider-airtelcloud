@@ -14,6 +14,7 @@ const (
 	MSSQLStatusInitiated = "Initiated"
 	MSSQLStatusResizing  = "Resizing"
 	MSSQLStatusDeleting  = "Deleting"
+	MSSQLStatusDeleted   = "Deleted"
 	MSSQLStatusFailed    = "Failed"
 
 	MSSQLFixedUser               = "admin"

@@ -2,7 +2,7 @@ terraform {
   required_providers {
     airtelcloud = {
       source  = "Airtel-Cloud-Platform/airtelcloud"
-      version = "2.0.0"
+      version = "2.0.1"
     }
   }
 }
@@ -44,6 +44,7 @@ variable "mssql_password" {
   sensitive   = true
 }
 
+# Network access by VPC and subnet. The subnet CIDR is allowed to connect.
 resource "airtelcloud_mssql" "app" {
   name              = "hello"
   description       = "Application MSSQL instance"
@@ -56,13 +57,33 @@ resource "airtelcloud_mssql" "app" {
   availability_zone = "S1"
   vpc               = "copper-vpc1"
   subnet            = "temporal-subnet"
-  custom_cidr       = ["192.168.1.0/24"]
   db_name           = "AppDb"
   mssql_username    = "DbAdmin"
   password          = var.mssql_password
 
   backup = {
     protection_plan = "CH26_AZ1_PaaS_MSSQLIP_DAILY_FULL_2100_PP"
+  }
+}
+
+# Network access by custom CIDR only. `vpc` and `subnet` are not needed.
+# Create and delete each default to 30 minutes; raise them if your instance is slow (create typically takes about 14 minutes).
+resource "airtelcloud_mssql" "cidr_only" {
+  name              = "hello-cidr"
+  database_edition  = "web"
+  collation         = "SQL_Latin1_General_CP1_CI_AS"
+  features          = ["SQLENGINE"]
+  compute_size      = "db.mssqlweb.uhper.cci.xlarge"
+  storage_size      = 200
+  availability_zone = "S1"
+  custom_cidr       = ["192.168.1.0/24"]
+  db_name           = "AppDb"
+  mssql_username    = "DbAdmin"
+  password          = var.mssql_password
+
+  timeouts {
+    create = "45m"
+    delete = "45m"
   }
 }
 
