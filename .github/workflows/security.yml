@@ -161,7 +161,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkov
-        uses: bridgecrewio/checkov-action@c10e2438743528f9e4549758fad8b7a62052541d # v12.3136.0
+        uses: bridgecrewio/checkov-action@b17b606d6ec72bb8ba5721ad5b7e340b80a9fc39 # v12.3142.0
         with:
           config_file: .checkov.yaml
           output_format: cli,sarif
@@ -169,7 +169,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && env.CAN_UPLOAD_SARIF == 'true' && hashFiles('results.sarif', 'results.sarif/**') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: results.sarif
           category: checkov
@@ -215,7 +215,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && env.CAN_UPLOAD_SARIF == 'true' && hashFiles('semgrep.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -235,7 +235,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: "1.26.11"
           cache: true
@@ -260,7 +260,7 @@ jobs:
 
       - name: Upload SARIF
         if: always() && env.CAN_UPLOAD_SARIF == 'true' && hashFiles('trivy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy.sarif
           category: trivy
